@@ -414,7 +414,7 @@ async function prepare(args, browser, rl) {
     throw new Error("Flow tab URL changed unexpectedly while preparing. Stopping before Create.");
   }
 
-  // Attach and verify the exact character references only after closing Settings.
+  // Attach and verify the exact per-scene reference images only after closing Settings.
   // If Flow does not expose a unique add button, file input, and visible reference-item selector,
   // stop before filling the prompt or enabling a possible Create action.
   await uploadSceneReferences(chosen.page, selectors, referenceImages);
@@ -478,7 +478,7 @@ async function prepare(args, browser, rl) {
   await askExact(rl, `This action may consume credit. Type CREATE ONE VIDEO FOR ${scene.scene_id} to submit exactly once: `,
     `CREATE ONE VIDEO FOR ${scene.scene_id}`);
   appendEvent(args.log, {
-    event: "submission_intent", scene_id: scene.scene_id, character_id: character.id, character_name: character.name, reference_image_count: character.reference_images.length, reference_image_names: character.reference_images.map(file => path.basename(file)), model: scene.model, resolution: scene.resolution,
+    event: "submission_intent", scene_id: scene.scene_id, reference_image_count: referenceImages.length, reference_image_names: referenceImages.map(file => path.basename(file)), character_description: scene.character_description, model: scene.model, resolution: scene.resolution,
     prompt: scene.prompt, account_email: account.observedEmail, project_id: chosen.projectId,
     estimated_credit_cost: creditCost, url: chosen.page.url(), status: "submission_in_progress",
   });
