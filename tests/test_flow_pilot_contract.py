@@ -1,4 +1,5 @@
 """Static safety contract checks for the human-gated Flow pilot runner."""
+import re
 import unittest
 from pathlib import Path
 
@@ -31,6 +32,22 @@ class FlowPilotContractTests(unittest.TestCase):
         self.assertIn('[role="button"][aria-label^="Google Account:"]', self.script)
         self.assertIn("Google account mismatch", self.script)
         self.assertIn("account_email_verified", self.script)
+
+    def test_google_account_email_accepts_suffixes_and_newlines(self):
+        # Mirror the JavaScript extraction pattern against the aria-label variants
+        # reported by Google. The email is inside parentheses, not necessarily at end.
+        self.assertIn(r"label.match(/\\(([^()\\s]+@[^()\\s]+)\\)/)", self.script)
+        pattern = re.compile(r"\\(([^()\\s]+@[^()\\s]+)\\)")
+        labels = [
+            "Google Account: <name> (vudinhhuy11cdtm1@gmail.com), Google membership",
+            "Google Account: <name> (vudinhhuy11cdtm1@gmail.com)\\nGoogle membership",
+            "Google Account: <name> (vudinhhuy11cdtm1@gmail.com)",
+        ]
+        for label in labels:
+            with self.subTest(label=label):
+                match = pattern.search(label)
+                self.assertIsNotNone(match)
+                self.assertEqual(match.group(1), "vudinhhuy11cdtm1@gmail.com")
 
     def test_waits_for_settings_model_selector_after_opening_settings(self):
         self.assertIn('chosen.page.locator(selectors.model).waitFor({ state: "visible", timeout: 5000 })', self.script)
