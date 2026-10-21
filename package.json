@@ -6,7 +6,8 @@
     "node": ">=20"
   },
   "scripts": {
-    "flow:inspect": "node scripts/flow-pilot.mjs --inspect"
+    "flow:inspect": "node scripts/flow-pilot.mjs --inspect",
+    "test": "node --test scripts/character-profile.test.mjs"
   },
   "dependencies": {
     "playwright": "^1.55.0"
