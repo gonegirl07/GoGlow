@@ -1055,8 +1055,8 @@ async function loadInputs(args) {
   scene.character_description = scene.character_description.trim();
   scene.scene_prompt = scene.prompt;
   const faceAnchorInstructions = faceReferenceImages.length > 1
-    ? "The first attached image is the primary face identity anchor. The other selected face reference images show the SAME PERSON from additional angles; combine them to understand facial structure, eye shape and spacing, nose, lips, cheeks, jawline, and overall likeness. Do not blend this identity with any supporting reference."
-    : "The first attached reference image is the primary face identity anchor. Match its facial structure, eye shape and spacing, nose, lips, cheeks, jawline, and overall likeness as closely as possible.";
+    ? "The first attached image shows the character. Keep the same character as the reference image: facial structure, eye shape and spacing, nose, lips, cheeks, and jawline. The other selected face reference images show the same character from additional angles. Use them to understand the character's features; do not mix them with supporting references."
+    : "The first attached image shows the character. Keep the same character as the reference image: facial structure, eye shape and spacing, nose, lips, cheeks, and jawline.";
   const characterDescriptionSection = faceDescriptionMode === "reference_only" || !scene.character_description
     ? "Use the attached reference images for all appearance details; do not invent or reinterpret facial features."
     : faceDescriptionMode === "hybrid"
@@ -1065,7 +1065,7 @@ async function loadInputs(args) {
   const expressionSection = scene.expression
     ? `\n\nEXPRESSION AND EYE STATE (follow throughout the entire shot): ${scene.expression}. Keep this expression and eye state consistent from the first frame to the last; this instruction takes priority over breathing or other subtle motion.`
     : "";
-  scene.prompt = `PRIMARY FACE REFERENCE: ${faceAnchorInstructions} Keep the same person throughout the clip.\n\n${characterDescriptionSection}\n\nSCENE: ${scene.prompt.trim()}${expressionSection}\n\nUse remaining attached images only as supporting references for clothing, body, or context. Preserve the selected face identity, hair, and skin tone. Do not substitute a different person.`;
+  scene.prompt = `PRIMARY FACE REFERENCE: ${faceAnchorInstructions} Keep the same person throughout the clip.\n\n${characterDescriptionSection}\n\nSCENE: ${scene.prompt.trim()}${expressionSection}\n\nUse remaining attached images only as supporting references for clothing, body, or context. Keep the same character, hair, and skin tone throughout. Do not substitute a different person.`;
   if (!/^[\x00-\x7F]+$/.test(scene.prompt)) throw new Error("Composed prompt must contain ASCII characters only.");
   if (scene.model !== "Omni 1.1 Flash" || scene.resolution !== "360p") {
     throw new Error("Phase 3 pilot is restricted to model='Omni 1.1 Flash' and resolution='360p'.");
