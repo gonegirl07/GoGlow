@@ -22,6 +22,8 @@ export function validateCharacterProfile(profile, profilePath) {
   }
   if (typeof profile.name !== "string" || !profile.name.trim()) throw new Error("Character profile name must be non-empty.");
   assertAsciiEnglish(profile.name, "Character name");
+  if (typeof profile.fixed_appearance !== "string" || !profile.fixed_appearance.trim()) throw new Error("Character fixed_appearance must be non-empty.");
+  if (typeof profile.default_wardrobe !== "string" || !profile.default_wardrobe.trim()) throw new Error("Character default_wardrobe must be non-empty.");
   assertAsciiEnglish(profile.fixed_appearance, "Character fixed_appearance");
   assertAsciiEnglish(profile.default_wardrobe, "Character default_wardrobe");
   if (!Array.isArray(profile.rules) || profile.rules.length < 1 || profile.rules.some(rule => typeof rule !== "string" || !rule.trim())) {
