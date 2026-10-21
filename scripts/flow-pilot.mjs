@@ -17,12 +17,13 @@ const FLOW_HOSTS = new Set(["labs.google"]);
 const FLOW_PATH_MARKER = "/fx/tools/flow";
 
 function argsOf(argv) {
-  const args = { inspect: false, execute: false, tab: null, scene: null, selectors: null,
+  const args = { inspect: false, execute: false, dryRun: false, tab: null, scene: null, selectors: null,
     accountLabel: null, log: "flow-pilot.jsonl", screenshot: null };
   for (let i = 0; i < argv.length; i += 1) {
     const arg = argv[i];
     if (arg === "--inspect") args.inspect = true;
     else if (arg === "--execute") args.execute = true;
+    else if (arg === "--dry-run") args.dryRun = true;
     else if (arg === "--tab") args.tab = Number(argv[++i]);
     else if (arg === "--scene") args.scene = argv[++i];
     else if (arg === "--selectors") args.selectors = argv[++i];
@@ -33,6 +34,7 @@ function argsOf(argv) {
     else throw new Error(`Unknown argument: ${arg}`);
   }
   if (args.inspect && args.execute) throw new Error("Use --inspect or --execute, not both.");
+  if (args.execute && args.dryRun) throw new Error("Use --dry-run or --execute, not both.");
   if (args.tab !== null && (!Number.isInteger(args.tab) || args.tab < 0)) throw new Error("--tab must be a zero-based non-negative index.");
   return args;
 }
@@ -44,7 +46,7 @@ Read-only tab inventory:
   node scripts/flow-pilot.mjs --inspect
 
 Default dry-run (fills configured fields, stops before Create):
-  node scripts/flow-pilot.mjs --tab 0 --scene examples/flow-pilot-scene.example.json \\
+  node scripts/flow-pilot.mjs --dry-run --tab 0 --scene examples/flow-pilot-scene.example.json \\
     --selectors local/flow-selectors.json --account-label "my Flow account"
 
 Actual one-scene submission (two interactive confirmations):
