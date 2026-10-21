@@ -132,6 +132,8 @@ class FlowPilotContractTests(unittest.TestCase):
         self.assertIn('event: "generation_ledger_recorded"', self.script)
         self.assertIn('status: "unknown_do_not_retry"', self.script)
         self.assertIn('resultStatus, mediaUri, downloadedFile, downloadError, timeoutError, attemptNumber', self.script)
+        self.assertIn('--ledger-project-id', self.script)
+        self.assertIn('ledgerProjectId || scene.goglow_project_id || projectId', self.script)
 
     def test_confirmation_reader_buffers_piped_stdin(self):
         self.assertIn("function createConfirmationReader()", self.script)
