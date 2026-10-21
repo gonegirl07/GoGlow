@@ -257,5 +257,36 @@ class FlowPilotContractTests(unittest.TestCase):
         self.assertIn("scene.face_reference_id = scene.reference_images[0];", self.script)
 
 
+    def test_prepare_destructures_face_reference_image_from_load_inputs(self):
+        prepare = self.script.split("async function prepare(args, browser, rl) {", 1)[1].split(
+            "async function main()", 1
+        )[0]
+        self.assertIn(
+            "const { scene, selectors, referenceImages, faceReferenceImage } = await loadInputs(args);",
+            prepare,
+        )
+        self.assertIn("face_reference_image: path.basename(faceReferenceImage)", prepare)
+        self.assertIn("face_reference_id: scene.face_reference_id", prepare)
+
+    def test_pre_submit_errors_run_verified_prompt_and_ingredients_cleanup(self):
+        prepare = self.script.split("async function prepare(args, browser, rl) {", 1)[1].split(
+            "async function main()", 1
+        )[0]
+        self.assertIn("let promptForCleanup = null;", prepare)
+        self.assertIn("let createMayHaveBeenClicked = false;", prepare)
+        self.assertIn("if (promptForCleanup && !createMayHaveBeenClicked)", prepare)
+        self.assertIn("await clearPromptVerified(promptForCleanup, selectors, 4000);", prepare)
+        self.assertIn("Failure cleanup: prompt and Ingredients chips cleared and verified.", prepare)
+        self.assertIn("CRITICAL: failure cleanup could not verify prompt/chips empty", prepare)
+        self.assertLess(
+            prepare.index("await uploadSceneReferences(chosen.page, selectors, referenceImages, prompt)"),
+            prepare.index("face_reference_image: path.basename(faceReferenceImage)"),
+        )
+        self.assertLess(
+            prepare.index("createMayHaveBeenClicked = true;"),
+            prepare.index("await finalButton.click({ timeout: 2500 })"),
+        )
+
+
 if __name__ == "__main__":
     unittest.main()
