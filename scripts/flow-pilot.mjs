@@ -168,6 +168,98 @@ async function generatedItemKeys(page, selector) {
   }));
 }
 
+// Flow's media grid may virtualize its DOM. Sweep the grid's scroll container and
+// union keys from every viewport instead of treating the first rendered batch as
+// the complete project inventory. Restore the initial scroll position unless a
+// target key was requested, in which case leave that tile in view for a safe click.
+async function collectAllGeneratedItems(page, selector, { targetKey = null, maxScrolls = 120 } = {}) {
+  const scrollInfo = await page.evaluate(selectorText => {
+    const first = document.querySelector(selectorText);
+    let node = first?.parentElement || null;
+    while (node && node !== document.body) {
+      const style = getComputedStyle(node);
+      if (node.scrollHeight > node.clientHeight + 8 && /(auto|scroll|overlay)/.test(style.overflowY)) {
+        return { kind: "element", initialTop: node.scrollTop, clientHeight: node.clientHeight, scrollHeight: node.scrollHeight };
+      }
+      node = node.parentElement;
+    }
+    const root = document.scrollingElement || document.documentElement;
+    return { kind: "document", initialTop: root.scrollTop, clientHeight: root.clientHeight, scrollHeight: root.scrollHeight };
+  }, selector);
+  const all = new Map();
+  let stableBottomRounds = 0;
+  let targetIndex = null;
+  for (let step = 0; step <= maxScrolls; step += 1) {
+    const visible = await page.locator(selector).evaluateAll(elements => elements.map((element, index) => {
+      const key = element.getAttribute("data-id")
+        || element.getAttribute("data-testid")
+        || element.getAttribute("href")
+        || element.querySelector("a[href]")?.getAttribute("href")
+        || element.querySelector("video, img")?.getAttribute("src")
+        || "";
+      const text = String(element.innerText || element.textContent || "").replace(/\\s+/g, " ").trim();
+      const state = [element.getAttribute("data-status"), element.getAttribute("data-state"),
+        element.getAttribute("aria-label"), element.getAttribute("title")].filter(Boolean).join(" ");
+      const progress = Boolean(element.querySelector('[role="progressbar"], progress, [aria-valuenow]'));
+      return { key: String(key).trim(), text, state, progress, index };
+    }));
+    for (const item of visible) {
+      if (item.key) all.set(item.key, { ...item });
+      if (targetKey && item.key === targetKey) targetIndex = item.index;
+    }
+    if (targetIndex !== null) return { items: Array.from(all.values()), targetIndex, scrolledToTarget: true };
+    const metrics = await page.evaluate(() => {
+      const first = document.querySelector(arguments[0]);
+      let node = first?.parentElement || null;
+      while (node && node !== document.body) {
+        const style = getComputedStyle(node);
+        if (node.scrollHeight > node.clientHeight + 8 && /(auto|scroll|overlay)/.test(style.overflowY)) {
+          return { kind: "element", top: node.scrollTop, clientHeight: node.clientHeight, scrollHeight: node.scrollHeight };
+        }
+        node = node.parentElement;
+      }
+      const root = document.scrollingElement || document.documentElement;
+      return { kind: "document", top: root.scrollTop, clientHeight: root.clientHeight, scrollHeight: root.scrollHeight };
+    }, selector);
+    const atBottom = metrics.top + metrics.clientHeight >= metrics.scrollHeight - 3;
+    if (atBottom) stableBottomRounds += 1; else stableBottomRounds = 0;
+    if (stableBottomRounds >= 2 || step === maxScrolls) break;
+    await page.evaluate(({ selectorText, amount }) => {
+      const first = document.querySelector(selectorText);
+      let node = first?.parentElement || null;
+      while (node && node !== document.body) {
+        const style = getComputedStyle(node);
+        if (node.scrollHeight > node.clientHeight + 8 && /(auto|scroll|overlay)/.test(style.overflowY)) {
+          node.scrollTop = Math.min(node.scrollTop + amount, node.scrollHeight);
+          return;
+        }
+        node = node.parentElement;
+      }
+      const root = document.scrollingElement || document.documentElement;
+      root.scrollTop = Math.min(root.scrollTop + amount, root.scrollHeight);
+    }, { selectorText: selector, amount: Math.max(250, scrollInfo.clientHeight * 0.75) });
+    await page.waitForTimeout(120);
+  }
+  await page.evaluate(({ selectorText, initialTop }) => {
+    const first = document.querySelector(selectorText);
+    let node = first?.parentElement || null;
+    while (node && node !== document.body) {
+      const style = getComputedStyle(node);
+      if (node.scrollHeight > node.clientHeight + 8 && /(auto|scroll|overlay)/.test(style.overflowY)) {
+        node.scrollTop = initialTop;
+        return;
+      }
+      node = node.parentElement;
+    }
+    (document.scrollingElement || document.documentElement).scrollTop = initialTop;
+  }, { selectorText: selector, initialTop: scrollInfo.initialTop });
+  return { items: Array.from(all.values()), targetIndex: null, scrolledToTarget: false };
+}
+
+function isGenerationFailureText(value) {
+  return /generation failed|failed to generate|couldn['’]?t generate|unable to generate|video failed|something went wrong|blocked by (?:policy|safety)|violat(?:es|ed) (?:our )?(?:policy|guidelines)|generation error/i.test(String(value || ""));
+}
+
 function appendGenerationLedger(pathname, record) {
   const absolute = path.resolve(pathname);
   fs.mkdirSync(path.dirname(absolute), { recursive: true });
@@ -193,7 +285,8 @@ function makeGenerationLedgerRecord({ scene, projectId, ledgerProjectId, prompt,
   const observedDelta = beforeBalance !== null && afterBalance !== null && beforeBalance >= afterBalance
     ? beforeBalance - afterBalance : null;
   const actualAmount = observedDelta !== null && observedDelta > 0 ? observedDelta : null;
-  const chargeStatus = actualAmount !== null ? "charged" : "unknown";
+  const chargeStatus = actualAmount !== null ? "charged"
+    : (resultStatus === "failed" && beforeBalance !== null && afterBalance !== null && beforeBalance === afterBalance ? "not_charged" : "unknown");
   const timestamp = new Date().toISOString();
   attemptId = attemptId || ("attempt-" + randomUUID());
   return {
@@ -219,6 +312,7 @@ function makeGenerationLedgerRecord({ scene, projectId, ledgerProjectId, prompt,
         face_reference_id: selectedFaceRefs[0] ? path.basename(selectedFaceRefs[0]) : null,
         face_reference_ids: selectedFaceRefs.map(item => path.basename(item)),
         face_description_mode: scene.face_description_mode || "include",
+        expression: scene.expression || null,
         other_reference_ids: referenceImages.filter(item => !selectedPaths.has(path.resolve(String(item)))).map(item => path.basename(item)),
       };
     })(),
@@ -251,23 +345,79 @@ function makeGenerationLedgerRecord({ scene, projectId, ledgerProjectId, prompt,
   };
 }
 
-async function waitForGenerationAndDownload(page, selectors, { beforeKeys, timeoutMs, downloadDir, sceneId, attemptId }) {
+async function waitForGenerationAndDownload(page, selectors, { beforeKeys, timeoutMs, downloadDir, sceneId, attemptId, timeoutScreenshot }) {
   const itemLocator = page.locator(selectors.generated_video_items);
   const deadline = Date.now() + timeoutMs;
+  let newKey = null;
   let newItem = null;
+  let attemptedKeys = new Set();
+  const failIfVisible = async () => {
+    const bodyText = await page.locator("body").innerText({ timeout: 2000 }).catch(() => "");
+    if (isGenerationFailureText(bodyText)) {
+      throw new Error(`FLOW_GENERATION_FAILED: Flow displayed a generation/policy failure: ${bodyText.replace(/\\s+/g, " ").trim().slice(-700)}`);
+    }
+  };
+  const captureTimeout = async () => {
+    if (!timeoutScreenshot) return;
+    try {
+      fs.mkdirSync(path.dirname(path.resolve(timeoutScreenshot)), { recursive: true });
+      await page.screenshot({ path: path.resolve(timeoutScreenshot), fullPage: false, timeout: 5000 });
+      console.error(`Wait-timeout screenshot saved: ${path.resolve(timeoutScreenshot)}`);
+    } catch (error) {
+      console.error(`Could not save wait-timeout screenshot: ${error.message}`);
+    }
+  };
   while (Date.now() < deadline) {
-    const keys = await generatedItemKeys(page, selectors.generated_video_items).catch(() => []);
-    const newIndexes = keys.map((key, index) => ({ key, index })).filter(item => item.key && !beforeKeys.includes(item.key));
-    if (newIndexes.length === 1) { newItem = itemLocator.nth(newIndexes[0].index); break; }
-    if (newIndexes.length > 1) throw new Error(`More than one new Flow video tile appeared (${newIndexes.length}); refusing to guess which clip to download.`);
+    await failIfVisible();
+    const scan = await collectAllGeneratedItems(page, selectors.generated_video_items).catch(() => ({ items: [] }));
+    const newItems = scan.items.filter(item => item.key && !beforeKeys.includes(item.key));
+    const failedTile = newItems.find(item => isGenerationFailureText(`${item.state} ${item.text}`));
+    if (failedTile) {
+      throw new Error(`FLOW_GENERATION_FAILED: new Flow tile ${failedTile.key} reports failure: ${failedTile.text || failedTile.state}`);
+    }
+    if (newItems.length > 1) {
+      throw new Error(`More than one new Flow video tile appeared after a full virtualized-grid sweep (${newItems.length}); refusing to guess which clip to download.`);
+    }
+    if (newItems.length === 1 && !attemptedKeys.has(newItems[0].key)) {
+      newKey = newItems[0].key;
+      attemptedKeys.add(newKey);
+      const located = await collectAllGeneratedItems(page, selectors.generated_video_items, { targetKey: newKey }).catch(() => ({ targetIndex: null }));
+      if (located.targetIndex !== null) {
+        newItem = itemLocator.nth(located.targetIndex);
+        await newItem.click({ timeout: 5000 });
+        const shortWait = Math.min(3500, Math.max(500, deadline - Date.now()));
+        const downloadButtonLocator = page.locator(selectors.download_media_button);
+        try {
+          await downloadButtonLocator.waitFor({ state: "visible", timeout: shortWait });
+          break;
+        } catch {
+          await failIfVisible();
+          // A click that did not open the selected tile is not proof of completion.
+          // Return to the project grid and continue polling rather than burning the
+          // entire wait budget on a stale/virtualized card.
+          if (page.url().includes("/edit/") || page.url().includes("/video/")) {
+            await page.goBack({ waitUntil: "domcontentloaded", timeout: 10000 }).catch(() => {});
+          }
+          newItem = null;
+          newKey = null;
+        }
+      }
+    }
     await page.waitForTimeout(1000);
   }
-  if (!newItem) throw new Error(`No uniquely identifiable new video tile appeared within ${timeoutMs}ms. Submission may still be processing; do not retry.`);
-  await newItem.click({ timeout: 5000 });
+  if (!newItem || !newKey) {
+    await failIfVisible();
+    await captureTimeout();
+    throw new Error(`No verified new video detail/download became available within ${timeoutMs}ms. The virtualized media grid was fully swept; completion remains unverified. Do not retry.`);
+  }
   const remainingMs = Math.max(1000, deadline - Date.now());
   const downloadButtonLocator = page.locator(selectors.download_media_button);
   try { await downloadButtonLocator.waitFor({ state: "visible", timeout: remainingMs }); }
-  catch { throw new Error("A new video tile appeared, but Download media did not become visible before the wait deadline; completion remains unverified."); }
+  catch {
+    await failIfVisible();
+    await captureTimeout();
+    throw new Error("A new tile was opened but Download media did not become visible before the wait deadline; completion remains unverified.");
+  }
   const downloadButton = await exactVisibleLocator(page, selectors.download_media_button, "Download media button");
   const mediaUri = page.url();
   try {
@@ -770,7 +920,7 @@ async function loadInputs(args) {
   const characterDescriptionSection = faceDescriptionMode === "reference_only" || !scene.character_description
     ? "Use the attached reference images for all appearance details; do not invent or reinterpret facial features."
     : faceDescriptionMode === "hybrid"
-      ? `HYBRID FACE DESCRIPTION (brief matching traits only; reference images remain authoritative): ${scene.character_description}. Match the reference images and do not add conflicting traits.`
+      ? `HYBRID FACE DESCRIPTION (brief matching traits only; reference images remain authoritative): ${scene.character_description.trim().replace(/[.\\s]+$/, "")}. Match the reference images and do not add conflicting traits.`
       : `CHARACTER DESCRIPTION (supporting traits only; do not override the face reference): ${scene.character_description}`;
   const expressionSection = scene.expression
     ? `\n\nEXPRESSION AND EYE STATE (follow throughout the entire shot): ${scene.expression}. Keep this expression and eye state consistent from the first frame to the last; this instruction takes priority over breathing or other subtle motion.`
@@ -942,14 +1092,15 @@ async function prepare(args, browser, rl) {
     try {
       const initialBalance = await readCreditBalance(chosen.page, selectors);
       if (initialBalance === null) throw new Error("Could not read an integer credit balance.");
-      const initialItems = await generatedItemKeys(chosen.page, selectors.generated_video_items);
+      const initialScan = await collectAllGeneratedItems(chosen.page, selectors.generated_video_items);
+      const initialItems = initialScan.items.map(item => item.key);
       if (initialItems.some(key => !key) || new Set(initialItems).size !== initialItems.length) {
-        throw new Error("generated_video_items selector must match distinct tiles with stable data-id, data-testid, href, link href, or media src keys.");
+        throw new Error("generated_video_items selector must expose distinct stable tile keys across a full virtualized-grid sweep.");
       }
       args._waitInitialBalance = initialBalance;
       args._waitInitialItemKeys = initialItems;
       args._waitInitialItemCount = initialItems.length;
-      console.log("WAIT SELECTOR PREFLIGHT (read-only; no Create click)");
+      console.log("WAIT SELECTOR PREFLIGHT (read-only; no Create click; virtualized grid swept)");
       console.log(JSON.stringify({ credit_balance: initialBalance, existing_video_tile_count: initialItems.length, existing_video_tile_keys: initialItems }, null, 2));
     } catch (error) {
       let cleanup = "Prompt/Ingredients cleanup was not verified.";
@@ -1030,7 +1181,7 @@ async function prepare(args, browser, rl) {
   args._waitStartedOn = new Date().toISOString();
   appendEvent(args.log, {
     event: "submission_intent", scene_id: scene.scene_id, reference_image_count: referenceImages.length, reference_image_names: referenceImages.map(file => path.basename(file)), face_reference_id: scene.face_reference_id, face_reference_image: path.basename(faceReferenceImage), character_description: scene.character_description, model: scene.model, resolution: scene.resolution,
-    prompt: scene.prompt, account_email: account.observedEmail, project_id: chosen.projectId,
+    prompt: scene.prompt, expression: scene.expression || null, account_email: account.observedEmail, project_id: chosen.projectId,
     estimated_credit_cost: creditCost, url: chosen.page.url(), status: "submission_in_progress",
   });
   try {
@@ -1045,7 +1196,8 @@ async function prepare(args, browser, rl) {
       const currentBalance = await readCreditBalance(chosen.page, selectors);
       if (currentBalance === null) throw new Error("Credit balance could not be re-read immediately before Create; refusing to click.");
       args._waitInitialBalance = currentBalance;
-      args._waitInitialItemKeys = await generatedItemKeys(chosen.page, selectors.generated_video_items);
+      const currentScan = await collectAllGeneratedItems(chosen.page, selectors.generated_video_items);
+      args._waitInitialItemKeys = currentScan.items.map(item => item.key);
       args._waitInitialItemCount = args._waitInitialItemKeys.length;
     }
     createMayHaveBeenClicked = true; // Conservatively preserve state if the click result is ambiguous.
@@ -1072,6 +1224,7 @@ async function prepare(args, browser, rl) {
           downloadDir: args.downloadDir,
           sceneId: scene.scene_id,
           attemptId: args._waitAttemptId,
+          timeoutScreenshot: `${screenshot}.wait-timeout.png`,
         });
         downloadedFile = result.downloadedFile;
         mediaUri = result.mediaUri || chosen.page.url();
@@ -1080,7 +1233,8 @@ async function prepare(args, browser, rl) {
       } catch (error) {
         timeoutError = String(error.message || error);
         mediaUri = chosen.page.url();
-        appendEvent(args.log, { event: "generation_wait_unverified", scene_id: scene.scene_id, status: "unknown_do_not_retry", error: timeoutError });
+        if (timeoutError.startsWith("FLOW_GENERATION_FAILED:")) resultStatus = "failed";
+        appendEvent(args.log, { event: resultStatus === "failed" ? "generation_failed_detected" : "generation_wait_unverified", scene_id: scene.scene_id, status: resultStatus === "failed" ? "failed_do_not_retry" : "unknown_do_not_retry", error: timeoutError });
         console.error(`WAIT STOPPED SAFELY: ${timeoutError}`);
       }
       // Detail pages do not expose credits; return to the original project before polling.
