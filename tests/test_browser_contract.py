@@ -55,6 +55,11 @@ class BrowserContractTests(unittest.TestCase):
         self.assertIn("reviewed_by", self.qc_schema["required"])
         self.assertIn("reviewed_at", self.qc_schema["required"])
 
+    def test_browser_invalidates_old_clip_evidence_before_regeneration(self):
+        self.assertIn("Bắt đầu lượt tạo mới; media URI và báo cáo QC cũ đã được xóa.", self.html)
+        self.assertIn("báo cáo đã lưu không còn hiệu lực", self.html)
+        self.assertIn("status_history không hợp lệ", self.html)
+
     def test_browser_disclaims_automatic_media_verification(self):
         self.assertIn("không phải xác minh file hay tự động xem video", self.html)
         self.assertIn("không tự đánh giá video", self.html)
