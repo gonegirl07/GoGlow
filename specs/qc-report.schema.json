@@ -9,7 +9,8 @@
     "checks",
     "reviewed_by",
     "reviewed_at",
-    "media_uri"
+    "media_uri",
+    "activity"
   ],
   "properties": {
     "scene_id": {
@@ -88,6 +89,18 @@
     },
     "media_uri": {
       "type": "string"
+    },
+    "activity": {
+      "type": "string",
+      "enum": [
+        "cycling",
+        "yoga",
+        "dance",
+        "fashion",
+        "walking",
+        "fitness",
+        "other"
+      ]
     }
   }
 }
