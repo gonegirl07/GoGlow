@@ -30,7 +30,7 @@ class BrowserContractTests(unittest.TestCase):
         for marker in (
             "function canApprove(s)",
             'r.scene_id===s.id',
-            'r.media_uri===s.media_uri',
+            'r.media_uri===finalUri',
             'r.review_status==="PASS"',
             'r.checks.every(x=>x.status==="PASS")',
             "function availableTransitions(s)",
@@ -64,7 +64,7 @@ class BrowserContractTests(unittest.TestCase):
         for marker in ("flow_clip_seconds", "pose_reference_uri", "face_reference_uri", "media_uri_360p", "media_uri_720p", "breath_cue", "movement_benefit", "hard_cut", "pre_publish_approved", "ai_label_required", "yoga_framing", "yoga_foot_sliding", "yoga_joint_alignment", "yoga_left_right", "yoga_wardrobe_coverage"):
             with self.subTest(marker=marker):
                 self.assertIn(marker, self.html)
-        self.assertIn("finalStageReady", self.html)
+        self.assertIn('finalUri&&s.media_uri===finalUri', self.html)
         scene_categories = self.scene_schema["properties"]["scenes"]["items"]["properties"]["qc_draft"]["properties"]["checks"]["items"]["properties"]["category"]["enum"]
         report_categories = self.qc_schema["properties"]["checks"]["items"]["properties"]["category"]["enum"]
         for category in ("yoga_framing", "yoga_foot_sliding", "yoga_joint_alignment", "yoga_left_right", "yoga_wardrobe_coverage"):
