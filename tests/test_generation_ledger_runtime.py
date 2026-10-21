@@ -57,7 +57,7 @@ class GenerationLedgerRuntimeTests(unittest.TestCase):
         self.assertIn('project.generation_attempts', self.runtime)
         self.assertIn('while (existingIds.has(attemptId))', self.runtime)
         self.assertNotIn('const attemptId = "attempt-" + timestamp.replace(/[^0-9]/g, "").slice(0, 14) + "-" + attemptNumber', self.runtime)
-        self.assertIn('if (!generationLedger.some(x=>x.attempt_id===a.attempt_id))generationLedger.push(a)', self.html)
+        self.assertIn('if(!generationLedger.some(x=>x.attempt_id===a.attempt_id))generationLedger.push(a)', self.html)
 
     def test_markdown_exports_project_id_in_header_and_each_project_ledger_row(self):
         self.assertIn('- Project ID: "+p.project_id', self.html)
