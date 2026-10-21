@@ -13,6 +13,8 @@ class PromptAndGenerationSeedTests(unittest.TestCase):
         cls.attempt_schema = json.loads((ROOT / "specs" / "generation-attempt.schema.json").read_text(encoding="utf-8"))
         cls.rules = json.loads((ROOT / "examples" / "prompt-rules.seed.json").read_text(encoding="utf-8"))
         cls.attempts = json.loads((ROOT / "examples" / "generation-attempts.seed.json").read_text(encoding="utf-8"))
+        cls.library_schema = json.loads((ROOT / "specs" / "prompt-library.schema.json").read_text(encoding="utf-8"))
+        cls.library = json.loads((ROOT / "examples" / "prompt-library.seed.json").read_text(encoding="utf-8"))
 
     def test_schemas_are_versioned_and_expose_evidence_fields(self):
         self.assertEqual(self.rule_schema["properties"]["schema_version"]["const"], "1.0")
@@ -63,6 +65,34 @@ class PromptAndGenerationSeedTests(unittest.TestCase):
         self.assertTrue(all(a["credits"]["evidence_source"] == "unknown" for a in attempts))
         self.assertIsNone(attempts[0]["prompt"]["sha256"])
         self.assertIn("not a verified direct downloadable media file", attempts[2]["qc"]["notes"])
+
+    def test_prompt_library_template_and_warnings_are_seeded(self):
+        library = self.library
+        self.assertEqual(library["model_label"], "Omni 1.1 Flash")
+        fixed = library["prompt_template"]["fixed_block"]
+        self.assertIn("Mai", fixed["identity"])
+        self.assertIn("static camera", fixed["camera"])
+        self.assertEqual(library["prompt_template"]["sections_order"][0], "fixed_block")
+        self.assertEqual(library["warnings"]["block_if_match_behavior"], "warn_only")
+        self.assertEqual(library["warnings"]["prompt_length"]["behavior"], "warn_only")
+
+    def test_confirmed_and_candidate_rules_are_distinguished(self):
+        rules = {rule["id"]: rule for rule in self.library["rules"]}
+        self.assertEqual(rules["start-already-in-pose"]["status"], "confirmed")
+        self.assertEqual(rules["warn-shoulder-roll-ambiguity"]["status"], "candidate")
+        self.assertEqual(rules["warn-platform-branding"]["autoApply"]["behavior"], "warn_only")
+        self.assertEqual(rules["warn-platform-branding"]["autoApply"]["blockIfMatch"], ["TikTok", "Reels"])
+
+    def test_motion_library_and_credit_estimate_do_not_claim_actual_charge(self):
+        motions = {motion["id"]: motion for motion in self.library["motions"]}
+        self.assertEqual(motions["neck-side-bend"]["risk"], "risky")
+        self.assertEqual(motions["neck-side-bend"]["evidence"][0]["score"], "6/6 fail")
+        self.assertEqual(motions["mountain-arms-prayer"]["scope"]["resolution"], "360p")
+        log = self.library["generation_log"]
+        self.assertEqual(log[-1]["credits"]["estimated"], 6)
+        self.assertIsNone(log[-1]["credits"]["actual"])
+        self.assertEqual(log[-1]["credits"]["source"], "owner_estimate")
+        self.assertTrue(all(row["credits"]["actual"] is None for row in log))
 
 
 if __name__ == "__main__":
