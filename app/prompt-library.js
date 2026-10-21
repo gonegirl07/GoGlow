@@ -20,9 +20,9 @@
   function uniqueSentences(parts) {
     const seen = new Set();
     const segments = parts.map(v => String(v || "").trim()).filter(Boolean)
-      .flatMap(v => v.split(/\\n+|(?<=[.!?])\\s+/));
+      .flatMap(v => v.split(/\n+|(?<=[.!?])\s+/));
     return segments.map(v => v.trim()).filter(Boolean).filter(v => {
-      const key = v.replace(/\\s+/g, " ").toLocaleLowerCase();
+      const key = v.replace(/\s+/g, " ").toLocaleLowerCase();
       if (seen.has(key)) return false;
       seen.add(key);
       return true;
