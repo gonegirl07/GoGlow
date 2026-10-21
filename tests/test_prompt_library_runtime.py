@@ -60,7 +60,9 @@ class PromptLibraryRuntimeTests(unittest.TestCase):
         self.assertIn("warn-platform-branding", self.runtime)
         self.assertIn("s.prompt_preview=result.text", self.html)
         self.assertIn("delete s.qc_report;s.qc_draft=blankQcDraft(s)", self.html)
-        self.assertIn("s.status=\"QC_REVIEW\"", self.html)
+        self.assertIn('s.media_uri="";s.media_uri_360p="";s.media_uri_720p=""', self.html)
+        self.assertIn('s.status="WAITING_FOR_GENERATION"', self.html)
+        self.assertIn('s.status="PROMPT_REVISED"', self.html)
 
 
 if __name__ == "__main__":
