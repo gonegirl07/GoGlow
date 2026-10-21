@@ -1,37 +1,186 @@
 {
-  "$schema":"https://json-schema.org/draft/2020-12/schema",
-  "title":"GoGlow Scene Plan",
-  "type":"object",
-  "additionalProperties":false,
-  "required":["project_id","aspect_ratio","target_duration_seconds","activity","scenes"],
-  "properties":{
-    "project_id":{"type":"string"},
-    "aspect_ratio":{"const":"9:16"},
-    "target_duration_seconds":{"type":"integer","minimum":31},
-    "activity":{"enum":["dance","cycling","yoga","fashion","other"]},
-    "character_id":{"type":"string"},
-    "model_labels":{"type":"object","properties":{"video":{"type":"string"},"image":{"type":"string"}},"additionalProperties":false},
-    "scenes":{"type":"array","minItems":1,"items":{
-      "type":"object","additionalProperties":false,
-      "required":["id","duration_seconds","start_state","primary_action","end_state","prompt","qc_checklist"],
-      "properties":{
-        "id":{"type":"string"},
-        "duration_seconds":{"type":"number","exclusiveMinimum":0},
-        "wardrobe":{"type":"string"},"location":{"type":"string"},
-        "start_state":{"type":"string","minLength":1},
-        "primary_action":{"type":"string","minLength":1},
-        "motion_direction":{"type":"string"},"speed_and_timing":{"type":"string"},
-        "body_mechanics":{"type":"string"},"camera":{"type":"string"},"environment":{"type":"string"},
-        "end_state":{"type":"string","minLength":1},
-        "continuity_in":{"type":"array","items":{"type":"string"}},
-        "continuity_out":{"type":"array","items":{"type":"string"}},
-        "reference_ids":{"type":"array","items":{"type":"string"}},
-        "image_brief":{"type":"string"},"prompt":{"type":"string","minLength":1},
-        "negative_constraints":{"type":"array","items":{"type":"string"}},
-        "qc_checklist":{"type":"array","minItems":1,"items":{"type":"string"}},
-        "status":{"enum":["PLANNED","PROMPT_READY","WAITING_FOR_GENERATION","GENERATED","QC_REVIEW","NEEDS_REVISION","PROMPT_REVISED","APPROVED","BLOCKED"],"default":"PLANNED"},
-        "media_uri":{"type":"string"},"review_notes":{"type":"string"}
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "GoGlow Scene Plan",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "project_id",
+    "aspect_ratio",
+    "target_duration_seconds",
+    "activity",
+    "scenes"
+  ],
+  "properties": {
+    "project_id": {
+      "type": "string"
+    },
+    "aspect_ratio": {
+      "const": "9:16"
+    },
+    "target_duration_seconds": {
+      "type": "integer",
+      "minimum": 31
+    },
+    "activity": {
+      "enum": [
+        "dance",
+        "cycling",
+        "yoga",
+        "fashion",
+        "other"
+      ]
+    },
+    "character_id": {
+      "type": "string"
+    },
+    "model_labels": {
+      "type": "object",
+      "properties": {
+        "video": {
+          "type": "string"
+        },
+        "image": {
+          "type": "string"
+        }
+      },
+      "additionalProperties": false
+    },
+    "scenes": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "id",
+          "duration_seconds",
+          "start_state",
+          "primary_action",
+          "end_state",
+          "prompt",
+          "qc_checklist"
+        ],
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "duration_seconds": {
+            "type": "number",
+            "exclusiveMinimum": 0
+          },
+          "wardrobe": {
+            "type": "string"
+          },
+          "location": {
+            "type": "string"
+          },
+          "start_state": {
+            "type": "string",
+            "minLength": 1
+          },
+          "primary_action": {
+            "type": "string",
+            "minLength": 1
+          },
+          "motion_direction": {
+            "type": "string"
+          },
+          "speed_and_timing": {
+            "type": "string"
+          },
+          "body_mechanics": {
+            "type": "string"
+          },
+          "camera": {
+            "type": "string"
+          },
+          "environment": {
+            "type": "string"
+          },
+          "end_state": {
+            "type": "string",
+            "minLength": 1
+          },
+          "continuity_in": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "continuity_out": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "reference_ids": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "image_brief": {
+            "type": "string"
+          },
+          "prompt": {
+            "type": "string",
+            "minLength": 1
+          },
+          "negative_constraints": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "qc_checklist": {
+            "type": "array",
+            "minItems": 1,
+            "items": {
+              "type": "string"
+            }
+          },
+          "status": {
+            "enum": [
+              "PLANNED",
+              "PROMPT_READY",
+              "WAITING_FOR_GENERATION",
+              "GENERATED",
+              "QC_REVIEW",
+              "NEEDS_REVISION",
+              "PROMPT_REVISED",
+              "APPROVED",
+              "BLOCKED"
+            ],
+            "default": "PLANNED"
+          },
+          "media_uri": {
+            "type": "string"
+          },
+          "review_notes": {
+            "type": "string"
+          },
+          "status_history": {
+            "type": "array",
+            "minItems": 1,
+            "items": {
+              "enum": [
+                "PLANNED",
+                "PROMPT_READY",
+                "WAITING_FOR_GENERATION",
+                "GENERATED",
+                "QC_REVIEW",
+                "NEEDS_REVISION",
+                "PROMPT_REVISED",
+                "APPROVED",
+                "BLOCKED"
+              ]
+            }
+          },
+          "qc_report": {
+            "$ref": "./qc-report.schema.json"
+          }
+        }
       }
-    }}
+    }
   }
 }
