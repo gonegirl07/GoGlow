@@ -100,6 +100,64 @@ class FlowPilotContractTests(unittest.TestCase):
         self.assertIn('await closeAccountMenuIfOpen(chosen.page, selectors, args.expectedEmail);', self.script)
         self.assertIn('Google account button for menu cleanup', self.script)
 
+    def test_wait_mode_requires_execute_and_bounded_timeout(self):
+        self.assertIn('if (args.waitForResult && !args.execute && !args.dryRun)', self.script)
+        self.assertIn('--wait without --execute is preflight-only; pass --dry-run --wait explicitly.', self.script)
+        self.assertIn('WAIT SELECTOR PREFLIGHT (read-only; no Create click)', self.script)
+        self.assertIn('--wait-timeout-ms must be an integer from 30000 to 1800000', self.script)
+        self.assertIn('--wait requires a non-empty', self.script)
+        self.assertIn('["credit_balance", "generated_video_items", "download_media_button", "download_360p_original_button", "account_panel_open", "account_panel_close"]', self.script)
+
+    def test_wait_tracks_new_tile_by_stable_identity_and_never_retries(self):
+        self.assertIn('generatedItemKeys(page, selectors.generated_video_items)', self.script)
+        self.assertIn('newIndexes.length === 1', self.script)
+        self.assertIn('refusing to guess which clip to download', self.script)
+        self.assertIn('status: "unknown_do_not_retry"', self.script)
+        self.assertIn('Do NOT retry automatically', self.script)
+
+    def test_wait_downloads_original_360p_and_hashes_saved_file(self):
+        self.assertIn('page.waitForEvent("download", { timeout: 30000 })', self.script)
+        self.assertIn('selectors.download_360p_original_button', self.script)
+        self.assertIn('await download.saveAs(target)', self.script)
+        self.assertIn('createHash("sha256").update(fs.readFileSync(downloadedFile))', self.script)
+        self.assertIn('if (!fs.statSync(target).size) throw new Error("Downloaded media file is empty.")', self.script)
+
+    def test_wait_appends_schema_compatible_credit_ledger(self):
+        self.assertIn('function appendGenerationLedger(pathname, record)', self.script)
+        self.assertIn('attempt_id: attemptId', self.script)
+        self.assertIn('actual_amount: actualAmount', self.script)
+        self.assertIn('before_balance: beforeBalance', self.script)
+        self.assertIn('after_balance: afterBalance', self.script)
+        self.assertIn('evidence_source: beforeBalance !== null && afterBalance !== null ? "provider_display" : "unknown"', self.script)
+        self.assertIn('created_by: "browser_automation"', self.script)
+        self.assertIn('integrity_status: downloadedFile ? "verified" : (mediaUri ? "not_checked" : "missing")', self.script)
+        self.assertIn('event: "generation_ledger_recorded"', self.script)
+        self.assertIn('status: "unknown_do_not_retry"', self.script)
+        self.assertIn('resultStatus, mediaUri, downloadedFile, downloadError, timeoutError, attemptNumber', self.script)
+        self.assertIn('--ledger-project-id', self.script)
+        self.assertIn('ledgerProjectId || scene.goglow_project_id || projectId', self.script)
+
+    def test_wait_credit_reader_opens_and_closes_configured_account_panel(self):
+        self.assertIn("async function readCreditBalance(page, selectors)", self.script)
+        self.assertIn("selectors.account_panel_open", self.script)
+        self.assertIn("selectors.account_panel_close", self.script)
+        self.assertIn("span.credits-count", (Path(__file__).parents[1] / "examples" / "flow-pilot-selectors.example.json").read_text(encoding="utf-8"))
+
+    def test_wait_returns_to_project_before_credit_polling_and_recovers_on_error(self):
+        self.assertIn('chosen.page.goBack({ waitUntil: "domcontentloaded", timeout: 15000 })', self.script)
+        self.assertIn('chosen.page.goBack({ waitUntil: "domcontentloaded", timeout: 10000 })', self.script)
+        self.assertLess(self.script.index("chosen.page.goBack({ waitUntil: \"domcontentloaded\", timeout: 15000 })"), self.script.index("const balanceDeadline"))
+
+    def test_download_filename_is_keyed_by_scene_and_attempt(self):
+        self.assertIn('const safeScene = String(sceneId || "scene")', self.script)
+        self.assertIn('const safeAttempt = String(attemptId || "attempt")', self.script)
+        self.assertIn('${safeScene}__${safeAttempt}${extension}', self.script)
+        self.assertIn("Refusing to overwrite an existing scene/attempt download", self.script)
+
+    def test_virtualized_flow_grid_uses_new_stable_keys_not_tile_count(self):
+        self.assertIn("const newIndexes = keys.map((key, index)", self.script)
+        self.assertNotIn("count > beforeCount", self.script)
+
     def test_confirmation_reader_buffers_piped_stdin(self):
         self.assertIn("function createConfirmationReader()", self.script)
         self.assertIn("const queued = [];", self.script)
@@ -150,8 +208,10 @@ class FlowPilotContractTests(unittest.TestCase):
         self.assertIn('event: "submission_intent"', self.script)
         self.assertIn('event: "submission_outcome_unknown"', self.script)
         self.assertIn('status: "unknown_do_not_retry"', self.script)
-        self.assertNotIn("while (", self.script)
-        self.assertNotIn("for (;;)", self.script)
+        self.assertEqual(self.script.count('await finalButton.click({ timeout: 2500 })'), 1)
+        submission = self.script.split('await finalButton.click({ timeout: 2500 })', 1)[1].split('event: "create_click_returned"', 1)[0]
+        self.assertNotIn("finalButton.click", submission)
+        self.assertNotIn("CREATE ONE VIDEO FOR", submission)
 
     def test_requires_unique_visible_selectors(self):
         self.assertIn("expected exactly one", self.script)

@@ -80,6 +80,31 @@ After the account confirmation and READY-TO-CREATE CHECK, the runner requires a 
 
 It re-checks the URL, project/account identity and Create control before a single click. It never retries. If the click outcome is ambiguous, inspect Flow manually and do not click again until the result is known. The append-only receipt records submission intent and whether the click returned or its outcome is unknown; it does not claim generation completion or credit charge.
 
+### Optional wait, download, and ledger output
+
+After the same single Create click, `--wait` can monitor the project for one uniquely identifiable new video tile, open it, wait for the `Download media` control, choose `360p Original size`, and save the download locally. It does not click Create again. The wait timeout defaults to 10 minutes and can be set from 30 seconds to 30 minutes. If no unique new tile appears or the download control never appears, it records the attempt as `unknown`, exits non-zero, and explicitly says not to retry. If the video is ready but the download itself fails, the attempt remains `succeeded` and the download error is recorded separately.
+
+`--wait` requires these additional selector keys in the local selector JSON:
+- `credit_balance`: exactly one visible element whose text contains the current integer balance.
+- `generated_video_items`: all existing video tiles, each with a stable unique `data-id`, `data-testid`, `href`, nested link href, or media src. The runner compares before/after identities and refuses to guess if it cannot isolate exactly one new tile.
+- `download_media_button`: the visible Download media control after opening the new tile.
+- `download_360p_original_button`: the menu option for 360p Original size.
+
+The example values for these selectors are placeholders. First replace them with values inspected from the real Flow DOM, then run `--dry-run --wait`. This selector-only preflight reports the current balance and existing stable tile keys, then clears prompt/Ingredients; it never clicks Create, waits for a generation, or downloads media. If preflight fails, it attempts verified cleanup. Only use `--execute --wait` after the preflight passes. The runner captures the credit balance immediately before Create, then observes it for up to 30 seconds after the result. It records an actual charge only when a positive balance decrease is observed; an unchanged or unreadable balance remains unknown rather than being inferred as zero.
+
+Example options to add to the normal `--execute` command:
+
+```bash
+--wait --wait-timeout-ms 600000 \
+  --download-dir local/flow-downloads \
+  --ledger-output local/flow-generation-ledger.jsonl \
+  --ledger-project-id "your-GoGlow-project-id"
+```
+
+`--ledger-project-id` is optional. Set it to the Project ID shown in the GoGlow app's Markdown export if the imported attempts should be grouped under that GoGlow project; otherwise the Flow project UUID is used as the record's `project_id`.
+
+The JSONL file is append-only and each line is a GoGlow Generation Attempt record with prompt SHA-256, result status, balance before/after, observed charge if known, Flow media URL, downloaded file path and SHA-256, and QC left `not_reviewed`. A timed-out attempt is recorded as `unknown`; do not re-run it until Flow has been inspected manually. To bring these records into the browser-based GoGlow project ledger, open the GoGlow app and click **Nhập Flow ledger**, select the JSONL file, then save/export the project. Import validates each record and skips duplicate attempt IDs. The Flow project UUID is used as `project_id` by default; this is preserved as provider-project provenance and may differ from the browser prototype's own project ID.
+
 ## Safety properties
 
 - Existing Chrome CDP connection only; no navigation, direct Flow API or direct HTTP request.
