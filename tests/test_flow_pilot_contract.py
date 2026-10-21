@@ -113,16 +113,19 @@ class FlowPilotContractTests(unittest.TestCase):
         self.assertIn("isVisible", self.script)
         self.assertIn("create_button_enabled", self.script)
 
-    def test_character_profile_is_required_and_prompt_is_composed_before_flow_mutation(self):
-        self.assertIn('--character-profile', self.script)
-        self.assertIn('scene.character_id', self.script)
-        self.assertIn('loadCharacterProfile(args.characterProfile, scene.character_id)', self.script)
-        self.assertIn('composeCharacterPrompt(scene.prompt, character)', self.script)
-        self.assertIn('await uploadCharacterReferences(chosen.page, selectors, character)', self.script)
-        self.assertLess(self.script.index('await uploadCharacterReferences(chosen.page, selectors, character)'), self.script.index('await prompt.fill(scene.prompt'))
-        self.assertIn('reference_image_count: character.reference_images.length', self.script)
+    def test_each_scene_supplies_its_own_reference_images_and_character_description(self):
+        self.assertIn('scene.character_description', self.script)
+        self.assertIn('scene.reference_images', self.script)
+        self.assertIn('reference_images as an array of 1 to 3 local file paths', self.script)
+        self.assertIn('Character description must be ASCII/English only', self.script)
+        self.assertIn('Scene JSON must contain a non-empty character_description', self.script)
+        self.assertIn('uploadSceneReferences(chosen.page, selectors, referenceImages)', self.script)
+        self.assertLess(self.script.index('await uploadSceneReferences(chosen.page, selectors, referenceImages)'), self.script.index('await prompt.fill(scene.prompt'))
+        self.assertIn('reference_image_count: referenceImages.length', self.script)
         self.assertIn('ingredient_reference_items', self.script)
         self.assertIn('Stopping before prompt fill/Create', self.script)
+        self.assertNotIn('--character-profile', self.script)
+        self.assertNotIn('character_id', self.script)
 
 
 if __name__ == "__main__":
