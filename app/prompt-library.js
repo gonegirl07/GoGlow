@@ -22,7 +22,7 @@
   function validateEnglishPrompt(text) {
     const source = String(text == null ? "" : text);
     const matches = [];
-    const re = /[À-ỹĐđ\u0300-\u036f]/g;
+    const re = /[àáạảãâầấẩẫậăằắẳẵặèéẹẻẽêềếểễệìíịỉĩòóọỏõôồốổỗộơờớởỡợùúụủũưừứửữựỳýỵỷỹđÀÁẠẢÃÂẦẤẨẪẬĂẰẮẲẴẶÈÉẸẺẼÊỀẾỂỄỆÌÍỊỈĨÒÓỌỎÕÔỒỐỔỖỘƠỜỚỞỠỢÙÚỤỦŨƯỪỨỬỮỰỲÝỴỶỸĐ\u0300-\u036f]/g;
     let match;
     while ((match = re.exec(source)) !== null) {
       matches.push({ character: match[0], index: match.index });
