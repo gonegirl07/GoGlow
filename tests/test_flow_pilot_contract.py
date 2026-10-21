@@ -44,6 +44,23 @@ class FlowPilotContractTests(unittest.TestCase):
         self.assertIn("DRY RUN COMPLETE: stopped before clicking Create", self.script)
         self.assertIn("rl.close();", self.script)
 
+    def test_waits_for_create_button_to_become_enabled(self):
+        self.assertIn("waitForCreateEnabled(chosen.page, create, 5000)", self.script)
+        self.assertIn("page.waitForFunction(element => element.isConnected", self.script)
+        self.assertIn("Create button did not become enabled within", self.script)
+
+    def test_prompt_cleanup_is_verified_after_failure_and_dry_run(self):
+        self.assertIn("async function clearPromptVerified(prompt", self.script)
+        self.assertIn("Prompt was cleared and verified empty.", self.script)
+        self.assertIn("textbox did not become empty within the verification timeout", self.script)
+        self.assertIn("CRITICAL: prompt could not be verified empty", self.script)
+
+    def test_confirmation_reader_buffers_piped_stdin(self):
+        self.assertIn("function createConfirmationReader()", self.script)
+        self.assertIn("const queued = [];", self.script)
+        self.assertIn("interface_.on(\"line\"", self.script)
+        self.assertIn("if (queued.length) return Promise.resolve(queued.shift());", self.script)
+
     def test_model_option_comparison_strips_icon_line_but_remains_exact(self):
         self.assertIn(r"rawText.split(/\r?\n/)", self.script)
         self.assertIn("if (text !== model)", self.script)
