@@ -103,14 +103,14 @@ class FlowPilotContractTests(unittest.TestCase):
     def test_wait_mode_requires_execute_and_bounded_timeout(self):
         self.assertIn('if (args.waitForResult && !args.execute && !args.dryRun)', self.script)
         self.assertIn('--wait without --execute is preflight-only; pass --dry-run --wait explicitly.', self.script)
-        self.assertIn('WAIT SELECTOR PREFLIGHT (read-only; no Create click)', self.script)
+        self.assertIn('WAIT SELECTOR PREFLIGHT (read-only; no Create click; Videos tab selected when available; virtualized grid swept)', self.script)
         self.assertIn('--wait-timeout-ms must be an integer from 30000 to 1800000', self.script)
         self.assertIn('--wait requires a non-empty', self.script)
         self.assertIn('["credit_balance", "generated_video_items", "download_media_button", "download_360p_original_button", "account_panel_open", "account_panel_close"]', self.script)
 
     def test_wait_tracks_new_tile_by_stable_identity_and_never_retries(self):
-        self.assertIn('generatedItemKeys(page, selectors.generated_video_items)', self.script)
-        self.assertIn('newIndexes.length === 1', self.script)
+        self.assertIn('collectAllGeneratedItems(page, selectors.generated_video_items)', self.script)
+        self.assertIn('newItems.length === 1', self.script)
         self.assertIn('refusing to guess which clip to download', self.script)
         self.assertIn('status: "unknown_do_not_retry"', self.script)
         self.assertIn('Do NOT retry automatically', self.script)
@@ -155,7 +155,8 @@ class FlowPilotContractTests(unittest.TestCase):
         self.assertIn("Refusing to overwrite an existing scene/attempt download", self.script)
 
     def test_virtualized_flow_grid_uses_new_stable_keys_not_tile_count(self):
-        self.assertIn("const newIndexes = keys.map((key, index)", self.script)
+        self.assertIn("const newItems = scan.items.filter(item => item.key && !beforeKeys.includes(item.key))", self.script)
+        self.assertIn("async function collectAllGeneratedItems(page, selector", self.script)
         self.assertNotIn("count > beforeCount", self.script)
 
     def test_confirmation_reader_buffers_piped_stdin(self):
@@ -259,7 +260,7 @@ class FlowPilotContractTests(unittest.TestCase):
         self.assertIn("FLOW_GENERATION_FAILED:", self.script)
         self.assertIn('event: resultStatus === "failed" ? "generation_failed_detected" : "generation_wait_unverified"', self.script)
         self.assertIn('resultStatus === "failed" && beforeBalance !== null && afterBalance !== null && beforeBalance === afterBalance ? "not_charged" : "unknown"', self.script)
-        self.assertIn("wait-timeout screenshot saved", self.script)
+        self.assertIn("Wait-timeout screenshot saved", self.script)
 
     def test_hybrid_face_description_strips_trailing_period_before_adding_punctuation(self):
         self.assertIn(r'scene.character_description.trim().replace(/[.\s]+$/, "")', self.script)
