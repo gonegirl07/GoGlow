@@ -265,7 +265,10 @@ async function collectAllGeneratedItems(page, selector, { targetKey = null, maxS
 }
 
 function isGenerationFailureText(value) {
-  return /generation failed|failed to generate|couldn['’]?t generate|unable to generate|video failed|something went wrong|blocked by (?:policy|safety)|violat(?:es|ed) (?:our )?(?:policy|guidelines)|generation error/i.test(String(value || ""));
+  // Match Flow's current policy-failure wording as well as older generic errors.
+  // Keep bare "Failed" out of this body-level matcher; old failed tiles can remain
+  // in the project. The per-new-tile check below handles that short status safely.
+  return /generation failed|failed to generate|couldn['’]?t generate|unable to generate|video failed|something went wrong|blocked by (?:policy|safety)|might violate|violate(?:s|d)? (?:our )?policies|violat(?:es|ed) (?:our )?(?:policy|policies|guidelines)|prominent people|you will be refunded|generation error/i.test(String(value || ""));
 }
 
 async function activateVideosTab(page, selectors) {
@@ -315,8 +318,10 @@ function makeGenerationLedgerRecord({ scene, projectId, ledgerProjectId, prompt,
   const observedDelta = beforeBalance !== null && afterBalance !== null && beforeBalance >= afterBalance
     ? beforeBalance - afterBalance : null;
   const actualAmount = observedDelta !== null && observedDelta > 0 ? observedDelta : null;
+  const refundPending = resultStatus === "failed" && /refund(?:ed)?(?: for this generation| may take| pending)?|you will be refunded/i.test(String(timeoutError || ""));
   const chargeStatus = actualAmount !== null ? "charged"
-    : (resultStatus === "failed" && beforeBalance !== null && afterBalance !== null && beforeBalance === afterBalance ? "not_charged" : "unknown");
+    : (refundPending ? "refunded_pending"
+      : (resultStatus === "failed" && beforeBalance !== null && afterBalance !== null && beforeBalance === afterBalance ? "not_charged" : "unknown"));
   const timestamp = new Date().toISOString();
   attemptId = attemptId || ("attempt-" + randomUUID());
   return {
@@ -431,7 +436,9 @@ async function waitForGenerationAndDownload(page, selectors, { beforeKeys, befor
     const firstTileIsNew = Boolean(firstTile && firstTile.key && !beforeKeys.includes(firstTile.key)
       && scan.items.length > beforeKeys.length);
     const candidateItems = firstTileIsNew ? [firstTile] : newItems;
-    const failedTile = newItems.find(item => isGenerationFailureText(`${item.state} ${item.text}`));
+    const failedTile = newItems.find(item =>
+      /\\bfailed\\b/i.test(`${item.state} ${item.text}`)
+      || isGenerationFailureText(`${item.state} ${item.text}`));
     if (failedTile) {
       throw new Error(`FLOW_GENERATION_FAILED: new Flow tile ${failedTile.key} reports failure: ${failedTile.text || failedTile.state}`);
     }
@@ -1426,6 +1433,10 @@ async function prepare(args, browser, rl) {
         }
       } else if (resultStatus === "failed") {
         console.error("Flow generation failure was detected and recorded in the ledger. Do NOT retry automatically.");
+        if (variantCount > 1) {
+          args._stopVariants = true;
+          console.error(`Stopping variant batch after variant ${variantIndex}/${variantCount} failed; later variants will NOT be submitted with the same prompt.`);
+        }
         process.exitCode = 2;
         return;
       } else {
@@ -1487,6 +1498,7 @@ async function main() {
         args._variantIndex = index;
         console.log(`\\nPreparing variant ${index}/${variantCount} for the same job and prompt.`);
         await prepare(args, browser, rl);
+        if (args._stopVariants) break;
       }
     } else {
       args._variantIndex = 1;
