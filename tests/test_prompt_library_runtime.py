@@ -113,7 +113,7 @@ class PromptLibraryRuntimeTests(unittest.TestCase):
         self.assertIn("const copyCheck=window.GoGlowPromptLibrary.validateEnglishPrompt(s.prompt||\"\")", self.html)
         self.assertIn("Chặn Apply: prompt phải hoàn toàn bằng tiếng Anh.", self.html)
         self.assertIn("Brief dự án phải bằng tiếng Anh vì được đưa vào prompt Flow.", self.html)
-        self.assertIn('value="A quiet park path in the morning, natural light, realistic movement."', self.html)
+        self.assertIn('<textarea id="brief">A quiet park path in the morning, natural light, realistic movement.</textarea>', self.html)
         beats_start = self.html.index("const beats")
         beats = self.html[beats_start:self.html.index("function settings()", beats_start)]
         self.assertIsNone(validator.search(beats), "All default action/start/end/body-mechanics strings must be English.")
