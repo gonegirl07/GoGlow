@@ -260,6 +260,8 @@ class FlowPilotContractTests(unittest.TestCase):
         self.assertIn("FLOW_GENERATION_FAILED:", self.script)
         self.assertIn('event: resultStatus === "failed" ? "generation_failed_detected" : "generation_wait_unverified"', self.script)
         self.assertIn('resultStatus === "failed" && beforeBalance !== null && afterBalance !== null && beforeBalance === afterBalance ? "not_charged" : "unknown"', self.script)
+        self.assertIn('else if (resultStatus === "failed")', self.script)
+        self.assertIn("Flow generation failure was detected and recorded in the ledger", self.script)
         self.assertIn("Wait-timeout screenshot saved", self.script)
 
     def test_hybrid_face_description_strips_trailing_period_before_adding_punctuation(self):
