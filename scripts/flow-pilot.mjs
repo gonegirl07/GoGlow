@@ -954,7 +954,7 @@ async function prepare(args, browser, rl) {
     `CREATE ONE VIDEO FOR ${scene.scene_id}`);
   args._waitStartedOn = new Date().toISOString();
   appendEvent(args.log, {
-    event: "submission_intent", scene_id: scene.scene_id, reference_image_count: referenceImages.length, reference_image_names: referenceImages.map(file => path.basename(file)), character_description: scene.character_description, model: scene.model, resolution: scene.resolution,
+    event: "submission_intent", scene_id: scene.scene_id, reference_image_count: referenceImages.length, reference_image_names: referenceImages.map(file => path.basename(file)), face_reference_id: scene.face_reference_id, face_reference_image: path.basename(faceReferenceImage), character_description: scene.character_description, model: scene.model, resolution: scene.resolution,
     prompt: scene.prompt, account_email: account.observedEmail, project_id: chosen.projectId,
     estimated_credit_cost: creditCost, url: chosen.page.url(), status: "submission_in_progress",
   });
