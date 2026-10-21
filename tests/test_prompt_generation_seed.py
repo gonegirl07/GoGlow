@@ -1,0 +1,105 @@
+"""Contract tests for the proposed prompt-rule and generation-attempt seed data."""
+import json
+import unittest
+from pathlib import Path
+
+ROOT = Path(__file__).resolve().parents[1]
+
+
+class PromptAndGenerationSeedTests(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls):
+        cls.rule_schema = json.loads((ROOT / "specs" / "prompt-rule.schema.json").read_text(encoding="utf-8"))
+        cls.attempt_schema = json.loads((ROOT / "specs" / "generation-attempt.schema.json").read_text(encoding="utf-8"))
+        cls.rules = json.loads((ROOT / "examples" / "prompt-rules.seed.json").read_text(encoding="utf-8"))
+        cls.attempts = json.loads((ROOT / "examples" / "generation-attempts.seed.json").read_text(encoding="utf-8"))
+        cls.library_schema = json.loads((ROOT / "specs" / "prompt-library.schema.json").read_text(encoding="utf-8"))
+        cls.library = json.loads((ROOT / "examples" / "prompt-library.seed.json").read_text(encoding="utf-8"))
+
+    def test_schemas_are_versioned_and_expose_evidence_fields(self):
+        self.assertEqual(self.rule_schema["properties"]["schema_version"]["const"], "1.0")
+        self.assertIn("evidence", self.rule_schema["required"])
+        self.assertIn("provenance", self.rule_schema["required"])
+        self.assertIn("credits", self.attempt_schema["required"])
+        self.assertIn("result", self.attempt_schema["required"])
+        self.assertIn("rule_ids", self.attempt_schema["required"])
+        self.assertIn("null", self.attempt_schema["properties"]["started_on"]["type"])
+
+    def test_first_rule_is_narrowly_scoped_and_confirmed_with_one_pass(self):
+        self.assertEqual(len(self.rules["rules"]), 1)
+        rule = self.rules["rules"][0]
+        self.assertEqual(rule["rule_id"], "yoga.warrior-ii.stable-hold-breathe")
+        self.assertEqual(rule["status"], "confirmed")
+        self.assertEqual(rule["scope"]["pose_ids"], ["warrior-ii"])
+        self.assertEqual(rule["scope"]["model_labels"], ["Omni 1.1 Flash"])
+        self.assertEqual(rule["scope"]["pose_reference_ids"], ["warrior-still-v4"])
+        self.assertEqual(rule["scope"]["face_reference_ids"], ["mai-face"])
+        passes = [item for item in rule["evidence"] if item["kind"] == "pass"]
+        failures = [item for item in rule["evidence"] if item["kind"] == "fail"]
+        self.assertEqual(len(passes), 1)
+        self.assertEqual((passes[0]["qc_passed"], passes[0]["qc_total"]), (7, 7))
+        self.assertEqual(len(failures), 2)
+        self.assertIn("Exact prompt text was not supplied", failures[0]["summary"])
+
+    def test_success_prompt_is_verbatim_and_attempts_are_append_only(self):
+        rule = self.rules["rules"][0]
+        expected = (
+            "Mai, the woman in the reference image, same face, hair, sage-green high-neck longline sports top and dark grey yoga leggings, bright yoga studio. "
+            "The shot starts already in the exact Warrior II pose of the reference image with the same wide full-body framing, empty space on both sides, both hands inside the frame. "
+            "Static locked-off camera. She holds the pose calmly: only gentle breathing in the chest and shoulders and a soft blink. "
+            "Feet, legs, hips and arms stay still. Natural hands. Single continuous shot, real-time. No text."
+        )
+        self.assertEqual(rule["instructions"]["exact_prompt_fragment"], expected)
+        attempts = self.attempts["attempts"]
+        self.assertEqual(len(attempts), 3)
+        self.assertEqual([a["result"]["status"] for a in attempts], ["succeeded", "succeeded", "succeeded"])
+        self.assertEqual([a["qc"]["status"] for a in attempts], ["fail", "fail", "pass"])
+        self.assertTrue(all(a["started_on"] is None for a in attempts))
+        self.assertTrue(all(a["credits"]["actual_amount"] is None for a in attempts))
+        self.assertEqual(attempts[2]["configuration"]["pose_reference_id"], "warrior-still-v4")
+        self.assertEqual(attempts[2]["configuration"]["face_reference_id"], "mai-face")
+
+    def test_attempt_records_do_not_claim_unknown_credit_or_direct_download(self):
+        attempts = self.attempts["attempts"]
+        self.assertTrue(all(a["credits"]["charge_status"] == "unknown" for a in attempts))
+        self.assertTrue(all(a["credits"]["evidence_source"] == "unknown" for a in attempts))
+        self.assertIsNone(attempts[0]["prompt"]["sha256"])
+        self.assertIn("not a verified direct downloadable media file", attempts[2]["qc"]["notes"])
+
+    def test_prompt_library_schema_and_seed_top_level_contract(self):
+        required = set(self.library_schema["required"])
+        self.assertTrue(required.issubset(self.library.keys()))
+        self.assertEqual(self.library_schema["properties"]["provider"]["const"], "google_flow")
+        self.assertEqual(self.library["schema_version"], "1.0")
+
+    def test_prompt_library_template_and_warnings_are_seeded(self):
+        library = self.library
+        self.assertEqual(library["model_label"], "Omni 1.1 Flash")
+        fixed = library["prompt_template"]["fixed_block"]
+        self.assertIn("Mai", fixed["identity"])
+        self.assertIn("static camera", fixed["camera"])
+        self.assertEqual(library["prompt_template"]["sections_order"][0], "fixed_block")
+        self.assertEqual(library["warnings"]["block_if_match_behavior"], "warn_only")
+        self.assertEqual(library["warnings"]["prompt_length"]["behavior"], "warn_only")
+
+    def test_confirmed_and_candidate_rules_are_distinguished(self):
+        rules = {rule["id"]: rule for rule in self.library["rules"]}
+        self.assertEqual(rules["start-already-in-pose"]["status"], "confirmed")
+        self.assertEqual(rules["warn-shoulder-roll-ambiguity"]["status"], "candidate")
+        self.assertEqual(rules["warn-platform-branding"]["autoApply"]["behavior"], "warn_only")
+        self.assertEqual(rules["warn-platform-branding"]["autoApply"]["blockIfMatch"], ["TikTok", "Reels"])
+
+    def test_motion_library_and_credit_estimate_do_not_claim_actual_charge(self):
+        motions = {motion["id"]: motion for motion in self.library["motions"]}
+        self.assertEqual(motions["neck-side-bend"]["risk"], "risky")
+        self.assertEqual(motions["neck-side-bend"]["evidence"][0]["score"], "6/6 fail")
+        self.assertEqual(motions["mountain-arms-prayer"]["scope"]["resolution"], "360p")
+        log = self.library["generation_log"]
+        self.assertEqual(log[-1]["credits"]["estimated"], 6)
+        self.assertIsNone(log[-1]["credits"]["actual"])
+        self.assertEqual(log[-1]["credits"]["source"], "owner_estimate")
+        self.assertTrue(all(row["credits"]["actual"] is None for row in log))
+
+
+if __name__ == "__main__":
+    unittest.main()

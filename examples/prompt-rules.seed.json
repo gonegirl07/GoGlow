@@ -1,0 +1,113 @@
+{
+  "schema_version": "1.0",
+  "rules": [
+    {
+      "schema_version": "1.0",
+      "rule_id": "yoga.warrior-ii.stable-hold-breathe",
+      "version": 1,
+      "title": "Warrior II: start already stable, hold and breathe",
+      "status": "confirmed",
+      "rule_type": "start_state",
+      "scope": {
+        "activities": [
+          "yoga"
+        ],
+        "pose_ids": [
+          "warrior-ii"
+        ],
+        "character_ids": [
+          "mai"
+        ],
+        "model_labels": [
+          "Omni 1.1 Flash"
+        ],
+        "aspect_ratios": [
+          "9:16"
+        ],
+        "clip_durations_seconds": [
+          8
+        ],
+        "resolution_labels": [
+          "360p"
+        ],
+        "pose_reference_ids": [
+          "warrior-still-v4"
+        ],
+        "face_reference_ids": [
+          "mai-face"
+        ]
+      },
+      "priority": 100,
+      "instructions": {
+        "positive": [
+          "The shot starts already in the exact Warrior II pose of the reference image.",
+          "Keep the same wide full-body framing with empty space on both sides and both hands fully inside the frame.",
+          "Use a static locked-off camera.",
+          "Hold the pose calmly; only gentle breathing in the chest and shoulders and a soft blink are allowed.",
+          "Feet, legs, hips and arms stay still; use natural hands.",
+          "Use one continuous real-time shot and no text."
+        ],
+        "avoid": [
+          "Do not transition into the pose during the clip.",
+          "Do not deepen the knee bend or add unrequested movement.",
+          "Do not move or slide either foot.",
+          "Do not crop hands or fingertips; do not pan or zoom."
+        ],
+        "exact_prompt_fragment": "Mai, the woman in the reference image, same face, hair, sage-green high-neck longline sports top and dark grey yoga leggings, bright yoga studio. The shot starts already in the exact Warrior II pose of the reference image with the same wide full-body framing, empty space on both sides, both hands inside the frame. Static locked-off camera. She holds the pose calmly: only gentle breathing in the chest and shoulders and a soft blink. Feet, legs, hips and arms stay still. Natural hands. Single continuous shot, real-time. No text."
+      },
+      "rationale": "Observed QC evidence favors starting already in a stable pose and limiting motion to gentle breathing and a soft blink instead of asking the model to enter or deepen the pose.",
+      "provenance": {
+        "source_type": "owner_observation",
+        "source_note": "User-reported real Google Flow E2E QC result, 7/7 checks passed. The user confirmed this rule as the first confirmed seed. One successful clip so far; confirmed for this narrow setup, not a universal guarantee.",
+        "source_url": "https://flow.google.com/project/2c77da50-fb9e-4cc2-bf50-8ce67649c32e/edit/a1b393d9-84db-437a-bf54-8f7505e26da5",
+        "observed_on": "2026-10-21"
+      },
+      "evidence": [
+        {
+          "evidence_id": "warrior-stable-pass-001",
+          "kind": "pass",
+          "summary": "QC 7/7: hands remain in frame; rear foot reported 0 px sliding; visible breathing rhythm.",
+          "attempt_id": "flow-warrior-stable-pass-001",
+          "clip_url": "https://flow.google.com/project/2c77da50-fb9e-4cc2-bf50-8ce67649c32e/edit/a1b393d9-84db-437a-bf54-8f7505e26da5",
+          "observed_on": "2026-10-21",
+          "qc_passed": 7,
+          "qc_total": 7,
+          "qc_checks": [
+            "hands/fingertips stay inside frame",
+            "rear foot has 0 px slide",
+            "breathing rhythm is visible"
+          ],
+          "limitations": "One successful 360p/8s clip in 9:16 using Omni 1.1 Flash and Ingredients warrior-still-v4 + mai-face. More trials are needed before generalizing."
+        },
+        {
+          "evidence_id": "warrior-knee-bend-fail-001",
+          "kind": "fail",
+          "summary": "Earlier prompt strategy asked for knee-bend/transition movement; rear foot slid approximately 20–40 px and hands/fingertips were cropped. Exact prompt text was not supplied; this is an observation summary, not a verbatim prompt.",
+          "attempt_id": "flow-warrior-knee-bend-fail-001",
+          "clip_url": null,
+          "observed_on": "2026-10-21",
+          "qc_passed": null,
+          "qc_total": 7,
+          "qc_checks": [],
+          "limitations": "The precise defect measurements and crop timing were reported by the user; original prompt text is unavailable."
+        },
+        {
+          "evidence_id": "warrior-knee-bend-fail-002",
+          "kind": "fail",
+          "summary": "Second earlier prompt revision did not resolve the recurring rear-foot slide (reported range 20–40 px) and hand cropping. Exact prompt text was not supplied; this is an observation summary, not a verbatim prompt.",
+          "attempt_id": "flow-warrior-knee-bend-fail-002",
+          "clip_url": null,
+          "observed_on": "2026-10-21",
+          "qc_passed": null,
+          "qc_total": 7,
+          "qc_checks": [],
+          "limitations": "The user reported two failed prompt versions before the stable-hold strategy; per-attempt exact prompts and separate measurements were not supplied."
+        }
+      ],
+      "related_rule_ids": [],
+      "supersedes": null,
+      "created_at": "2026-10-21T15:09:00+07:00",
+      "updated_at": "2026-10-21T15:09:00+07:00"
+    }
+  ]
+}

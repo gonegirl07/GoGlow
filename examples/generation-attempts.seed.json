@@ -1,0 +1,187 @@
+{
+  "schema_version": "1.0",
+  "attempts": [
+    {
+      "schema_version": "1.0",
+      "attempt_id": "flow-warrior-knee-bend-fail-001",
+      "project_id": "mai-daily-video",
+      "scene_id": "warrior-ii",
+      "attempt_number": 1,
+      "retry_of": null,
+      "provider": "google_flow",
+      "started_on": null,
+      "finished_on": null,
+      "configuration": {
+        "model_label": "Omni 1.1 Flash",
+        "resolution": "360p",
+        "duration_seconds": 8,
+        "aspect_ratio": "9:16",
+        "pose_reference_id": null,
+        "face_reference_id": null,
+        "other_reference_ids": []
+      },
+      "prompt": {
+        "text": "[Exact prompt not provided; earlier strategy involved entering/deepening the Warrior II knee bend.]",
+        "sha256": null,
+        "template_version": null
+      },
+      "rule_ids": [],
+      "result": {
+        "status": "succeeded",
+        "provider_message": null,
+        "failure": null
+      },
+      "credits": {
+        "estimated_amount": null,
+        "actual_amount": null,
+        "currency_or_unit": "credits",
+        "charge_status": "unknown",
+        "before_balance": null,
+        "after_balance": null,
+        "evidence_source": "unknown",
+        "notes": "No observed credit figure supplied."
+      },
+      "media": {
+        "uri": null,
+        "downloaded_file": null,
+        "sha256": null,
+        "integrity_status": "not_checked"
+      },
+      "qc": {
+        "status": "fail",
+        "observed_defects": [
+          "rear foot slid approximately 20–40 px",
+          "hand/fingertips cropped"
+        ],
+        "checks_passed": null,
+        "checks_total": 7,
+        "reviewed_by": "user",
+        "reviewed_on": null,
+        "notes": "Approximate summary from user; original prompt and per-check results unavailable."
+      },
+      "created_by": "user",
+      "notes": "Failure record reconstructed from user-provided summary; timestamps are date placeholders, not observed generation times."
+    },
+    {
+      "schema_version": "1.0",
+      "attempt_id": "flow-warrior-knee-bend-fail-002",
+      "project_id": "mai-daily-video",
+      "scene_id": "warrior-ii",
+      "attempt_number": 2,
+      "retry_of": "flow-warrior-knee-bend-fail-001",
+      "provider": "google_flow",
+      "started_on": null,
+      "finished_on": null,
+      "configuration": {
+        "model_label": "Omni 1.1 Flash",
+        "resolution": "360p",
+        "duration_seconds": 8,
+        "aspect_ratio": "9:16",
+        "pose_reference_id": null,
+        "face_reference_id": null,
+        "other_reference_ids": []
+      },
+      "prompt": {
+        "text": "[Exact prompt not provided; second revision did not resolve the reported motion/framing defects.]",
+        "sha256": null,
+        "template_version": null
+      },
+      "rule_ids": [],
+      "result": {
+        "status": "succeeded",
+        "provider_message": null,
+        "failure": null
+      },
+      "credits": {
+        "estimated_amount": null,
+        "actual_amount": null,
+        "currency_or_unit": "credits",
+        "charge_status": "unknown",
+        "before_balance": null,
+        "after_balance": null,
+        "evidence_source": "unknown",
+        "notes": "No observed credit figure supplied."
+      },
+      "media": {
+        "uri": null,
+        "downloaded_file": null,
+        "sha256": null,
+        "integrity_status": "not_checked"
+      },
+      "qc": {
+        "status": "fail",
+        "observed_defects": [
+          "rear foot slide remained unresolved",
+          "hand/fingertips remained cropped"
+        ],
+        "checks_passed": null,
+        "checks_total": 7,
+        "reviewed_by": "user",
+        "reviewed_on": null,
+        "notes": "Approximate summary from user; original prompt and per-check results unavailable."
+      },
+      "created_by": "user",
+      "notes": "Failure record reconstructed from user-provided summary; timestamps are date placeholders, not observed generation times."
+    },
+    {
+      "schema_version": "1.0",
+      "attempt_id": "flow-warrior-stable-pass-001",
+      "project_id": "mai-daily-video",
+      "scene_id": "warrior-ii",
+      "attempt_number": 3,
+      "retry_of": "flow-warrior-knee-bend-fail-002",
+      "provider": "google_flow",
+      "started_on": null,
+      "finished_on": null,
+      "configuration": {
+        "model_label": "Omni 1.1 Flash",
+        "resolution": "360p",
+        "duration_seconds": 8,
+        "aspect_ratio": "9:16",
+        "pose_reference_id": "warrior-still-v4",
+        "face_reference_id": "mai-face",
+        "other_reference_ids": []
+      },
+      "prompt": {
+        "text": "Mai, the woman in the reference image, same face, hair, sage-green high-neck longline sports top and dark grey yoga leggings, bright yoga studio. The shot starts already in the exact Warrior II pose of the reference image with the same wide full-body framing, empty space on both sides, both hands inside the frame. Static locked-off camera. She holds the pose calmly: only gentle breathing in the chest and shoulders and a soft blink. Feet, legs, hips and arms stay still. Natural hands. Single continuous shot, real-time. No text.",
+        "sha256": null,
+        "template_version": "yoga.warrior-ii.stable-hold-breathe@1"
+      },
+      "rule_ids": [
+        "yoga.warrior-ii.stable-hold-breathe"
+      ],
+      "result": {
+        "status": "succeeded",
+        "provider_message": null,
+        "failure": null
+      },
+      "credits": {
+        "estimated_amount": null,
+        "actual_amount": null,
+        "currency_or_unit": "credits",
+        "charge_status": "unknown",
+        "before_balance": null,
+        "after_balance": null,
+        "evidence_source": "unknown",
+        "notes": "Credit charge not reported; do not infer from resolution/duration."
+      },
+      "media": {
+        "uri": "https://flow.google.com/project/2c77da50-fb9e-4cc2-bf50-8ce67649c32e/edit/a1b393d9-84db-437a-bf54-8f7505e26da5",
+        "downloaded_file": null,
+        "sha256": null,
+        "integrity_status": "not_checked"
+      },
+      "qc": {
+        "status": "pass",
+        "observed_defects": [],
+        "checks_passed": 7,
+        "checks_total": 7,
+        "reviewed_by": "user",
+        "reviewed_on": null,
+        "notes": "User reported QC 7/7: hands in frame, rear foot 0 px sliding, visible breathing rhythm. URL identifies Flow edit/project page, not a verified direct downloadable media file."
+      },
+      "created_by": "user",
+      "notes": "Prompt and QC evidence supplied by project owner. Timestamp is date placeholder, not observed generation time."
+    }
+  ]
+}

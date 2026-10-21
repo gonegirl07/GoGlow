@@ -1,0 +1,529 @@
+{
+  "schema_version": "1.0",
+  "provider": "google_flow",
+  "model_label": "Omni 1.1 Flash",
+  "prompt_template": {
+    "template_id": "mai.flow.omni11flash.base",
+    "version": 1,
+    "fixed_block": {
+      "identity": "Mai keeping exactly her face, hair, body.",
+      "outfit": "Describe the outfit explicitly; SFW, chest/upper torso fully covered.",
+      "room": "Describe the room/studio explicitly.",
+      "camera": "Eye-level static camera, front view, wide full-body framing, both hands and feet always inside the frame, no zoom.",
+      "quality": "Single continuous shot, calm real-time speed. Natural hands with five fingers.",
+      "safety": "No dialogue, no text, SFW."
+    },
+    "sections_order": [
+      "fixed_block",
+      "action",
+      "immobility_locks",
+      "ending_state",
+      "avoid_constraints"
+    ],
+    "notes": [
+      "Use one primary movement and at most one subtle secondary movement.",
+      "For stable holds, start already in the reference pose.",
+      "Specify hand placement and body parts that must stay fixed.",
+      "The template is guidance, not a guarantee."
+    ]
+  },
+  "rules": [
+    {
+      "id": "start-already-in-pose",
+      "type": "do",
+      "scope": [
+        "prompt",
+        "pose",
+        "motion"
+      ],
+      "text": "For stable yoga holds, start already in the exact reference pose; allow only the hold plus gentle breathing/blink.",
+      "reason": "Warrior II stable hold passed 7/7 after knee-bend transitions caused rear-foot slide and hand crop.",
+      "status": "confirmed",
+      "autoApply": {
+        "appendText": "The shot starts already in the exact pose of the reference image. Hold still until the end; only gentle breathing and a soft blink.",
+        "blockIfMatch": [],
+        "behavior": "auto_append"
+      },
+      "evidence": [
+        {
+          "result": "pass",
+          "note": "Warrior II: hands in frame, rear foot 0 px slide, visible breathing; QC 7/7.",
+          "source": "owner Flow test",
+          "clip_url": "https://flow.google.com/project/2c77da50-fb9e-4cc2-bf50-8ce67649c32e/edit/a1b393d9-84db-437a-bf54-8f7505e26da5",
+          "score": "7/7"
+        },
+        {
+          "result": "fail",
+          "note": "Two earlier knee-bend attempts: rear foot reportedly slid 20–40 px and hands were cropped; exact prompts unavailable.",
+          "source": "owner summary",
+          "clip_url": null,
+          "score": null
+        }
+      ]
+    },
+    {
+      "id": "keep-prompts-concise",
+      "type": "do",
+      "scope": [
+        "prompt",
+        "generation"
+      ],
+      "text": "Prefer concise prompts; change one variable per attempt and review the full clip.",
+      "reason": "A longer prompt reportedly failed to generate while a shorter version passed.",
+      "status": "confirmed",
+      "autoApply": {
+        "appendText": "",
+        "blockIfMatch": [],
+        "behavior": "warn_only"
+      },
+      "evidence": [
+        {
+          "result": "mixed",
+          "note": "Exact prompts and provider error code unavailable.",
+          "source": "owner summary",
+          "clip_url": null,
+          "score": null
+        }
+      ]
+    },
+    {
+      "id": "lock-static-body-parts",
+      "type": "do",
+      "scope": [
+        "prompt",
+        "pose",
+        "motion"
+      ],
+      "text": "Explicitly state which body parts stay fixed, e.g. 'Feet stay flat and fixed' or 'Neither foot moves'.",
+      "reason": "Clarifies intent, but locks alone did not fix a weight-shifting transition.",
+      "status": "confirmed",
+      "autoApply": {
+        "appendText": "",
+        "blockIfMatch": [],
+        "behavior": "none"
+      },
+      "evidence": [
+        {
+          "result": "mixed",
+          "note": "Foot-lock phrase alone did not resolve Warrior II transition; stable-hold approach passed.",
+          "source": "owner summary",
+          "clip_url": null,
+          "score": null
+        }
+      ]
+    },
+    {
+      "id": "describe-hand-placement",
+      "type": "do",
+      "scope": [
+        "prompt",
+        "anatomy"
+      ],
+      "text": "Describe where hands rest or what they touch; seated breathing can use 'hands resting in lap, never leave lap'.",
+      "reason": "Owner reports clean hands in seated breathing R2B3 with this constraint.",
+      "status": "confirmed",
+      "autoApply": {
+        "appendText": "",
+        "blockIfMatch": [],
+        "behavior": "none"
+      },
+      "evidence": [
+        {
+          "result": "pass",
+          "note": "Hands reportedly stayed clean and in lap.",
+          "source": "owner summary",
+          "clip_url": null,
+          "score": null
+        }
+      ]
+    },
+    {
+      "id": "warn-weight-shift",
+      "type": "dont",
+      "scope": [
+        "pose",
+        "motion"
+      ],
+      "text": "Warn on weight-shifting transitions such as deep Warrior knee bends, heel pedal, deep cat-cow, side bends and sun-salutation chains.",
+      "reason": "Reported foot sliding and hand/finger defects; prefer a stable hold or isolate transitions.",
+      "status": "confirmed",
+      "autoApply": {
+        "appendText": "",
+        "blockIfMatch": [
+          "deep knee bend",
+          "weight shift",
+          "heel pedal",
+          "deep cat-cow",
+          "side bend",
+          "sun salutation"
+        ],
+        "behavior": "warn_only"
+      },
+      "evidence": [
+        {
+          "result": "fail",
+          "note": "Warrior II transition reportedly slid rear foot 20–40 px and cropped hands.",
+          "source": "owner summary",
+          "clip_url": null,
+          "score": null
+        }
+      ]
+    },
+    {
+      "id": "warn-time-coded-static-pose",
+      "type": "dont",
+      "scope": [
+        "prompt",
+        "motion"
+      ],
+      "text": "Avoid time-coded phases for a simple static pose unless needed.",
+      "reason": "Owner reports time-coded phases caused stretching.",
+      "status": "candidate",
+      "autoApply": {
+        "appendText": "",
+        "blockIfMatch": [
+          "0–3s",
+          "0-3s",
+          "3–8s",
+          "3-8s"
+        ],
+        "behavior": "warn_only"
+      },
+      "evidence": [
+        {
+          "result": "mixed",
+          "note": "Exact prompt and clip not supplied.",
+          "source": "owner summary",
+          "clip_url": null,
+          "score": null
+        }
+      ]
+    },
+    {
+      "id": "warn-shoulder-roll-ambiguity",
+      "type": "dont",
+      "scope": [
+        "prompt",
+        "motion"
+      ],
+      "text": "Warn on ambiguous 'shoulder rolls' or 'shrug' phrasing.",
+      "reason": "Model reportedly may place hands on shoulders instead of performing intended movement.",
+      "status": "candidate",
+      "autoApply": {
+        "appendText": "",
+        "blockIfMatch": [
+          "shoulder rolls",
+          "shoulder roll",
+          "shrug",
+          "shrugs"
+        ],
+        "behavior": "warn_only"
+      },
+      "evidence": [
+        {
+          "result": "mixed",
+          "note": "Owner-reported behavior, exact clip unavailable.",
+          "source": "owner summary",
+          "clip_url": null,
+          "score": null
+        }
+      ]
+    },
+    {
+      "id": "warn-platform-branding",
+      "type": "dont",
+      "scope": [
+        "prompt",
+        "platform"
+      ],
+      "text": "Warn if TikTok or Reels appears when a clean video is needed.",
+      "reason": "Owner reports platform names can cause logos to appear.",
+      "status": "candidate",
+      "autoApply": {
+        "appendText": "",
+        "blockIfMatch": [
+          "TikTok",
+          "Reels"
+        ],
+        "behavior": "warn_only"
+      },
+      "evidence": [
+        {
+          "result": "mixed",
+          "note": "Owner-reported behavior, no linked clip.",
+          "source": "owner summary",
+          "clip_url": null,
+          "score": null
+        }
+      ]
+    },
+    {
+      "id": "explicit-real-time",
+      "type": "do",
+      "scope": [
+        "prompt",
+        "motion"
+      ],
+      "text": "When speed matters, explicitly request real-time speed and no slow motion.",
+      "reason": "Recommended wording; more repeated evidence needed.",
+      "status": "candidate",
+      "autoApply": {
+        "appendText": "real-time speed, never slow motion.",
+        "blockIfMatch": [],
+        "behavior": "auto_append"
+      },
+      "evidence": [
+        {
+          "result": "unverified",
+          "note": "Owner recommendation not tied to a scored clip.",
+          "source": "owner guidance",
+          "clip_url": null,
+          "score": null
+        }
+      ]
+    }
+  ],
+  "motions": [
+    {
+      "id": "micro-hold-breathe",
+      "name": "Micro-hold + breathing/blink",
+      "risk": "safe",
+      "status": "confirmed",
+      "scope": {
+        "model_label": "Omni 1.1 Flash",
+        "resolution": "360p",
+        "aspect_ratio": "9:16",
+        "duration_seconds": 8
+      },
+      "evidence": [
+        {
+          "result": "pass",
+          "note": "Warrior II example 7/7; family score also reported as 4/5.",
+          "score": "7/7 example; 4/5 family",
+          "clip_url": "https://flow.google.com/project/2c77da50-fb9e-4cc2-bf50-8ce67649c32e/edit/a1b393d9-84db-437a-bf54-8f7505e26da5"
+        }
+      ],
+      "prompt": "The shot starts already in the exact reference pose. She holds still until the end; only gentle breathing and a soft blink."
+    },
+    {
+      "id": "head-turn-chest-up",
+      "name": "Slow head turn, chest-up, no hands visible",
+      "risk": "safe",
+      "status": "confirmed",
+      "scope": {
+        "model_label": "Omni 1.1 Flash",
+        "resolution": "360p",
+        "aspect_ratio": null,
+        "duration_seconds": null
+      },
+      "evidence": [
+        {
+          "result": "pass",
+          "note": "Owner reports 5/5.",
+          "score": "5/5",
+          "clip_url": null
+        }
+      ],
+      "prompt": "Chest-up framing. She slowly turns her head; hands stay out of frame. Real-time speed."
+    },
+    {
+      "id": "mountain-arms-prayer",
+      "name": "Mountain arms overhead and return to chest",
+      "risk": "moderate",
+      "status": "confirmed",
+      "scope": {
+        "model_label": "Omni 1.1 Flash",
+        "resolution": "360p",
+        "aspect_ratio": null,
+        "duration_seconds": null
+      },
+      "evidence": [
+        {
+          "result": "pass",
+          "note": "Owner reports 360p pass.",
+          "score": null,
+          "clip_url": null
+        }
+      ],
+      "prompt": "She stands in Mountain pose with arms by her sides. On a slow inhale she sweeps both arms out to the sides and up overhead until the palms meet, then on a slow exhale brings the joined palms down through the center to her chest and holds, breathing calmly. Feet never move."
+    },
+    {
+      "id": "tree-prayer-overhead",
+      "name": "Tree pose: joined palms rise overhead",
+      "risk": "moderate",
+      "status": "confirmed",
+      "scope": {
+        "model_label": "Omni 1.1 Flash",
+        "resolution": "360p",
+        "aspect_ratio": null,
+        "duration_seconds": null
+      },
+      "evidence": [
+        {
+          "result": "pass",
+          "note": "Owner reports 360p pass.",
+          "score": null,
+          "clip_url": null
+        }
+      ],
+      "prompt": "She holds the Tree pose exactly as in the reference image: the sole of the raised foot pressed on the inner thigh of the standing leg, well above the knee, never touching the knee. She begins with palms together at her chest; on a slow inhale she raises the joined palms straight overhead, arms beside her ears, and holds, breathing calmly. Neither foot moves."
+    },
+    {
+      "id": "seated-breathing-hands-lap",
+      "name": "Seated breathing, hands resting in lap",
+      "risk": "safe",
+      "status": "confirmed",
+      "scope": {
+        "model_label": "Omni 1.1 Flash",
+        "resolution": "360p",
+        "aspect_ratio": null,
+        "duration_seconds": null
+      },
+      "evidence": [
+        {
+          "result": "pass",
+          "note": "Owner reports clean hands with explicit no-leave-lap constraint.",
+          "score": null,
+          "clip_url": null
+        }
+      ],
+      "prompt": "Hands resting in lap, never leave lap. She breathes calmly; hands stay still."
+    },
+    {
+      "id": "neck-side-bend",
+      "name": "Neck side bend, ear toward shoulder",
+      "risk": "risky",
+      "status": "candidate",
+      "scope": {
+        "model_label": "Omni 1.1 Flash",
+        "resolution": "360p",
+        "aspect_ratio": null,
+        "duration_seconds": null
+      },
+      "evidence": [
+        {
+          "result": "fail",
+          "note": "Owner reports 6/6 failures.",
+          "score": "6/6 fail",
+          "clip_url": null
+        }
+      ],
+      "prompt": ""
+    },
+    {
+      "id": "weight-shifting-yoga-transitions",
+      "name": "Weight-shifting yoga transitions",
+      "risk": "risky",
+      "status": "candidate",
+      "scope": {
+        "model_label": "Omni 1.1 Flash",
+        "resolution": "360p",
+        "aspect_ratio": "9:16",
+        "duration_seconds": 8
+      },
+      "evidence": [
+        {
+          "result": "fail",
+          "note": "Warrior II knee-bend attempts reportedly slid rear foot 20–40 px and cropped hands.",
+          "score": null,
+          "clip_url": null
+        }
+      ],
+      "prompt": ""
+    },
+    {
+      "id": "sun-salutation-chain",
+      "name": "Sun-salutation sequence",
+      "risk": "risky",
+      "status": "candidate",
+      "scope": {
+        "model_label": "Omni 1.1 Flash",
+        "resolution": "360p",
+        "aspect_ratio": null,
+        "duration_seconds": null
+      },
+      "evidence": [
+        {
+          "result": "unverified",
+          "note": "Owner lists as risky; no individual clip score supplied.",
+          "score": null,
+          "clip_url": null
+        }
+      ],
+      "prompt": ""
+    },
+    {
+      "id": "left-right-combination",
+      "name": "Left/right instructions in one clip",
+      "risk": "risky",
+      "status": "candidate",
+      "scope": {
+        "model_label": "Omni 1.1 Flash",
+        "resolution": "360p",
+        "aspect_ratio": null,
+        "duration_seconds": null
+      },
+      "evidence": [
+        {
+          "result": "unverified",
+          "note": "Owner lists as risky; no individual score supplied.",
+          "score": null,
+          "clip_url": null
+        }
+      ],
+      "prompt": ""
+    }
+  ],
+  "warnings": {
+    "block_if_match_behavior": "warn_only",
+    "prompt_length": {
+      "warning_threshold_chars": 1200,
+      "behavior": "warn_only",
+      "rationale": "Provisional heuristic only; no measured threshold established."
+    },
+    "rules": [
+      "Warn on shoulder-roll/shrug wording; do not hard-block.",
+      "Warn on TikTok/Reels due to reported logo risk; do not hard-block.",
+      "Warn on weight-shifting transitions and suggest a stable-hold alternative.",
+      "Warn when prompt exceeds the provisional length threshold; offer a shorter draft without deleting the original."
+    ]
+  },
+  "generation_log": [
+    {
+      "scene_id": "warrior-ii",
+      "attempt_id": "flow-warrior-knee-bend-fail-001",
+      "prompt_hash": null,
+      "result": "qc_fail",
+      "credits": {
+        "estimated": null,
+        "actual": null,
+        "unit": "credits",
+        "source": "unknown"
+      }
+    },
+    {
+      "scene_id": "warrior-ii",
+      "attempt_id": "flow-warrior-knee-bend-fail-002",
+      "prompt_hash": null,
+      "result": "qc_fail",
+      "credits": {
+        "estimated": null,
+        "actual": null,
+        "unit": "credits",
+        "source": "unknown"
+      }
+    },
+    {
+      "scene_id": "warrior-ii",
+      "attempt_id": "flow-warrior-stable-pass-001",
+      "prompt_hash": null,
+      "result": "ok",
+      "credits": {
+        "estimated": 6,
+        "actual": null,
+        "unit": "credits",
+        "source": "owner_estimate"
+      }
+    }
+  ]
+}
