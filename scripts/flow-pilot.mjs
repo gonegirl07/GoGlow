@@ -228,6 +228,8 @@ async function chooseModel(page, selectors, model) {
 
 
 async function uploadCharacterReferences(page, selectors, character) {
+  const beforeCount = await page.locator(selectors.ingredient_reference_items).count().catch(() => -1);
+  if (beforeCount !== 0) throw new Error(`Ingredients already contains ${beforeCount} reference item(s); clear the panel manually and rerun so this run can prove which images it attached.`);
   const addButton = await exactVisibleLocator(page, selectors.ingredient_add_button, "add character reference button");
   await addButton.click({ timeout: 2500 });
   const fileInput = page.locator(selectors.ingredient_file_input);
