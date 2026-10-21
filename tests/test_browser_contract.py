@@ -60,6 +60,12 @@ class BrowserContractTests(unittest.TestCase):
         self.assertIn("báo cáo đã lưu không còn hiệu lực", self.html)
         self.assertIn("status_history không hợp lệ", self.html)
 
+    def test_browser_exposes_flow_scene_and_two_pass_controls(self):
+        for marker in ("flow_clip_seconds", "pose_reference_uri", "face_reference_uri", "media_uri_360p", "media_uri_720p", "breath_cue", "movement_benefit", "hard_cut", "pre_publish_approved", "ai_label_required"):
+            with self.subTest(marker=marker):
+                self.assertIn(marker, self.html)
+        self.assertIn("finalStageReady", self.html)
+
     def test_browser_disclaims_automatic_media_verification(self):
         self.assertIn("không phải xác minh file hay tự động xem video", self.html)
         self.assertIn("không tự đánh giá video", self.html)
