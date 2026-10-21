@@ -21,6 +21,7 @@ This is a **design/seed-data PR**, not a runtime implementation. It does not cha
 - `specs/generation-attempt.schema.json`: one record per attempt, including configuration, exact prompt, rules used, result/failure, credit evidence, media reference, and human QC.
 - `examples/prompt-rules.seed.json`: first seed rule and its supporting/counterexample evidence.
 - `examples/generation-attempts.seed.json`: two earlier failures plus the successful stable-hold attempt.
+- `specs/prompt-library.schema.json` and `examples/prompt-library.seed.json`: reusable fixed prompt block, evidence-labeled do/don't rules, motion risk catalog, warning policy, and generation log sample.
 
 ## First seed rule
 
@@ -54,3 +55,15 @@ The Flow URL is an edit/project URL supplied by the user. It is not represented 
 - Success record contains the user-reported 7/7, 0 px rear-foot slide, hands in frame, visible breathing, model/resolution/duration/aspect ratio and both reference IDs.
 - Two failures are represented separately; no invented exact prompt, generation timestamp, credit amount, direct media URL, or provider error code.
 - No runtime behavior is changed by this PR.
+
+## X guidance and Mai test findings incorporated
+
+The prompt library seed incorporates the owner's supplied X summary and Mai Flow tests:
+- Fixed prompt sections: identity, explicit covered outfit, room, camera/framing, real-time quality, safety; then action, immobility locks, ending state, avoid constraints.
+- Confirmed stable-hold rule: start already in pose; Warrior II evidence is scoped to the reported Omni 1.1 Flash / 9:16 / 360p / 8s test and its two Ingredients.
+- Reported motion examples: Mountain arm sweep and Tree overhead prayer (360p passes); seated breathing with hands kept in lap; slow chest-up head turn.
+- Candidate/risky items remain warnings, not universal claims: weight-shifting transitions, neck side bend, ambiguous shoulder-roll/shrug wording, time-coded phases for static poses, platform names.
+- Matching `blockIfMatch` terms produce warnings only in this seed; they do not hard-block a prompt. Prompt-length threshold is provisional (1200 characters), warning-only, and must be tuned from recorded attempts.
+- The successful Warrior II log uses an estimated 6 credits as an owner estimate only; actual charge remains unknown. The two failed clips have unknown credit amounts.
+
+These are seed records, not runtime behavior. The implementation PR must prove deterministic rule composition, scope checks, preview-before-apply, and warnings without silently deleting or rewriting the user's prompt.
