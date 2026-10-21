@@ -665,11 +665,16 @@ async function loadInputs(args) {
   const selectors = JSON.parse(fs.readFileSync(args.selectors, "utf8"));
   if (typeof scene.scene_id !== "string" || !scene.scene_id.trim()) throw new Error("Scene JSON must contain a non-empty scene_id.");
   if (typeof scene.prompt !== "string" || !scene.prompt.trim()) throw new Error("Scene JSON must contain a non-empty prompt.");
-  if (typeof scene.character_description !== "string" || !scene.character_description.trim()) {
-    throw new Error("Scene JSON must contain a non-empty character_description in ASCII English.");
+  const faceDescriptionMode = scene.face_description_mode || "include";
+  if (!["include", "reference_only"].includes(faceDescriptionMode)) {
+    throw new Error("face_description_mode must be 'include' or 'reference_only'.");
+  }
+  const characterDescription = typeof scene.character_description === "string" ? scene.character_description.trim() : "";
+  if (faceDescriptionMode === "include" && !characterDescription) {
+    throw new Error("Scene JSON must contain a non-empty character_description unless face_description_mode is 'reference_only'.");
   }
   if (!/^[\x00-\x7F]+$/.test(scene.prompt)) throw new Error("Prompt must be ASCII/English only; non-ASCII characters are blocked before touching Flow.");
-  if (!/^[\x00-\x7F]+$/.test(scene.character_description)) throw new Error("Character description must be ASCII/English only; non-ASCII characters are blocked before touching Flow.");
+  if (characterDescription && !/^[\x00-\x7F]+$/.test(characterDescription)) throw new Error("Character description must be ASCII/English only; non-ASCII characters are blocked before touching Flow.");
   if (!Array.isArray(scene.reference_images) || scene.reference_images.length < 1 || scene.reference_images.length > 3) {
     throw new Error("Scene JSON must provide reference_images as an array of 1 to 3 local file paths.");
   }
@@ -683,35 +688,52 @@ async function loadInputs(args) {
     return resolved;
   });
   if (new Set(referenceImages).size !== referenceImages.length) throw new Error("reference_images must contain distinct file paths.");
-  const requestedFaceReference = scene.face_reference_id;
-  let faceReferenceImage;
-  if (requestedFaceReference === undefined || requestedFaceReference === null || requestedFaceReference === "") {
-    faceReferenceImage = referenceImages[0];
-    scene.face_reference_id = scene.reference_images[0];
+  const resolveReferencePath = (value, label) => {
+    if (typeof value !== "string" || !value.trim()) throw new Error(`${label} must identify a path from reference_images.`);
+    const resolved = path.resolve(path.dirname(scenePath), value);
+    if (!referenceImages.includes(resolved)) throw new Error(`${label} must match one of the image paths in this job's reference_images.`);
+    return resolved;
+  };
+  let faceReferenceImages;
+  if (scene.face_reference_ids !== undefined) {
+    if (!Array.isArray(scene.face_reference_ids) || scene.face_reference_ids.length < 1 || scene.face_reference_ids.length > 3) {
+      throw new Error("face_reference_ids must be an array of 1 to 3 paths from reference_images.");
+    }
+    faceReferenceImages = scene.face_reference_ids.map((value, index) => resolveReferencePath(value, `face_reference_ids[${index}]`));
+    if (new Set(faceReferenceImages).size !== faceReferenceImages.length) throw new Error("face_reference_ids must contain distinct paths.");
   } else {
-    if (typeof requestedFaceReference !== "string" || !requestedFaceReference.trim()) {
-      throw new Error("face_reference_id must identify one path from reference_images.");
-    }
-    faceReferenceImage = path.resolve(path.dirname(scenePath), requestedFaceReference);
-    if (!referenceImages.includes(faceReferenceImage)) {
-      throw new Error("face_reference_id must match one of the image paths in this job's reference_images.");
-    }
+    const requestedFaceReference = scene.face_reference_id;
+    const legacyFaceReference = requestedFaceReference === undefined || requestedFaceReference === null || requestedFaceReference === ""
+      ? referenceImages[0]
+      : resolveReferencePath(requestedFaceReference, "face_reference_id");
+    faceReferenceImages = [legacyFaceReference];
   }
-  // Ingredients are attached in order, so place the selected face anchor first.
+  scene.face_reference_ids = faceReferenceImages.map(imagePath => scene.reference_images.find(value =>
+    path.resolve(path.dirname(scenePath), value) === imagePath));
+  scene.face_reference_id = scene.face_reference_ids[0];
+  const primaryFaceReferenceImage = faceReferenceImages[0];
+  // Attach all selected face angles first, then non-face/supporting images.
   const orderedReferenceImages = [
-    faceReferenceImage,
-    ...referenceImages.filter(imagePath => imagePath !== faceReferenceImage),
+    ...faceReferenceImages,
+    ...referenceImages.filter(imagePath => !faceReferenceImages.includes(imagePath)),
   ];
-  scene.character_description = scene.character_description.trim();
+  scene.character_description = characterDescription;
   scene.scene_prompt = scene.prompt;
-  scene.prompt = `PRIMARY FACE REFERENCE: The first attached reference image is the primary face identity anchor. Match its facial structure, eye shape and spacing, nose, lips, jawline, and overall likeness as closely as possible. Keep the same person throughout the clip.\n\nCHARACTER DESCRIPTION: ${scene.character_description}\n\nSCENE: ${scene.prompt.trim()}\n\nUse the remaining attached reference images only as supporting references for appearance and context. Do not let them override the primary face reference. Preserve the person's facial features, hair, and skin tone. Do not substitute a different person.`;
+  const faceIdentityInstructions = "PRIMARY FACE REFERENCE: The first attached image is the primary face identity anchor. Match its facial structure, eye shape and spacing, nose, lips, jawline, cheek fullness, and overall likeness as closely as possible. Keep the same person throughout the clip.";
+  const additionalFaceInstructions = faceReferenceImages.length > 1
+    ? "The next attached face-reference image(s) show the same person from additional angles. Use them to understand the same identity, not as different people."
+    : "";
+  const characterDescriptionInstructions = faceDescriptionMode === "reference_only"
+    ? "Use the selected face reference image(s) as the source of truth for facial appearance. Do not invent or reinterpret face shape, cheeks, chin, eyes, eyebrows, or smile from a text description."
+    : `CHARACTER DESCRIPTION: ${characterDescription}`;
+  scene.prompt = `${faceIdentityInstructions}\n${additionalFaceInstructions}\n${characterDescriptionInstructions}\n\nSCENE: ${scene.prompt.trim()}\n\nUse only the remaining non-face reference images as supporting references for clothing, body, or context. Do not let them override the selected face references. Preserve the person's facial features, hair, and skin tone. Do not substitute a different person.`;
   if (!/^[\x00-\x7F]+$/.test(scene.prompt)) throw new Error("Composed prompt must contain ASCII characters only.");
   if (scene.model !== "Omni 1.1 Flash" || scene.resolution !== "360p") {
     throw new Error("Phase 3 pilot is restricted to model='Omni 1.1 Flash' and resolution='360p'.");
   }
   if (scene.duration && scene.duration !== "8s") throw new Error("Phase 3 pilot is restricted to duration='8s'.");
   requiredSelectorConfig(selectors);
-  return { scene, selectors, referenceImages: orderedReferenceImages, faceReferenceImage };
+  return { scene, selectors, referenceImages: orderedReferenceImages, faceReferenceImage: primaryFaceReferenceImage, faceReferenceImages };
 }
 async function chooseFlowTab(browser, args) {
   const pages = await listPages(browser);
