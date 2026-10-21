@@ -101,7 +101,9 @@ class FlowPilotContractTests(unittest.TestCase):
         self.assertIn('Google account button for menu cleanup', self.script)
 
     def test_wait_mode_requires_execute_and_bounded_timeout(self):
-        self.assertIn('if (args.waitForResult && !args.execute)', self.script)
+        self.assertIn('if (args.waitForResult && !args.execute && !args.dryRun)', self.script)
+        self.assertIn('--wait without --execute is preflight-only; pass --dry-run --wait explicitly.', self.script)
+        self.assertIn('WAIT SELECTOR PREFLIGHT (read-only; no Create click)', self.script)
         self.assertIn('--wait-timeout-ms must be an integer from 30000 to 1800000', self.script)
         self.assertIn('--wait requires a non-empty', self.script)
         self.assertIn('["credit_balance", "generated_video_items", "download_media_button", "download_360p_original_button"]', self.script)
