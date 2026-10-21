@@ -1020,7 +1020,7 @@ async function verifyAccount(page, selectors, expectedEmail) {
   const selector = selectors.account_button || '[role="button"][aria-label^="Google Account:"]';
   const account = await exactVisibleLocator(page, selector, "Google account button");
   const label = await account.getAttribute("aria-label") || "";
-  const match = label.match(/\(([^()\s]+@[^()\s]+)\)\s*$/);
+  const match = label.match(/\(([^()\s]+@[^()\s]+)\)/);
   const observedEmail = match?.[1]?.toLowerCase() ?? null;
   if (!observedEmail) throw new Error(`Could not read an email from the Google account button aria-label ${JSON.stringify(label)}.`);
   if (observedEmail !== expectedEmail.toLowerCase()) {
