@@ -196,10 +196,10 @@ function makeGenerationLedgerRecord({ scene, projectId, prompt, estimatedCost, b
       uri: mediaUri || null,
       downloaded_file: downloadedFile || null,
       sha256: downloadedFile && fs.existsSync(downloadedFile) ? createHash("sha256").update(fs.readFileSync(downloadedFile)).digest("hex") : null,
-      integrity_status: downloadedFile ? "sha256_checked" : (mediaUri ? "not_downloaded" : "missing"),
+      integrity_status: downloadedFile ? "verified" : (mediaUri ? "not_checked" : "missing"),
     },
     qc: { status: "not_reviewed", observed_defects: [], checks_passed: null, checks_total: null, reviewed_by: null, reviewed_on: null, notes: "Human QC has not been recorded." },
-    created_by: "flow-pilot",
+    created_by: "browser_automation",
     notes: [downloadError ? `Download failed: ${downloadError}` : null, timeoutError ? `Wait ended without verified completion: ${timeoutError}` : null].filter(Boolean).join(" "),
   };
 }
@@ -942,6 +942,7 @@ async function prepare(args, browser, rl) {
         resultStatus = "succeeded";
       } catch (error) {
         timeoutError = String(error.message || error);
+        mediaUri = chosen.page.url();
         appendEvent(args.log, { event: "generation_wait_unverified", scene_id: scene.scene_id, status: "unknown_do_not_retry", error: timeoutError });
         console.error(`WAIT STOPPED SAFELY: ${timeoutError}`);
       }
