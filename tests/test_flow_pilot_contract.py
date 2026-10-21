@@ -243,7 +243,24 @@ class FlowPilotContractTests(unittest.TestCase):
     def test_generation_ledger_records_face_reference_configuration(self):
         self.assertIn("face_reference_ids: selectedFaceRefs.map(item => path.basename(item))", self.script)
         self.assertIn('face_description_mode: scene.face_description_mode || "include"', self.script)
+        self.assertIn("expression: scene.expression || null", self.script)
         self.assertIn("other_reference_ids: referenceImages.filter(item => !selectedPaths.has", self.script)
+
+    def test_virtualized_media_grid_is_swept_before_tile_identity_comparison(self):
+        self.assertIn("async function collectAllGeneratedItems(page, selector", self.script)
+        self.assertIn("Flow's media grid may virtualize its DOM", self.script)
+        self.assertIn("const initialScan = await collectAllGeneratedItems", self.script)
+        self.assertIn("full virtualized-grid sweep", self.script)
+
+    def test_generation_failure_is_detected_and_logged_without_retry(self):
+        self.assertIn("function isGenerationFailureText(value)", self.script)
+        self.assertIn("FLOW_GENERATION_FAILED:", self.script)
+        self.assertIn('event: resultStatus === "failed" ? "generation_failed_detected" : "generation_wait_unverified"', self.script)
+        self.assertIn('resultStatus === "failed" && beforeBalance !== null && afterBalance !== null && beforeBalance === afterBalance ? "not_charged" : "unknown"', self.script)
+        self.assertIn("wait-timeout screenshot saved", self.script)
+
+    def test_hybrid_face_description_strips_trailing_period_before_adding_punctuation(self):
+        self.assertIn('scene.character_description.trim().replace(/[.\\s]+$/, "")', self.script)
 
     def test_credit_preflight_waits_for_render_and_retries_once(self):
         self.assertIn('waitFor({ state: "visible", timeout: 8000 })', self.script)
