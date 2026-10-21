@@ -63,7 +63,7 @@ class FlowPilotContractTests(unittest.TestCase):
         self.assertIn('process.env.FLOW_ASSET_READY_TIMEOUT_MS || 90000', self.script)
         self.assertIn('FLOW_ASSET_READY_TIMEOUT_MS must be an integer from 15000 to 180000', self.script)
         self.assertIn('{ timeout: ASSET_READY_TIMEOUT_MS }', self.script)
-        self.assertIn('within ${ASSET_READY_TIMEOUT_MS}ms', self.script)
+        self.assertIn('within " + ASSET_READY_TIMEOUT_MS + "ms', self.script)
         self.assertNotIn('within 15000ms', self.script)
 
     def test_picker_closure_clicks_backdrop_edge_and_verifies_closed(self):
