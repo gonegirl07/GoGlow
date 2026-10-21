@@ -267,6 +267,39 @@ function assetUuidFromUrl(value) {
   return match?.[0]?.toLowerCase() || null;
 }
 
+async function waitForChipImagesReady(page, selectors, timeout = 15000) {
+  try {
+    await page.waitForFunction(selector => {
+      const chips = Array.from(document.querySelectorAll(selector));
+      return chips.every(chip => {
+        const image = chip.querySelector("img.chip-image");
+        return Boolean(image && image.complete && image.naturalWidth > 0);
+      });
+    }, selectors.ingredient_reference_items, { timeout });
+  } catch {
+    throw new Error(`One or more Ingredients chip thumbnails did not finish loading within ${timeout}ms.`);
+  }
+}
+
+async function verifyAttachedReferenceUuids(page, selectors, expectedUuids, timeout = 15000) {
+  await waitForChipImagesReady(page, selectors, timeout);
+  const chips = page.locator(selectors.ingredient_reference_items);
+  const count = await chips.count();
+  if (count !== expectedUuids.length) {
+    throw new Error(`Ingredients chip count changed: expected ${expectedUuids.length}, observed ${count}.`);
+  }
+  const actualUuids = [];
+  for (let i = 0; i < count; i += 1) {
+    const src = await chips.nth(i).locator("img.chip-image").getAttribute("src").catch(() => null);
+    actualUuids.push(assetUuidFromUrl(src));
+  }
+  if (actualUuids.some(uuid => !uuid)) throw new Error("One or more attached Ingredients chips have no verifiable UUID.");
+  if (actualUuids.some((uuid, index) => uuid !== expectedUuids[index])) {
+    throw new Error(`Ingredients chip UUID/order mismatch: expected ${expectedUuids.join(", ")}, observed ${actualUuids.join(", ")}.`);
+  }
+  return actualUuids;
+}
+
 async function openIngredientsPicker(page, selectors) {
   const addButton = await exactVisibleLocator(page, selectors.ingredient_add_button, "add ingredients button");
   await addButton.click({ timeout: 2500 });
@@ -277,6 +310,7 @@ async function uploadSceneReferencesUnsafe(page, selectors, referenceImages) {
   const chips = page.locator(selectors.ingredient_reference_items);
   const beforeCount = await chips.count().catch(() => -1);
   if (beforeCount !== 0) throw new Error(`Ingredients already contains ${beforeCount} reference chip(s); clear the prompt manually and rerun so this run can prove which images it attached.`);
+  const expectedUuids = [];
 
   for (const imagePath of referenceImages) {
     const filename = path.basename(imagePath);
@@ -296,6 +330,7 @@ async function uploadSceneReferencesUnsafe(page, selectors, referenceImages) {
     await uploadButton.click({ timeout: 2500 });
     const chooser = await chooserPromise;
     await chooser.setFiles(imagePath);
+    let reusedExistingUuid = null;
     try {
       await page.waitForFunction(({ selector, filename, oldUuids }) => {
         // Flow inserts the newest upload at the top. Wait for the first same-name entry's
@@ -308,14 +343,46 @@ async function uploadSceneReferencesUnsafe(page, selectors, referenceImages) {
         return Boolean(match && !oldUuids.includes(match[0].toLowerCase()));
       }, { selector: selectors.ingredient_library_item, filename, oldUuids: Array.from(existingUuids) }, { timeout: ASSET_READY_TIMEOUT_MS });
     } catch {
-      throw new Error("Newest upload " + filename + " did not expose a new asset UUID within " + ASSET_READY_TIMEOUT_MS + "ms. The asset may still be processing; stopping before prompt fill/Create.");
+      const diagnostics = [];
+      const countAfterTimeout = await matchingAssets.count().catch(() => 0);
+      for (let i = 0; i < countAfterTimeout; i += 1) {
+        const src = await matchingAssets.nth(i).locator("img").first().getAttribute("src").catch(() => null);
+        const uuid = assetUuidFromUrl(src);
+        if (uuid) diagnostics.push(uuid);
+      }
+      // Flow can deduplicate an upload and keep the existing project-library UUID.
+      // Reuse is allowed only when the existing same-name asset has a readable UUID;
+      // the dry-run reports it so the operator can inspect the thumbnail before execution.
+      reusedExistingUuid = diagnostics.find(uuid => existingUuids.has(uuid)) || null;
+      console.warn(JSON.stringify({
+        event: reusedExistingUuid ? "asset_upload_reused_existing" : "asset_upload_uuid_timeout",
+        filename,
+        timeout_ms: ASSET_READY_TIMEOUT_MS,
+        existing_uuids_before_upload: Array.from(existingUuids),
+        matching_uuids_after_timeout: diagnostics,
+        selected_existing_uuid: reusedExistingUuid,
+      }));
+      if (!reusedExistingUuid) {
+        throw new Error("Upload " + filename + " did not expose a new UUID within " + ASSET_READY_TIMEOUT_MS + "ms and no reusable same-name asset UUID was verifiable. Stopping before prompt fill/Create.");
+      }
     }
-    const asset = matchingAssets.first();
+    let asset = matchingAssets.first();
+    if (reusedExistingUuid) {
+      let reuseIndex = -1;
+      const currentCount = await matchingAssets.count().catch(() => 0);
+      for (let i = 0; i < currentCount; i += 1) {
+        const src = await matchingAssets.nth(i).locator("img").first().getAttribute("src").catch(() => null);
+        if (assetUuidFromUrl(src) === reusedExistingUuid) { reuseIndex = i; break; }
+      }
+      if (reuseIndex < 0) throw new Error("Reusable asset UUID disappeared from the library; refusing to select an unverified item.");
+      asset = matchingAssets.nth(reuseIndex);
+    }
     const assetSrc = await asset.locator("img").first().getAttribute("src").catch(() => null);
     const assetUuid = assetUuidFromUrl(assetSrc);
-    if (!assetUuid || existingUuids.has(assetUuid)) {
-      throw new Error("Newest library entry for " + filename + " did not have a verifiable new UUID after waiting; refusing to select an older duplicate.");
+    if (!assetUuid || (existingUuids.has(assetUuid) && assetUuid !== reusedExistingUuid)) {
+      throw new Error("Library entry for " + filename + " did not have a verifiable new UUID or an explicitly identified reusable UUID.");
     }
+    if (reusedExistingUuid) console.warn(`Reusing existing Flow library asset ${filename} -> UUID ${assetUuid}; inspect its thumbnail during dry-run before any execute.`);
 
     await asset.click({ timeout: 2500 });
     let attached = false;
@@ -347,12 +414,15 @@ async function uploadSceneReferencesUnsafe(page, selectors, referenceImages) {
     if (attachedUuids.some(uuid => !uuid)) throw new Error(`One or more prompt chips lack a verifiable asset UUID after attaching ${filename}.`);
     if (new Set(attachedUuids).size !== attachedUuids.length) throw new Error("Duplicate Ingredients chip UUID detected; refusing to continue.");
     if (!attachedUuids.includes(assetUuid)) throw new Error(`Attached chip identity mismatch for ${filename}: expected asset UUID ${assetUuid}, observed ${attachedUuids.join(", ")}.`);
+    expectedUuids.push(assetUuid);
     console.log(`Verified Ingredients asset ${filename} -> UUID ${assetUuid}`);
   }
 
   const finalCount = await chips.count();
   if (finalCount !== referenceImages.length) throw new Error(`Ingredients chip count mismatch: expected ${referenceImages.length}, observed ${finalCount}. Stopping before prompt fill/Create.`);
-  console.log(`Verified exact asset identity for ${finalCount} reference chip(s).`);
+  await verifyAttachedReferenceUuids(page, selectors, expectedUuids);
+  console.log(`Verified exact asset identity and loaded thumbnails for ${finalCount} reference chip(s).`);
+  return expectedUuids;
 }
 
 async function uploadSceneReferences(page, selectors, referenceImages, prompt) {
@@ -547,13 +617,14 @@ async function prepare(args, browser, rl) {
   // Attach and verify the exact per-scene reference images only after closing Settings.
   // If Flow does not expose a unique add button, file input, and visible reference-item selector,
   // stop before filling the prompt or enabling a possible Create action.
-  await uploadSceneReferences(chosen.page, selectors, referenceImages, prompt);
+  const attachedReferenceUuids = await uploadSceneReferences(chosen.page, selectors, referenceImages, prompt);
 
   // Only now modify the prompt. If fill fails, attempt to clear it before returning an error.
   const screenshot = path.resolve(args.screenshot || `flow-pilot-${scene.scene_id.replace(/[^a-zA-Z0-9_-]/g, "_")}-${args.execute ? "execute" : "dry-run"}.png`);
   try {
     await prompt.fill(scene.prompt, { timeout: 2500 });
     await waitForCreateEnabled(chosen.page, create, 5000);
+    await verifyAttachedReferenceUuids(chosen.page, selectors, attachedReferenceUuids);
     fs.mkdirSync(path.dirname(screenshot), { recursive: true });
     await chosen.page.screenshot({ path: screenshot, fullPage: false, timeout: 4000 });
   } catch (error) {
@@ -616,6 +687,8 @@ async function prepare(args, browser, rl) {
     if (chosen.page.url() !== originalUrl || !isFlowUrl(chosen.page.url())) throw new Error("Flow tab changed after confirmation; refusing to click Create.");
     const currentAccount = await verifyAccount(chosen.page, selectors, args.expectedEmail);
     if (currentAccount.observedEmail !== account.observedEmail) throw new Error("Google account changed after confirmation; refusing to click Create.");
+    // Recheck every chip UUID and loaded thumbnail after the operator's final confirmation.
+    await verifyAttachedReferenceUuids(chosen.page, selectors, attachedReferenceUuids);
     const finalButton = await exactVisibleLocator(chosen.page, selectors.create, "Create button");
     if (!(await finalButton.isEnabled())) throw new Error("Create button became disabled; refusing to click.");
     await finalButton.click({ timeout: 2500 });
