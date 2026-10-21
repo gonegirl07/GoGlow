@@ -49,7 +49,7 @@ class FlowPilotContractTests(unittest.TestCase):
 
     def test_credit_cost_is_read_after_settings_are_applied(self):
         self.assertIn("creditCost = await readCreditCost(chosen.page)", self.script)
-        self.assertGreater(self.script.index('await checkedRadio(chosen.page, selectors.duration'), self.script.index("creditCost = await readCreditCost(chosen.page)"))
+        self.assertLess(self.script.index('await checkedRadio(chosen.page, selectors.duration'), self.script.index("creditCost = await readCreditCost(chosen.page)"))
 
     def test_non_ascii_prompt_is_rejected_before_browser_mutation(self):
         self.assertIn(r"/^[\x00-\x7F]+$/", self.script)
