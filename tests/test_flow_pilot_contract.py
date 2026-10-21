@@ -253,6 +253,9 @@ class FlowPilotContractTests(unittest.TestCase):
         self.assertIn("const initialScan = await collectAllGeneratedItems", self.script)
         self.assertIn("const videosTabState = await activateVideosTab", self.script)
         self.assertIn('page.getByRole("tab", { name: /^Videos$/i })', self.script)
+        self.assertIn("unkeyedItemsDetected", self.script)
+        self.assertIn("duplicateVisibleKeyDetected", self.script)
+        self.assertIn("Pre-Create media inventory is ambiguous", self.script)
         self.assertIn("full virtualized-grid sweep", self.script)
 
     def test_generation_failure_is_detected_and_logged_without_retry(self):
