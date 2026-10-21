@@ -14,7 +14,7 @@ The prototype can:
 - Generate editable starter prompts and scene cards for cycling, yoga, dance, fashion, and other activities.
 - Save project data in browser local storage and export JSON or Markdown.
 
-**Prototype limitations:** no Google Flow integration, no image/video generation, no automated visual QC, and no image data included in exports. Reference images are only previewed locally; prompts still need human review. The browser prototype blocks export when required fields or duration totals are invalid. It intentionally stops at pre-generation workflow states: media declaration and structured human-QC entry are not implemented in the browser UI, so it does not let users mark clips generated, QC-reviewed, or approved. Browser-local saving is not a substitute for exporting backups.
+**Prototype limitations:** no Google Flow integration, no image/video generation, no automated visual QC, and no image data included in exports. Reference images are only previewed locally; prompts still need human review. The browser prototype supports manual media URI entry and structured human-QC reports, blocks unsupported workflow transitions, and blocks export when required fields or duration totals are invalid. A media URI is a declaration, not proof that the clip exists or plays; QC is not automatic. Browser-local saving is not a substitute for exporting backups.
 
 ## Status
 
