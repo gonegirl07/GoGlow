@@ -1479,6 +1479,9 @@ async function main() {
       if (!Number.isInteger(variantCount) || variantCount < 1 || variantCount > 3) throw new Error("variants must be an integer from 1 to 3.");
     }
     args._variantCount = variantCount;
+    if (args.execute && variantCount > 1 && !args.waitForResult) {
+      throw new Error("Executing variants requires --wait so every submitted clip can be verified, downloaded, and recorded in the generation ledger.");
+    }
     if (args.execute && variantCount > 1) {
       for (let index = 1; index <= variantCount; index += 1) {
         args._variantIndex = index;
