@@ -208,8 +208,8 @@ async function collectAllGeneratedItems(page, selector, { targetKey = null, maxS
       if (targetKey && item.key === targetKey) targetIndex = item.index;
     }
     if (targetIndex !== null) return { items: Array.from(all.values()), targetIndex, scrolledToTarget: true };
-    const metrics = await page.evaluate(() => {
-      const first = document.querySelector(arguments[0]);
+    const metrics = await page.evaluate((selectorText) => {
+      const first = document.querySelector(selectorText);
       let node = first?.parentElement || null;
       while (node && node !== document.body) {
         const style = getComputedStyle(node);
@@ -392,12 +392,20 @@ async function waitForGenerationAndDownload(page, selectors, { beforeKeys, timeo
           break;
         } catch {
           await failIfVisible();
-          // A click that did not open the selected tile is not proof of completion.
-          // Return to the project grid and continue polling rather than burning the
-          // entire wait budget on a stale/virtualized card.
+          // If the new tile opened its own editor, keep waiting there for the
+          // actual result instead of confusing an in-progress tile with a stale card.
           if (page.url().includes("/edit/") || page.url().includes("/video/")) {
-            await page.goBack({ waitUntil: "domcontentloaded", timeout: 10000 }).catch(() => {});
+            while (Date.now() < deadline) {
+              await failIfVisible();
+              if (await page.locator(selectors.download_media_button).isVisible().catch(() => false)) break;
+              await page.waitForTimeout(1000);
+            }
+            if (await page.locator(selectors.download_media_button).isVisible().catch(() => false)) break;
+            await captureTimeout();
+            throw new Error("New video detail opened, but generation did not expose Download media before the wait deadline.");
           }
+          // If no detail page opened, keep polling the project grid. This avoids
+          // waiting ten minutes on a stale card that never navigated anywhere.
           newItem = null;
           newKey = null;
         }
