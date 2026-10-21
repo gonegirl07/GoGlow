@@ -189,6 +189,8 @@ async function collectAllGeneratedItems(page, selector, { targetKey = null, maxS
   const all = new Map();
   let stableBottomRounds = 0;
   let targetIndex = null;
+  let unkeyedItemsDetected = false;
+  let duplicateVisibleKeyDetected = false;
   for (let step = 0; step <= maxScrolls; step += 1) {
     const visible = await page.locator(selector).evaluateAll(elements => elements.map((element, index) => {
       const key = element.getAttribute("data-id")
@@ -203,11 +205,17 @@ async function collectAllGeneratedItems(page, selector, { targetKey = null, maxS
       const progress = Boolean(element.querySelector('[role="progressbar"], progress, [aria-valuenow]'));
       return { key: String(key).trim(), text, state, progress, index };
     }));
+    const keysThisViewport = new Set();
     for (const item of visible) {
-      if (item.key) all.set(item.key, { ...item });
+      if (!item.key) unkeyedItemsDetected = true;
+      else {
+        if (keysThisViewport.has(item.key)) duplicateVisibleKeyDetected = true;
+        keysThisViewport.add(item.key);
+        all.set(item.key, { ...item });
+      }
       if (targetKey && item.key === targetKey) targetIndex = item.index;
     }
-    if (targetIndex !== null) return { items: Array.from(all.values()), targetIndex, scrolledToTarget: true };
+    if (targetIndex !== null) return { items: Array.from(all.values()), targetIndex, scrolledToTarget: true, unkeyedItemsDetected, duplicateVisibleKeyDetected };
     const metrics = await page.evaluate((selectorText) => {
       const first = document.querySelector(selectorText);
       let node = first?.parentElement || null;
@@ -253,7 +261,7 @@ async function collectAllGeneratedItems(page, selector, { targetKey = null, maxS
     }
     (document.scrollingElement || document.documentElement).scrollTop = initialTop;
   }, { selectorText: selector, initialTop: scrollInfo.initialTop });
-  return { items: Array.from(all.values()), targetIndex: null, scrolledToTarget: false };
+  return { items: Array.from(all.values()), targetIndex: null, scrolledToTarget: false, unkeyedItemsDetected, duplicateVisibleKeyDetected };
 }
 
 function isGenerationFailureText(value) {
@@ -1125,8 +1133,9 @@ async function prepare(args, browser, rl) {
       const videosTabState = await activateVideosTab(chosen.page, selectors);
       const initialScan = await collectAllGeneratedItems(chosen.page, selectors.generated_video_items);
       const initialItems = initialScan.items.map(item => item.key);
-      if (initialItems.some(key => !key) || new Set(initialItems).size !== initialItems.length) {
-        throw new Error("generated_video_items selector must expose distinct stable tile keys across a full virtualized-grid sweep.");
+      if (initialScan.unkeyedItemsDetected || initialScan.duplicateVisibleKeyDetected
+        || initialItems.some(key => !key) || new Set(initialItems).size !== initialItems.length) {
+        throw new Error("generated_video_items selector must expose a stable key for every tile and distinct keys within each viewport across a full virtualized-grid sweep.");
       }
       args._waitInitialBalance = initialBalance;
       args._waitInitialItemKeys = initialItems;
@@ -1230,6 +1239,10 @@ async function prepare(args, browser, rl) {
       await activateVideosTab(chosen.page, selectors);
       const currentScan = await collectAllGeneratedItems(chosen.page, selectors.generated_video_items);
       args._waitInitialItemKeys = currentScan.items.map(item => item.key);
+      if (currentScan.unkeyedItemsDetected || currentScan.duplicateVisibleKeyDetected
+        || new Set(args._waitInitialItemKeys).size !== args._waitInitialItemKeys.length) {
+        throw new Error("Pre-Create media inventory is ambiguous; every tile must have a stable unique key. Refusing to click Create.");
+      }
       args._waitInitialItemCount = args._waitInitialItemKeys.length;
     }
     createMayHaveBeenClicked = true; // Conservatively preserve state if the click result is ambiguous.
