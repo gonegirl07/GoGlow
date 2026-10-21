@@ -1,0 +1,17 @@
+{
+  "$schema":"https://json-schema.org/draft/2020-12/schema",
+  "title":"GoGlow Character Profile",
+  "type":"object",
+  "additionalProperties":false,
+  "required":["id","name","identity_anchors","references"],
+  "properties":{
+    "id":{"type":"string","minLength":1},
+    "name":{"type":"string","minLength":1},
+    "description":{"type":"string"},
+    "identity_anchors":{"type":"array","minItems":1,"items":{"type":"string","minLength":1}},
+    "wardrobe_variants":{"type":"array","items":{"type":"object","required":["id","description"],"properties":{"id":{"type":"string"},"description":{"type":"string"},"notes":{"type":"string"}},"additionalProperties":false}},
+    "references":{"type":"array","items":{"type":"object","required":["id","role","description"],"properties":{"id":{"type":"string"},"role":{"enum":["identity","wardrobe","pose","first_frame","last_frame","scene","prop"]},"description":{"type":"string"},"uri":{"type":"string"},"user_supplied":{"type":"boolean","default":true}},"additionalProperties":false}},
+    "created_at":{"type":"string","format":"date-time"},
+    "notes":{"type":"string"}
+  }
+}
