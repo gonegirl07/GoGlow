@@ -67,3 +67,33 @@ The prompt library seed incorporates the owner's supplied X summary and Mai Flow
 - The successful Warrior II log uses an estimated 6 credits as an owner estimate only; actual charge remains unknown. The two failed clips have unknown credit amounts.
 
 These are seed records, not runtime behavior. The implementation PR must prove deterministic rule composition, scope checks, preview-before-apply, and warnings without silently deleting or rewriting the user's prompt.
+
+
+## Phase 1 runtime PR — current implementation
+
+The first runtime slice is implemented in app/prompt-library.js and the scene panel in app/index.html.
+
+- The runtime adapter exposes deterministic analysis/composition and a version (1.0); it does not call Google Flow or perform network requests.
+- The scene panel displays matched rule IDs/statuses and non-blocking warnings, including candidate warnings for time-coded static poses, shoulder-roll/shrug wording, platform branding, and prompt length.
+- Prompt composition creates a separate preview. The current scene prompt is unchanged until the user explicitly clicks “Áp dụng preview vào prompt”.
+- Outfit and room/environment fallback text is filled before preview; duplicate identical lines are removed.
+- Candidate rules do not auto-append. The real-time candidate can only be included through an unchecked opt-in in the preview UI. Confirmed stable-hold text is available only when the narrow Warrior II scope matches: character Mai, Yoga, Warrior II, Omni 1.1 Flash, 9:16, 8 seconds, and both named reference identifiers.
+- The preview panel is advisory and never blocks generation/export. Human review of the actual Flow clip remains required.
+
+### Follow-ups retained from tester round 7
+
+- Keep the DevTools QC-state hardening and optional favicon cleanup in the backlog; neither is part of the prompt-library runtime.
+- Keep generation result and QC result separate in the future ledger UI (result.status=succeeded can coexist with qc.status=fail).
+- Standardize unknown-credit vocabulary in the ledger/motion evidence before implementing the Phase 2 UI.
+- Do not treat a seed rule or a single 7/7 clip as a universal guarantee.
+
+### Phase 1 tester acceptance
+
+1. Run the Python suite on 3.10, 3.11, and 3.12.
+2. Open app/index.html in real Chrome; confirm the prompt library panel appears for each scene and candidate warnings are visible when their trigger phrases are present.
+3. Confirm creating a preview does not change the original prompt; only the explicit Apply action changes it.
+4. Confirm no candidate rule is added unless explicitly selected before preview; candidate defaults are unchecked.
+5. Confirm wardrobe/environment placeholders are filled and duplicate lines are removed.
+6. Confirm the stable-hold rule is not appended unless the exact narrow Warrior II scope matches.
+7. Confirm warnings are non-blocking and the existing QC/export/state-machine regressions still pass.
+8. Confirm no browser console/page errors and no request is made to Google Flow.
