@@ -38,6 +38,19 @@ class PlannerTests(unittest.TestCase):
         project["scenes"][0]["status"] = "GENERATED"
         self.assertTrue(any("requires media_uri" in e for e in validate_project(project)))
 
+    def test_validator_handles_malformed_activity_and_status_types(self):
+        project = create_project("cycling")
+        project["activity"] = []
+        project["scenes"][0]["status"] = []
+        errors = validate_project(project)
+        self.assertTrue(any("activity must be one of" in e for e in errors))
+        self.assertTrue(any("status is not a recognized" in e for e in errors))
+
+    def test_validator_rejects_non_finite_duration(self):
+        project = create_project("cycling")
+        project["scenes"][0]["duration_seconds"] = float("nan")
+        self.assertTrue(any("finite positive number" in e for e in validate_project(project)))
+
     def test_export_contains_prompt_and_disclaimer(self):
         project = create_project("yoga")
         markdown = to_markdown(project)
