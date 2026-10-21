@@ -197,7 +197,7 @@ async function collectAllGeneratedItems(page, selector, { targetKey = null, maxS
         || element.querySelector("a[href]")?.getAttribute("href")
         || element.querySelector("video, img")?.getAttribute("src")
         || "";
-      const text = String(element.innerText || element.textContent || "").replace(/\\s+/g, " ").trim();
+      const text = String(element.innerText || element.textContent || "").replace(/\s+/g, " ").trim();
       const state = [element.getAttribute("data-status"), element.getAttribute("data-state"),
         element.getAttribute("aria-label"), element.getAttribute("title")].filter(Boolean).join(" ");
       const progress = Boolean(element.querySelector('[role="progressbar"], progress, [aria-valuenow]'));
@@ -354,7 +354,7 @@ async function waitForGenerationAndDownload(page, selectors, { beforeKeys, timeo
   const failIfVisible = async () => {
     const bodyText = await page.locator("body").innerText({ timeout: 2000 }).catch(() => "");
     if (isGenerationFailureText(bodyText)) {
-      throw new Error(`FLOW_GENERATION_FAILED: Flow displayed a generation/policy failure: ${bodyText.replace(/\\s+/g, " ").trim().slice(-700)}`);
+      throw new Error(`FLOW_GENERATION_FAILED: Flow displayed a generation/policy failure: ${bodyText.replace(/\s+/g, " ").trim().slice(-700)}`);
     }
   };
   const captureTimeout = async () => {
@@ -603,7 +603,7 @@ async function checkedRadio(page, selector, value, label) {
   const locator = await exactVisibleLocator(page, selector, label);
   const role = await locator.getAttribute("role");
   if (role !== "radio") throw new Error(`The ${label} selector must match a role=radio element.`);
-  const labelText = (await locator.innerText()).replace(/\\s+/g, " ").trim();
+  const labelText = (await locator.innerText()).replace(/\s+/g, " ").trim();
   if (!labelText.includes(value)) throw new Error(`The ${label} selector text ${JSON.stringify(labelText)} does not match expected value ${JSON.stringify(value)}.`);
   const checked = await locator.getAttribute("aria-checked");
   if (checked !== "true") {
@@ -928,7 +928,7 @@ async function loadInputs(args) {
   const characterDescriptionSection = faceDescriptionMode === "reference_only" || !scene.character_description
     ? "Use the attached reference images for all appearance details; do not invent or reinterpret facial features."
     : faceDescriptionMode === "hybrid"
-      ? `HYBRID FACE DESCRIPTION (brief matching traits only; reference images remain authoritative): ${scene.character_description.trim().replace(/[.\\s]+$/, "")}. Match the reference images and do not add conflicting traits.`
+      ? `HYBRID FACE DESCRIPTION (brief matching traits only; reference images remain authoritative): ${scene.character_description.trim().replace(/[.\s]+$/, "")}. Match the reference images and do not add conflicting traits.`
       : `CHARACTER DESCRIPTION (supporting traits only; do not override the face reference): ${scene.character_description}`;
   const expressionSection = scene.expression
     ? `\n\nEXPRESSION AND EYE STATE (follow throughout the entire shot): ${scene.expression}. Keep this expression and eye state consistent from the first frame to the last; this instruction takes priority over breathing or other subtle motion.`
