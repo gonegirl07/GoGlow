@@ -20,11 +20,11 @@ mkdir -p local
 cp examples/flow-pilot-selectors.example.json local/flow-selectors.json
 ```
 
-The selector template reflects the tested current DOM pattern. Verify every selector with `--inspect` before use. The settings panel must be opened before model and radio controls exist. The runner uses the settings trigger, opens the model family menu, selects the exact `menuitem`, and verifies radio state through `aria-checked="true"`.
+The selector template reflects the tested current DOM pattern. Verify every selector with `--inspect` before use. The settings panel must be opened before model and radio controls exist. Because Flow renders this panel asynchronously, the runner waits up to 5 seconds for the model selector after opening Settings, and up to 5 seconds for the model option after opening its menu. The runner uses the settings trigger, opens the model family menu, selects the exact `menuitem`, and verifies radio state through `aria-checked="true"`.
 
 Required selector keys:
 
-- `account_button`: account control with an aria-label containing the active account email; defaults to `button[aria-label^="Google Account:"]`.
+- `account_button`: account control with an aria-label containing the active account email; defaults to `[role="button"][aria-label^="Google Account:"]`.
 - `prompt`, `settings_trigger`, `model`, `model_option`, `resolution`, `ingredients_mode`, `aspect_9_16`, `duration`, `create`.
 
 Do not commit the local selector file, account identifiers, screenshots, or logs.
@@ -57,7 +57,7 @@ Before filling the prompt, the runner validates the project and account, checks 
 
 It reads the visible `Generating will use N credits` text when present and includes the estimated cost in the READY-TO-CREATE CHECK. It closes the settings overlay before filling the prompt. Non-ASCII prompt text is rejected before connecting to or changing the page. After prompt fill it verifies Create is enabled, saves a screenshot and exits without clicking Create.
 
-If a selector or setting fails before prompt fill, the prompt is not touched. If prompt fill itself fails or the button remains disabled, the runner attempts to clear the prompt. Keep the terminal attached; if stdin closes, the runner reports that the confirmation input closed and does not proceed.
+If a selector or setting fails before prompt fill, the prompt is not touched. If prompt fill itself fails or the button remains disabled, the runner attempts to clear the prompt. Run the command in an interactive terminal rather than piping stdin. If stdin closes before the confirmation is entered, the runner reports `Confirmation input closed before an answer. No Create click was performed.` and does not proceed. The readline interface is closed when dry-run completes so the process can exit cleanly.
 
 ## Execute exactly one generation — requires separate approval
 
