@@ -259,9 +259,16 @@ async function prepare(args, browser, rl) {
     throw new Error("Could not open Flow settings (possibly blocked by an account overlay). Close any overlay manually and rerun; prompt remains untouched.");
   });
 
-  // Any failure after opening settings, including selector preflight, must clean up overlays.
+  // Settings controls render asynchronously after the trigger click.
+  // Wait for the model selector before validating exact match count.
+  // Any failure after opening settings, including this wait, must clean up overlays.
   let creditCost = null;
   try {
+    try {
+      await chosen.page.locator(selectors.model).waitFor({ state: "visible", timeout: 5000 });
+    } catch {
+      throw new Error("Model selector did not become visible within 5000ms after opening Settings.");
+    }
     const model = await exactVisibleLocator(chosen.page, selectors.model, "model selector");
     const resolution = await exactVisibleLocator(chosen.page, selectors.resolution, "resolution radio");
     const ingredients = await exactVisibleLocator(chosen.page, selectors.ingredients_mode, "Ingredients mode radio");
@@ -341,6 +348,7 @@ async function prepare(args, browser, rl) {
       console.log("Dry-run prompt cleared.");
     }
     console.log("\nDRY RUN COMPLETE: stopped before clicking Create. No generation was submitted.");
+    rl.close();
     return;
   }
 
