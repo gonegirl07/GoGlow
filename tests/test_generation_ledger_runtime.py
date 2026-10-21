@@ -123,6 +123,20 @@ class GenerationLedgerRuntimeTests(unittest.TestCase):
         self.assertIn("JSON.stringify(project(),null,2)", self.html)
         self.assertIn("scenes.map(s=>Object.assign({},s", self.html)
 
+    def test_qc_update_targets_attempt_and_requires_reviewer_and_defects_for_fail(self):
+        self.assertIn("function updateAttemptQC(record, form, now)", self.runtime)
+        self.assertIn('["not_reviewed", "pass", "fail", "needs_review"]', self.runtime)
+        self.assertIn("Reviewer is required to record QC.", self.runtime)
+        self.assertIn("QC FAIL requires at least one observed defect.", self.runtime)
+        self.assertIn("QC PASS cannot include unresolved defects.", self.runtime)
+        self.assertIn('root.GoGlowGenerationLedger = { version: VERSION, makeAttempt, validateAttempt, appendAttempt, updateAttemptQC }', self.runtime)
+        self.assertIn('data-ledger="qc_reviewer"', self.html)
+        self.assertIn('data-ledger="qc_defects"', self.html)
+        self.assertIn("generationLedger.find(item=>item.attempt_id===attemptId&&item.scene_id===s.id)", self.html)
+        self.assertIn("window.GoGlowGenerationLedger.updateAttemptQC(attempt,{status,reviewed_by:reviewer,defects,notes})", self.html)
+        self.assertIn("generationLedgerEvents.push(event)", self.html)
+        self.assertIn("reviewer,defects,notes,created_at:attempt.qc.reviewed_on", self.html)
+
     def test_flow_jsonl_import_validates_and_appends_without_duplicate_attempt_ids(self):
         self.assertIn('id="importFlowLedger"', self.html)
         self.assertIn('id="flowLedgerFile"', self.html)
