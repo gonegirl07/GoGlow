@@ -488,8 +488,8 @@ async function prepare(args, browser, rl) {
 async function main() {
   const args = argsOf(process.argv.slice(2));
   if (args.help) return usage();
-  if (args.inspect && (args.scene || args.selectors || args.execute || args.expectedEmail || args.expectedProject)) {
-    throw new Error("--inspect is read-only and cannot be combined with scene, selectors, --execute, or expected account/project.");
+  if (args.inspect && (args.scene || args.selectors || args.characterProfile || args.execute || args.expectedEmail || args.expectedProject)) {
+    throw new Error("--inspect is read-only and cannot be combined with scene, selectors, --character-profile, --execute, or expected account/project.");
   }
   if (args.inspect) {
     const browser = await chromium.connectOverCDP(CDP_ENDPOINT);
