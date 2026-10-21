@@ -159,9 +159,8 @@ async function closeIngredientsPicker(page, selectors) {
   }
 }
 
-async function clearPromptVerified(prompt, selectors, timeout = 2500) {
+async function clearPromptContentsVerified(prompt, selectors, timeout = 2500) {
   const page = prompt.page();
-  await closeIngredientsPicker(page, selectors);
   const clearButton = await exactVisibleLocator(page, selectors.clear_prompt, "Clear prompt button");
   await clearButton.click({ timeout: 2500 });
   const handle = await prompt.elementHandle();
@@ -178,6 +177,11 @@ async function clearPromptVerified(prompt, selectors, timeout = 2500) {
   if (String(remaining).trim() !== "") throw new Error("Clear prompt verification failed; textbox still contains text.");
   const chipCount = await page.locator(selectors.ingredient_reference_items).count().catch(() => -1);
   if (chipCount !== 0) throw new Error(`Clear prompt removed text but left ${chipCount} Ingredients chip(s).`);
+}
+
+async function clearPromptVerified(prompt, selectors, timeout = 2500) {
+  await closeIngredientsPicker(prompt.page(), selectors);
+  await clearPromptContentsVerified(prompt, selectors, timeout);
 }
 
 async function listPages(browser) {
@@ -358,13 +362,15 @@ async function uploadSceneReferencesUnsafe(page, selectors, referenceImages) {
 }
 
 async function uploadSceneReferences(page, selectors, referenceImages, prompt) {
-  let uploadStarted = false;
+  let uploadError = null;
   try {
-    uploadStarted = true;
     return await uploadSceneReferencesUnsafe(page, selectors, referenceImages);
   } catch (error) {
-    const cleanup = [];
-    if (uploadStarted) {
+    uploadError = error;
+    throw error;
+  } finally {
+    if (uploadError) {
+      const cleanup = [];
       try {
         await closeIngredientsPicker(page, selectors);
         cleanup.push("picker closed and verified");
@@ -372,14 +378,14 @@ async function uploadSceneReferences(page, selectors, referenceImages, prompt) {
         cleanup.push(`picker closure FAILED: ${closeError.message}`);
       }
       try {
-        await clearPromptVerified(prompt, selectors, 4000);
+        // Attempt clearing even if backdrop closure verification failed; report either failure explicitly.
+        await clearPromptContentsVerified(prompt, selectors, 4000);
         cleanup.push("prompt and Ingredients chips cleared and verified");
       } catch (clearError) {
         cleanup.push(`prompt/chip cleanup FAILED: ${clearError.message}`);
       }
-      console.error(`Upload failure cleanup: ${cleanup.join("; ")}`);
+      console.error(`Upload failure cleanup (finally): ${cleanup.join("; ")}`);
     }
-    throw new Error(`Ingredients upload failed: ${error.message}. Cleanup: ${cleanup.join("; ")}`);
   }
 }
 
