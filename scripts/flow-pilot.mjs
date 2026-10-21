@@ -395,10 +395,10 @@ async function waitForGenerationAndDownload(page, selectors, { beforeKeys, befor
   const failIfVisible = async () => {
     // Project grids may retain older failed tiles. Only inspect the whole page on
     // a generation detail route; on the grid, inspect only newly-created tiles below.
-    if (!/\\/(?:edit|video)\\//i.test(page.url())) return;
+    if (!/\/(?:edit|video)\//i.test(page.url())) return;
     const bodyText = await page.locator("body").innerText({ timeout: 2000 }).catch(() => "");
     if (isGenerationFailureText(bodyText)) {
-      throw new Error(`FLOW_GENERATION_FAILED: Flow displayed a generation/policy failure: ${bodyText.replace(/\\s+/g, " ").trim().slice(-700)}`);
+      throw new Error(`FLOW_GENERATION_FAILED: Flow displayed a generation/policy failure: ${bodyText.replace(/\s+/g, " ").trim().slice(-700)}`);
     }
   };
   const captureTimeout = async () => {
