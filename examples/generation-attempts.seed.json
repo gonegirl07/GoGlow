@@ -9,7 +9,7 @@
       "attempt_number": 1,
       "retry_of": null,
       "provider": "google_flow",
-      "started_on": "2026-10-21T00:00:00Z",
+      "started_on": null,
       "finished_on": null,
       "configuration": {
         "model_label": "Omni 1.1 Flash",
@@ -56,7 +56,7 @@
         "checks_passed": null,
         "checks_total": 7,
         "reviewed_by": "user",
-        "reviewed_on": "2026-10-21T00:00:00Z",
+        "reviewed_on": null,
         "notes": "Approximate summary from user; original prompt and per-check results unavailable."
       },
       "created_by": "user",
@@ -70,7 +70,7 @@
       "attempt_number": 2,
       "retry_of": "flow-warrior-knee-bend-fail-001",
       "provider": "google_flow",
-      "started_on": "2026-10-21T00:00:00Z",
+      "started_on": null,
       "finished_on": null,
       "configuration": {
         "model_label": "Omni 1.1 Flash",
@@ -117,7 +117,7 @@
         "checks_passed": null,
         "checks_total": 7,
         "reviewed_by": "user",
-        "reviewed_on": "2026-10-21T00:00:00Z",
+        "reviewed_on": null,
         "notes": "Approximate summary from user; original prompt and per-check results unavailable."
       },
       "created_by": "user",
@@ -131,7 +131,7 @@
       "attempt_number": 3,
       "retry_of": "flow-warrior-knee-bend-fail-002",
       "provider": "google_flow",
-      "started_on": "2026-10-21T00:00:00Z",
+      "started_on": null,
       "finished_on": null,
       "configuration": {
         "model_label": "Omni 1.1 Flash",
@@ -177,7 +177,7 @@
         "checks_passed": 7,
         "checks_total": 7,
         "reviewed_by": "user",
-        "reviewed_on": "2026-10-21T00:00:00Z",
+        "reviewed_on": null,
         "notes": "User reported QC 7/7: hands in frame, rear foot 0 px sliding, visible breathing rhythm. URL identifies Flow edit/project page, not a verified direct downloadable media file."
       },
       "created_by": "user",
