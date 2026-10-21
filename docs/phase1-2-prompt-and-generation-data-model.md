@@ -10,7 +10,7 @@
 
 ## Status and scope
 
-This is a **design/seed-data PR**, not a runtime implementation. It does not change the browser UI or automate Google Flow. Phase 1 (rule library behavior) and Phase 2 (generation-attempt logging) remain separate implementation PRs, each requiring tester approval before merge.
+The schema/seed section records the accepted data contract. Phase 1 is implemented in the browser prompt library. Phase 2 runtime logging is being implemented in a separate PR and remains manual: GoGlow does not call Google Flow or infer provider credit usage.
 
 ## Design principles
 
@@ -49,11 +49,12 @@ The Flow URL is an edit/project URL supplied by the user. It is not represented 
 - Test the stable-hold rule and its narrow scope; prove dynamic Warrior II transitions do not inherit it accidentally.
 
 ### Phase 2 implementation PR — Generation ledger
-- Append an attempt before starting/recording a generation action.
-- Capture exact prompt, rule versions, settings, result/failure, and QC evidence.
-- Capture credits only from a source the user/tester can identify; otherwise mark unknown.
-- Provide retry linking without deleting prior attempts.
-- Suggest alternative prompts for failures as drafts, with the reason and changed text visible before retry.
+- Provide a per-scene manual ledger panel backed by a project-level append-only ledger for recording each completed/failed Flow attempt; it does not start a generation.
+- Append an attempt record with a unique ID and attempt number; let the user choose whether it is a new attempt or a retry, and set `retry_of` only for an explicitly selected retry.
+- Capture exact prompt, model/resolution/duration/aspect ratio, reference IDs, rule IDs, result/failure details, media URI, and a snapshot of QC known at log time.
+- Credit estimate and actual charge are separate fields. Actual amount, charge status, and evidence source remain unknown unless the user records observed evidence.
+- Include attempt history in JSON and Markdown project exports. The browser's saved project keeps records in the current browser profile; users should export JSON for backup.
+- Alternative prompt suggestions remain drafts and are not silently applied.
 
 ## Acceptance criteria for this design PR
 
