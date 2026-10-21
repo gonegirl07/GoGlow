@@ -49,8 +49,8 @@ The Flow URL is an edit/project URL supplied by the user. It is not represented 
 - Test the stable-hold rule and its narrow scope; prove dynamic Warrior II transitions do not inherit it accidentally.
 
 ### Phase 2 implementation PR — Generation ledger
-- Provide a per-scene manual ledger panel for recording each completed/failed Flow attempt; it does not start a generation.
-- Append an attempt record with a unique ID, attempt number, and `retry_of` link; never overwrite earlier attempts.
+- Provide a per-scene manual ledger panel backed by a project-level append-only ledger for recording each completed/failed Flow attempt; it does not start a generation.
+- Append an attempt record with a unique ID and attempt number; let the user choose whether it is a new attempt or a retry, and set `retry_of` only for an explicitly selected retry.
 - Capture exact prompt, model/resolution/duration/aspect ratio, reference IDs, rule IDs, result/failure details, media URI, and a snapshot of QC known at log time.
 - Credit estimate and actual charge are separate fields. Actual amount, charge status, and evidence source remain unknown unless the user records observed evidence.
 - Include attempt history in JSON and Markdown project exports. The browser's saved project keeps records in the current browser profile; users should export JSON for backup.
