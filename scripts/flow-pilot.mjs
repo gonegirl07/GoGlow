@@ -259,32 +259,48 @@ async function uploadSceneReferences(page, selectors, referenceImages) {
   for (const imagePath of referenceImages) {
     const filename = path.basename(imagePath);
     await openIngredientsPicker(page, selectors);
+    const picker = page.locator(selectors.ingredient_library_item);
+    const matchingAssets = picker.filter({ hasText: filename });
+    const existingUuids = new Set();
+    const existingCount = await matchingAssets.count().catch(() => 0);
+    for (let i = 0; i < existingCount; i += 1) {
+      const src = await matchingAssets.nth(i).locator("img").first().getAttribute("src").catch(() => null);
+      const uuid = assetUuidFromUrl(src);
+      if (uuid) existingUuids.add(uuid);
+    }
+
     const uploadButton = await exactVisibleLocator(page, selectors.ingredient_upload_button, "Upload media button");
     const chooserPromise = page.waitForEvent("filechooser", { timeout: 5000 });
     await uploadButton.click({ timeout: 2500 });
     const chooser = await chooserPromise;
     await chooser.setFiles(imagePath);
-    const picker = page.locator(selectors.ingredient_library_item);
-    const matchingAssets = picker.filter({ hasText: filename });
     try {
-      await matchingAssets.first().waitFor({ state: "visible", timeout: 15000 });
+      await page.waitForFunction(({ selector, filename, oldUuids }) => {
+        return Array.from(document.querySelectorAll(selector)).some(asset => {
+          const text = (asset.innerText || asset.textContent || "").trim();
+          const src = asset.querySelector("img")?.getAttribute("src") || "";
+          const match = src.match(/[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}/i);
+          return text.includes(filename) && match && !oldUuids.includes(match[0].toLowerCase());
+        });
+      }, { selector: selectors.ingredient_library_item, filename, oldUuids: Array.from(existingUuids) }, { timeout: 15000 });
     } catch {
       await closeIngredientsPicker(page, selectors);
-      throw new Error(`Uploaded asset ${filename} did not appear in the project library within 15000ms. Stopping before prompt fill/Create.`);
+      throw new Error(`New upload ${filename} did not appear with a new asset UUID within 15000ms. Existing same-name assets are not reused without identity proof; stopping before prompt fill/Create.`);
     }
-    const matches = await matchingAssets.count();
-    if (matches !== 1) {
+    const newMatches = [];
+    const totalMatches = await matchingAssets.count();
+    for (let i = 0; i < totalMatches; i += 1) {
+      const candidate = matchingAssets.nth(i);
+      const src = await candidate.locator("img").first().getAttribute("src").catch(() => null);
+      const uuid = assetUuidFromUrl(src);
+      if (uuid && !existingUuids.has(uuid)) newMatches.push({ candidate, uuid });
+    }
+    if (newMatches.length !== 1) {
       await closeIngredientsPicker(page, selectors);
-      throw new Error(`Project library contains ${matches} visible asset entries matching ${filename}; expected exactly one. Rename/deduplicate the asset and rerun.`);
+      throw new Error(`Expected exactly one newly uploaded library asset named ${filename}, found ${newMatches.length}. Stopping before prompt fill/Create.`);
     }
-    const asset = matchingAssets.first();
-    const assetImg = asset.locator("img").first();
-    const assetSrc = await assetImg.getAttribute("src").catch(() => null);
-    const assetUuid = assetUuidFromUrl(assetSrc);
-    if (!assetUuid) {
-      await closeIngredientsPicker(page, selectors);
-      throw new Error(`Could not extract a UUID from the library thumbnail for ${filename}; refusing to attach an unverified asset.`);
-    }
+    const asset = newMatches[0].candidate;
+    const assetUuid = newMatches[0].uuid;
 
     await asset.click({ timeout: 2500 });
     let attached = false;
