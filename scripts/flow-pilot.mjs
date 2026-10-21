@@ -594,7 +594,7 @@ async function prepare(args, browser, rl) {
   if (!args.execute) {
     if (args.clearAfterDryRun) {
       try {
-        await clearPromptVerified(prompt, 2500);
+        await clearPromptVerified(prompt, selectors, 2500);
       } catch (error) {
         throw new Error(`Dry-run finished but prompt could not be verified empty: ${error.message}. Clear it manually before continuing.`);
       }
