@@ -38,6 +38,19 @@ class GenerationLedgerRuntimeTests(unittest.TestCase):
         self.assertIn("ledger-qc-add", self.html)
         self.assertIn("generationLedgerEvents.push", self.html)
 
+    def test_project_id_is_not_overwritten_during_export_or_save(self):
+        project_fn = self.html.split("function project(){", 1)[1].split("function save(){", 1)[0]
+        self.assertIn("project_id:projectId", project_fn)
+        self.assertNotIn('project_id:"goglow-"+Date.now()', project_fn)
+        self.assertEqual(project_fn.count("project_id:"), 1)
+
+    def test_scene_ids_are_unique_across_rebuild_and_add(self):
+        self.assertIn("function newSceneId()", self.html)
+        self.assertIn('return "scene-"+crypto.randomUUID()', self.html)
+        self.assertGreaterEqual(self.html.count("id:newSceneId()"), 2)
+        self.assertNotIn('id:"scene-"+String(i+1).padStart(2,"0")', self.html)
+        self.assertIn('generationLedger.filter(a=>a.scene_id===s.id)', self.html)
+
     def test_attempt_captures_exact_prompt_configuration_and_rule_ids(self):
         for marker in ("text: String(scene.prompt || \"\")", "model_label:", "resolution:", "duration_seconds:", "aspect_ratio:", "rule_ids:"):
             with self.subTest(marker=marker):
