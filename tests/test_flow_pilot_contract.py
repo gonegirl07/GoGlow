@@ -393,5 +393,35 @@ class FlowPilotContractTests(unittest.TestCase):
         self.assertIn("did not attach asset", upload_fn)
 
 
+
+    def test_variants_are_limited_to_one_through_three_and_default_to_one(self):
+        self.assertIn('const variants = scene.variants === undefined ? 1 : scene.variants;', self.script)
+        self.assertIn('variants < 1 || variants > 3', self.script)
+        self.assertIn('args._variantCount = variantCount', self.script)
+        self.assertIn('for (let index = 1; index <= variantCount; index += 1)', self.script)
+
+    def test_variant_execution_requires_wait_and_single_total_confirmation(self):
+        self.assertIn('Executing variants requires --wait', self.script)
+        self.assertIn('estimated total ${totalEstimate} credits', self.script)
+        self.assertIn('if (!args._variantsConfirmed)', self.script)
+        self.assertIn('args._variantsConfirmed = true', self.script)
+        self.assertIn('Type CREATE ${variantCount} VARIANTS FOR ${scene.scene_id}', self.script)
+
+    def test_variants_keep_same_job_and_log_each_variant(self):
+        self.assertIn('job_id: scene.job_id || scene.scene_id', self.script)
+        self.assertIn('variant_index: variantIndex', self.script)
+        self.assertIn('variant_count: variantCount', self.script)
+        self.assertIn('selected_variant: null', self.script)
+        self.assertIn('variantIndex, variantCount,', self.script)
+        self.assertIn('variantCount > 1 ? `${safeScene}__v${variantIndex}${extension}`', self.script)
+
+    def test_seated_shots_get_optional_wide_knee_margin_helper(self):
+        self.assertIn('scene.framing_helper_applied', self.script)
+        self.assertIn('Camera pulled back, with a wide margin on both sides of the knees', self.script)
+        self.assertIn('scene.framing_helper === false ? false', self.script)
+
+    def test_watermark_status_is_recorded_for_human_qc(self):
+        self.assertIn('watermark_status: scene.watermark_status || "not_reviewed"', self.script)
+
 if __name__ == "__main__":
     unittest.main()
