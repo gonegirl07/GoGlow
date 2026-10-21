@@ -148,5 +148,25 @@ class GenerationLedgerRuntimeTests(unittest.TestCase):
         self.assertIn('Đã nhập "+added+" attempt vào Generation Ledger', self.html)
 
 
+    def test_project_level_qc_can_update_imported_attempt_without_matching_plan_scene_id(self):
+        self.assertIn('id="projectQc"', self.html)
+        self.assertIn("function projectQcPanel()", self.html)
+        self.assertIn("generationLedger.map(a=>\"<option value='\", self.html)
+        self.assertIn("project_qc_attempt_id", self.html)
+        self.assertIn("generationLedger.find(item=>item.attempt_id===attemptId)", self.html)
+        self.assertIn("ledger-qc-project", self.html)
+        self.assertIn("scene_id:attempt.scene_id,attempt_id:attemptId", self.html)
+        self.assertIn("Chọn bất kỳ attempt đã import, kể cả khi scene_id không khớp", self.html)
+
+    def test_qc_reviewer_reviewed_on_and_defects_are_visible_in_markdown_and_ui_audit(self):
+        self.assertIn('reviewer="+(a.qc.reviewed_by||"unknown")', self.html)
+        self.assertIn('reviewed_on="+(a.qc.reviewed_on||"unknown")', self.html)
+        self.assertIn('defects="+((a.qc.observed_defects||[]).join("; ")||"none")', self.html)
+        self.assertIn('reviewer="+(e.reviewer||"unknown")', self.html)
+        self.assertIn('reviewed_on="+(e.reviewed_on||e.created_at||"unknown")', self.html)
+        self.assertIn('defects="+((e.defects||[]).join("; ")||"none")', self.html)
+        self.assertIn('defects: "+esc((e.defects||[]).join("; ")||"none")', self.html)
+
+
 if __name__ == "__main__":
     unittest.main()
