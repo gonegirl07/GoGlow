@@ -307,8 +307,14 @@ class FlowPilotContractTests(unittest.TestCase):
         self.assertIn("...referenceImages.filter(imagePath => !faceReferenceImages.includes(imagePath))", self.script)
         self.assertIn("referenceImages: orderedReferenceImages, faceReferenceImage: faceReferenceImages[0], faceReferenceImages", self.script)
 
-    def test_multiple_face_references_are_described_as_same_person(self):
-        self.assertIn("The other selected face reference images show the SAME PERSON from additional angles", self.script)
+    def test_multiple_face_references_are_described_as_same_character(self):
+        self.assertIn("The other selected face reference images show the same character from additional angles.", self.script)
+        self.assertIn("Use them to understand the character's features; do not mix them with supporting references.", self.script)
+        self.assertIn("The first attached image shows the character.", self.script)
+        self.assertIn("Keep the same character as the reference image:", self.script)
+        self.assertNotIn("primary face identity anchor", self.script)
+        self.assertNotIn("overall likeness", self.script)
+        self.assertNotIn("Preserve the selected face identity", self.script)
         self.assertIn("face_reference_ids must contain distinct paths.", self.script)
         self.assertIn("face_reference_ids must be an array of 1 to 3 paths from this job's reference_images.", self.script)
 
