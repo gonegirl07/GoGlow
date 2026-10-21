@@ -1,0 +1,40 @@
+{
+  "clips": [
+    {
+      "scene_id": "scene-01",
+      "path": "media/scene-01.mp4",
+      "approved": true,
+      "qc_status": "PASS",
+      "media_uri": "file://media/scene-01.mp4",
+      "trim_start_seconds": 0,
+      "trim_end_seconds": null
+    },
+    {
+      "scene_id": "scene-02",
+      "path": "media/scene-02.mp4",
+      "approved": true,
+      "qc_status": "PASS",
+      "media_uri": "file://media/scene-02.mp4",
+      "trim_start_seconds": 0,
+      "trim_end_seconds": null
+    },
+    {
+      "scene_id": "scene-03",
+      "path": "media/scene-03.mp4",
+      "approved": true,
+      "qc_status": "PASS",
+      "media_uri": "file://media/scene-03.mp4",
+      "trim_start_seconds": 0,
+      "trim_end_seconds": null
+    },
+    {
+      "scene_id": "scene-04",
+      "path": "media/scene-04.mp4",
+      "approved": true,
+      "qc_status": "PASS",
+      "media_uri": "file://media/scene-04.mp4",
+      "trim_start_seconds": 0,
+      "trim_end_seconds": null
+    }
+  ]
+}
