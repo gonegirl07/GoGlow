@@ -27,10 +27,23 @@ class PlannerTests(unittest.TestCase):
         self.assertEqual(validate_project(project), [])
         self.assertTrue(all(s["status_history"] == ["PLANNED"] for s in project["scenes"]))
 
-    def test_uneven_duration_is_distributed_without_losing_seconds(self):
-        project = create_project("dance", target_duration_seconds=37, scene_count=4)
-        self.assertEqual([s["duration_seconds"] for s in project["scenes"]], [10, 9, 9, 9])
+    def test_default_duration_uses_exact_8s_and_10s_flow_clips(self):
+        project = create_project("cycling", target_duration_seconds=36, scene_count=4)
+        self.assertEqual([s["duration_seconds"] for s in project["scenes"]], [8, 8, 10, 10])
+        self.assertEqual([s["flow_clip_seconds"] for s in project["scenes"]], ["8", "8", "10", "10"])
+        self.assertIn("pose_reference_uri", project["scenes"][0])
+        self.assertIn("media_uri_360p", project["scenes"][0])
+        self.assertIn("media_uri_720p", project["scenes"][0])
         self.assertEqual(validate_project(project), [])
+
+    def test_30_seconds_can_use_three_10_second_clips(self):
+        project = create_project("yoga", target_duration_seconds=30, scene_count=3)
+        self.assertEqual([s["duration_seconds"] for s in project["scenes"]], [10, 10, 10])
+        self.assertEqual(validate_project(project), [])
+
+    def test_rejects_target_that_cannot_be_made_from_8s_and_10s_clips(self):
+        with self.assertRaisesRegex(ValueError, "cannot be made from"):
+            create_project("dance", target_duration_seconds=37, scene_count=4)
 
     def test_accepts_minimum_duration_of_30_seconds(self):
         project = create_project("yoga", target_duration_seconds=30, scene_count=3)

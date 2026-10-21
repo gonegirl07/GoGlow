@@ -54,3 +54,8 @@ See [M1 local MVP guide](docs/m1-local-mvp.md) and the [36-second cycling exampl
 
 ## Core rule
 **A planned action is not a generated result. A generated result is not a passed QC check.** No Flow automation, image/video generation, media inspection, or automatic visual QC is implemented yet.
+
+
+### Google Flow planning fields
+
+The browser prototype can record per-scene 8s/10s Flow clip settings, pose and face reference identifiers for Ingredients, separate 360p test and 720p final URIs, subtitles/breathing cues, movement benefits, and edit/watermark notes. It also records pre-publication approval and whether an AI label is required. These fields are planning metadata only: GoGlow does not connect to Flow, upload reference images, generate clips, remove watermarks, or assemble/edit video. Verify model names and credit estimates directly in Flow.
