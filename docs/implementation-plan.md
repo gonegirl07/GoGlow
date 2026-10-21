@@ -18,7 +18,7 @@ Software QA severity (`P0`–`P3`) is not the media defect severity scale. A dec
 - Add an explicit `status_history` to scenes and validate each transition against the documented workflow.
 - Require non-empty `media_uri` for `GENERATED`, `QC_REVIEW`, and `APPROVED`.
 - Require a structured QC report with `PASS`, checks, reviewer, and review timestamp before `APPROVED`.
-- Keep the browser prototype from offering generation/QC/approval states until it has a media declaration and human-QC evidence UI.
+- Add browser media declaration and structured human-QC entry; gate workflow transitions and approval on matching evidence.
 - Add regression tests for fabricated URI without QC evidence, failed QC report, skipped transitions, and valid approval evidence.
 
 **Limit:** Evidence fields are still declarations supplied by a person or file. They reduce accidental false claims but cannot prove a URI is accessible or that a human actually watched a clip. That requires media access and a tested verification workflow.
@@ -40,8 +40,8 @@ Software QA severity (`P0`–`P3`) is not the media defect severity scale. A dec
 
 ### Phase 4 — later work, not part of this patch
 
-- Add a proper media declaration form and structured human QC form in the browser.
-- Add a clip-access workflow and attach QC report evidence to the exact media URI.
+- Add an explicit clip-access/playback verification workflow; current media URIs are manual declarations only.
+- Improve activity-specific defect entry, timestamped defect reports, and assembled-sequence QC.
 - Consider visual QC or Google Flow integration only after the media-input/provider interface and its capabilities can be tested.
 - Add project import, stronger persistence, continuity editing, and UI polish after the P0/P2 acceptance gates are reliable.
 
