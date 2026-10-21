@@ -55,6 +55,27 @@ class FlowPilotContractTests(unittest.TestCase):
         self.assertIn("Clear prompt was clicked but textbox did not become empty within the verification timeout", self.script)
         self.assertIn("CRITICAL: prompt could not be verified empty", self.script)
 
+    def test_asset_upload_wait_is_configurable_and_defaults_to_90_seconds(self):
+        self.assertIn('process.env.FLOW_ASSET_READY_TIMEOUT_MS || 90000', self.script)
+        self.assertIn('FLOW_ASSET_READY_TIMEOUT_MS must be an integer from 15000 to 180000', self.script)
+        self.assertIn('{ timeout: ASSET_READY_TIMEOUT_MS }', self.script)
+        self.assertIn('within ${ASSET_READY_TIMEOUT_MS}ms', self.script)
+        self.assertNotIn('within 15000ms', self.script)
+
+    def test_picker_closure_clicks_backdrop_edge_and_verifies_closed(self):
+        self.assertIn('position: { x: 5, y: 5 }', self.script)
+        self.assertIn('Ingredients picker closure verification failed; backdrop remains visible', self.script)
+        self.assertIn('Clicked the edge of the Ingredients picker backdrop, but the overlay is still open', self.script)
+        self.assertIn('await page.waitForFunction(selector => !Array.from(document.querySelectorAll(selector))', self.script)
+
+    def test_upload_failure_runs_verified_cleanup_in_finally(self):
+        self.assertIn('async function uploadSceneReferences(page, selectors, referenceImages, prompt)', self.script)
+        self.assertIn('finally {\n    if (uploadError)', self.script)
+        self.assertIn('Upload failure cleanup (finally):', self.script)
+        self.assertIn('await closeIngredientsPicker(page, selectors)', self.script)
+        self.assertIn('await clearPromptContentsVerified(prompt, selectors, 4000)', self.script)
+        self.assertIn('chipCount !== 0', self.script)
+
     def test_confirmation_reader_buffers_piped_stdin(self):
         self.assertIn("function createConfirmationReader()", self.script)
         self.assertIn("const queued = [];", self.script)
