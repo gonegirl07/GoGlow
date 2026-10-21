@@ -5,7 +5,7 @@
  */
 import fs from "node:fs";
 import path from "node:path";
-import readline from "node:readline/promises";
+import readline from "node:readline";
 import { stdin as input, stdout as output } from "node:process";
 import { chromium } from "playwright";
 
@@ -82,11 +82,69 @@ function appendEvent(logPath, event) {
   fs.appendFileSync(absolute, JSON.stringify({ at: new Date().toISOString(), ...event }) + "\n", { encoding: "utf8", flag: "a" });
 }
 
+function createConfirmationReader() {
+  // Buffer stdin lines immediately, before browser preflight can finish. This supports
+  // piped/scripted confirmations even when stdin reaches EOF before the first question.
+  const interface_ = readline.createInterface({ input, crlfDelay: Infinity, terminal: Boolean(input.isTTY) });
+  const queued = [];
+  const waiters = [];
+  let closed = false;
+  interface_.on("line", line => {
+    const waiter = waiters.shift();
+    if (waiter) waiter.resolve(line);
+    else queued.push(line);
+  });
+  interface_.on("close", () => {
+    closed = true;
+    while (waiters.length) waiters.shift().reject(new Error("stdin closed"));
+  });
+  return {
+    question(prompt) {
+      output.write(prompt);
+      if (queued.length) return Promise.resolve(queued.shift());
+      if (closed) return Promise.reject(new Error("stdin closed"));
+      return new Promise((resolve, reject) => waiters.push({ resolve, reject }));
+    },
+    close() { interface_.close(); },
+  };
+}
+
 async function askExact(rl, prompt, expected) {
   let answer;
   try { answer = (await rl.question(prompt)).trim(); }
   catch { throw new Error("Confirmation input closed before an answer. No Create click was performed."); }
   if (answer !== expected) throw new Error("Confirmation did not match. No Create click was performed.");
+}
+
+async function waitForCreateEnabled(page, create, timeout = 5000) {
+  const handle = await create.elementHandle();
+  if (!handle) throw new Error("Create button disappeared before enabled-state wait.");
+  try {
+    await page.waitForFunction(element => element.isConnected
+      && !element.disabled
+      && element.getAttribute("aria-disabled") !== "true", handle, { timeout });
+  } catch {
+    throw new Error(`Create button did not become enabled within ${timeout}ms after filling prompt.`);
+  }
+  if (!(await create.isEnabled().catch(() => false))) {
+    throw new Error("Create button still reports disabled after its DOM enabled state changed.");
+  }
+}
+
+async function clearPromptVerified(prompt, timeout = 2000) {
+  await prompt.fill("", { timeout });
+  const handle = await prompt.elementHandle();
+  if (!handle) throw new Error("Prompt textbox disappeared before empty-state verification.");
+  try {
+    await prompt.page().waitForFunction(element => {
+      const value = ("value" in element) ? element.value : (element.innerText || element.textContent || "");
+      return String(value).trim() === "";
+    }, handle, { timeout });
+  } catch {
+    throw new Error("Prompt clear was attempted but textbox did not become empty within the verification timeout.");
+  }
+  const remaining = await handle.evaluate(element => ("value" in element) ? element.value : (element.innerText || element.textContent || ""));
+  if (String(remaining).trim() !== "") throw new Error("Prompt clear verification failed; textbox still contains text.");
 }
 
 async function listPages(browser) {
@@ -310,13 +368,18 @@ async function prepare(args, browser, rl) {
   const screenshot = path.resolve(args.screenshot || `flow-pilot-${scene.scene_id.replace(/[^a-zA-Z0-9_-]/g, "_")}-${args.execute ? "execute" : "dry-run"}.png`);
   try {
     await prompt.fill(scene.prompt, { timeout: 2500 });
-    const createEnabled = await create.isEnabled().catch(() => false);
-    if (!createEnabled) throw new Error("Create button is disabled after filling prompt.");
+    await waitForCreateEnabled(chosen.page, create, 5000);
     fs.mkdirSync(path.dirname(screenshot), { recursive: true });
     await chosen.page.screenshot({ path: screenshot, fullPage: false, timeout: 4000 });
   } catch (error) {
-    await prompt.fill("", { timeout: 1500 }).catch(() => {});
-    throw new Error(`Dry-run preparation failed after prompt fill; attempted to clear prompt: ${error.message}`);
+    let cleanupStatus;
+    try {
+      await clearPromptVerified(prompt, 2500);
+      cleanupStatus = "Prompt was cleared and verified empty.";
+    } catch (cleanupError) {
+      cleanupStatus = `CRITICAL: prompt could not be verified empty (${cleanupError.message}). Inspect Flow and clear it manually before continuing.`;
+    }
+    throw new Error(`Dry-run preparation failed after prompt fill: ${error.message}. ${cleanupStatus}`);
   }
   const createEnabled = await create.isEnabled().catch(() => false);
   console.log("\nREADY-TO-CREATE CHECK");
@@ -342,9 +405,11 @@ async function prepare(args, browser, rl) {
 
   if (!args.execute) {
     if (args.clearAfterDryRun) {
-      await prompt.fill("", { timeout: 2500 }).catch(error => {
-        throw new Error(`Dry-run finished but prompt could not be cleared: ${error.message}. Clear it manually before continuing.`);
-      });
+      try {
+        await clearPromptVerified(prompt, 2500);
+      } catch (error) {
+        throw new Error(`Dry-run finished but prompt could not be verified empty: ${error.message}. Clear it manually before continuing.`);
+      }
       console.log("Dry-run prompt cleared.");
     }
     console.log("\nDRY RUN COMPLETE: stopped before clicking Create. No generation was submitted.");
@@ -390,7 +455,7 @@ async function main() {
     return;
   }
   const browser = await chromium.connectOverCDP(CDP_ENDPOINT);
-  const rl = readline.createInterface({ input, output });
+  const rl = createConfirmationReader();
   try { await prepare(args, browser, rl); }
   finally {
     rl.close();
