@@ -260,6 +260,28 @@ function isGenerationFailureText(value) {
   return /generation failed|failed to generate|couldn['’]?t generate|unable to generate|video failed|something went wrong|blocked by (?:policy|safety)|violat(?:es|ed) (?:our )?(?:policy|guidelines)|generation error/i.test(String(value || ""));
 }
 
+async function activateVideosTab(page, selectors) {
+  if (selectors.videos_tab) {
+    const tab = await exactVisibleLocator(page, selectors.videos_tab, "Videos tab");
+    await tab.click({ timeout: 3000 });
+    await page.waitForTimeout(300);
+    return "configured_selector";
+  }
+  const roleTab = page.getByRole("tab", { name: /^Videos$/i });
+  if (await roleTab.count().catch(() => 0) === 1 && await roleTab.isVisible().catch(() => false)) {
+    await roleTab.click({ timeout: 3000 });
+    await page.waitForTimeout(300);
+    return "role=tab";
+  }
+  const button = page.getByRole("button", { name: /^Videos$/i });
+  if (await button.count().catch(() => 0) === 1 && await button.isVisible().catch(() => false)) {
+    await button.click({ timeout: 3000 });
+    await page.waitForTimeout(300);
+    return "role=button";
+  }
+  return "not_found_no_tab_switch";
+}
+
 function appendGenerationLedger(pathname, record) {
   const absolute = path.resolve(pathname);
   fs.mkdirSync(path.dirname(absolute), { recursive: true });
@@ -1100,6 +1122,7 @@ async function prepare(args, browser, rl) {
     try {
       const initialBalance = await readCreditBalance(chosen.page, selectors);
       if (initialBalance === null) throw new Error("Could not read an integer credit balance.");
+      const videosTabState = await activateVideosTab(chosen.page, selectors);
       const initialScan = await collectAllGeneratedItems(chosen.page, selectors.generated_video_items);
       const initialItems = initialScan.items.map(item => item.key);
       if (initialItems.some(key => !key) || new Set(initialItems).size !== initialItems.length) {
@@ -1108,8 +1131,8 @@ async function prepare(args, browser, rl) {
       args._waitInitialBalance = initialBalance;
       args._waitInitialItemKeys = initialItems;
       args._waitInitialItemCount = initialItems.length;
-      console.log("WAIT SELECTOR PREFLIGHT (read-only; no Create click; virtualized grid swept)");
-      console.log(JSON.stringify({ credit_balance: initialBalance, existing_video_tile_count: initialItems.length, existing_video_tile_keys: initialItems }, null, 2));
+      console.log("WAIT SELECTOR PREFLIGHT (read-only; no Create click; Videos tab selected when available; virtualized grid swept)");
+      console.log(JSON.stringify({ credit_balance: initialBalance, videos_tab_state: videosTabState, existing_video_tile_count: initialItems.length, existing_video_tile_keys: initialItems }, null, 2));
     } catch (error) {
       let cleanup = "Prompt/Ingredients cleanup was not verified.";
       try {
@@ -1204,6 +1227,7 @@ async function prepare(args, browser, rl) {
       const currentBalance = await readCreditBalance(chosen.page, selectors);
       if (currentBalance === null) throw new Error("Credit balance could not be re-read immediately before Create; refusing to click.");
       args._waitInitialBalance = currentBalance;
+      await activateVideosTab(chosen.page, selectors);
       const currentScan = await collectAllGeneratedItems(chosen.page, selectors.generated_video_items);
       args._waitInitialItemKeys = currentScan.items.map(item => item.key);
       args._waitInitialItemCount = args._waitInitialItemKeys.length;
