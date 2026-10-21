@@ -21,7 +21,7 @@ class PromptLibraryRuntimeTests(unittest.TestCase):
     def test_preview_is_explicit_and_never_applied_during_render(self):
         self.assertIn("Đã tạo preview; prompt gốc chưa thay đổi.", self.html)
         self.assertIn("if(!s.prompt_preview)", self.html)
-        self.assertIn('s.prompt=s.prompt_preview', self.html)
+        self.assertIn("s.prompt=s.prompt_preview", self.html)
         self.assertNotIn("s.prompt=window.GoGlowPromptLibrary.compose", self.html)
 
     def test_candidate_rules_are_warnings_and_not_auto_appended(self):
@@ -45,15 +45,43 @@ class PromptLibraryRuntimeTests(unittest.TestCase):
             with self.subTest(marker=marker):
                 self.assertIn(marker, self.runtime)
 
-    def test_prompt_composer_fills_outfit_and_room_placeholders(self):
+    def test_prompt_composer_uses_english_fallbacks_and_ignores_project_brief(self):
         self.assertIn("Outfit matching the selected reference, chest and upper torso fully covered, SFW.", self.runtime)
         self.assertIn("A bright, uncluttered yoga studio.", self.runtime)
-        self.assertIn("function uniqueSentences(parts)", self.runtime)
-        self.assertIn("uniqueSentences(parts).join", self.runtime)
-        self.assertIn('scene.prompt ? "Existing prompt details: " + scene.prompt : ""', self.runtime)
+        self.assertIn('String(scene.environment || "").trim()', self.runtime)
+        self.assertNotIn("scene.environment || scene.location || project.brief", self.runtime)
+        self.assertIn('environment:""', self.html)
+        self.assertIn('"Hold the pose with only gentle breathing and a soft blink."', self.html)
+        self.assertNotIn('"Di chuyển chậm vào tư thế bắt đầu, chuyển trọng lượng rõ ràng."', self.html)
+        self.assertIn('s.prompt_origin="app-generated"', self.html)
 
-    def test_warnings_are_non_blocking_and_prompt_is_not_silently_rewritten(self):
-        self.assertIn("warnings", self.runtime)
+    def test_reapplying_composed_prompt_does_not_nest_existing_prompt(self):
+        self.assertIn('scene.prompt_origin === "app-generated" || scene.prompt_origin === "library-composed"', self.runtime)
+        self.assertIn("scene.prompt_library_base_prompt !== undefined", self.runtime)
+        self.assertIn('const priorPrompt=s.prompt;s.prompt=s.prompt_preview', self.html)
+        self.assertIn('s.prompt_origin="library-composed"', self.html)
+        self.assertIn('s.prompt_library_base_prompt=(s.prompt_origin==="app-generated"||s.prompt_origin==="library-composed")?"":(priorPrompt||"")', self.html)
+
+    def test_applied_and_warning_rule_ids_are_distinct_and_deduplicated(self):
+        self.assertIn("applied_rule_ids: Array.from(new Set(appliedRuleIds))", self.runtime)
+        self.assertIn("warning_rule_ids: Array.from(new Set(analysis.warnings.map(w => w.rule_id)))", self.runtime)
+        self.assertIn("prompt_preview_meta.applied_rule_ids", self.html)
+        self.assertIn("prompt_preview_meta.warning_rule_ids", self.html)
+        self.assertNotIn("prompt_preview_meta.rule_ids", self.html)
+        self.assertIn("Applied rules:", self.html)
+        self.assertIn("Warning rules:", self.html)
+
+    def test_stale_preview_is_cleared_immediately_after_inputs_or_options_change(self):
+        self.assertIn("function clearPromptPreview(s,card)", self.html)
+        self.assertIn("function invalidateAllPromptPreviews()", self.html)
+        self.assertIn("clearPromptPreview(s,card);render()", self.html)
+        self.assertIn("s.prompt_preview_options={include_confirmed_stable_hold:", self.html)
+        self.assertIn('promptSettingIds.forEach', self.html)
+        self.assertIn('invalidateAllPromptPreviews()', self.html)
+        self.assertIn('data-prompt-preview', self.html)
+        self.assertIn('apply.disabled=true', self.html)
+
+    def test_warnings_are_non_blocking_and_qc_is_invalidated_on_apply(self):
         self.assertIn("warn-weight-shift", self.runtime)
         self.assertIn("warn-time-coded-static-pose", self.runtime)
         self.assertIn("warn-shoulder-roll-ambiguity", self.runtime)
