@@ -4,19 +4,26 @@
 
 GoGlow helps plan, prompt, track, and quality-review short-form AI character videos. The first target workflow is Google Flow; the core is provider-agnostic so additional models and coding agents can contribute.
 
-## Goals
-- Produce vertical **9:16** videos with a target duration above 30 seconds (default planning target: **36 seconds**).
-- Preserve character identity, wardrobe, props, screen direction, and scene-to-scene continuity.
-- Support dance, cycling, yoga, fashion, and extensible future activities.
-- Create scene-specific prompts and reference-image briefs.
-- Track actual generation and review states without pretending a model was called or a video was inspected.
+## Try the browser prototype (no installation)
+
+Open app/index.html in a modern browser. You can also download that file from GitHub and open it locally. It does not require Python, Node.js, an API key, or a server.
+
+The prototype can:
+- Set the character name, activity, target duration, aspect ratio, and project brief.
+- Preview character reference images locally in the current browser session.
+- Generate editable starter prompts and scene cards for cycling, yoga, dance, fashion, and other activities.
+- Save project data in browser local storage and export JSON or Markdown.
+
+**Prototype limitations:** no Google Flow integration, no image/video generation, no automated visual QC, and no image data included in exports. Reference images are only previewed locally; prompts still need human review. Browser-local saving is not a substitute for exporting backups.
 
 ## Status
-The initial **M1 local planner and validator** is implemented. It creates editable starter plans, checks scene structure and total duration, and exports Markdown. It uses Python's standard library and does not call image/video models.
+
+The **M1 local planner and validator** is implemented in Python, and a **zero-install browser prototype** is available in app/index.html. The Python planner checks scene structure and total duration and exports Markdown. Neither implementation calls image/video models.
 
 The model names “Omni 1.1 Flash” and “Nano Banana Pro 2.1” are project-owner working labels. Confirm exact labels and controls in the live Flow selector before relying on them.
 
-## Quick start
+## Python CLI (optional)
+
 Requires Python 3.10+.
 
 ```bash
@@ -31,18 +38,19 @@ goglow validate projects/cycling-36s.json
 goglow export projects/cycling-36s.json --out exports/cycling-36s.md
 ```
 
-Supported activities: `cycling`, `yoga`, `dance`, `fashion`, and `other`.
+Supported activities: cycling, yoga, dance, fashion, and other.
 
 See [M1 local MVP guide](docs/m1-local-mvp.md) and the [36-second cycling example](examples/cycling-36s.json).
 
 ## Repository map
-- `AGENTS.md` — rules for coding agents
-- `docs/` — architecture, workflow, model verification, M1 setup
-- `specs/` — JSON Schemas for character profiles, scene plans, and QC reports
-- `src/goglow/` — planner, validator, Markdown exporter, CLI
-- `prompts/` — director and activity prompt templates
-- `adapters/` — integration policy and provider notes
-- `tests/` — unit tests and activity acceptance cases
+- AGENTS.md — rules for coding agents
+- app/index.html — zero-install browser prototype
+- docs/ — architecture, workflow, model verification, M1 setup
+- specs/ — JSON Schemas for character profiles, scene plans, and QC reports
+- src/goglow/ — planner, validator, Markdown exporter, CLI
+- prompts/ — director and activity prompt templates
+- adapters/ — integration policy and provider notes
+- tests/ — unit tests and activity acceptance cases
 
 ## Core rule
-**A planned action is not a generated result. A generated result is not a passed QC check.** No Flow automation, image/video generation, media inspection, or automatic visual QC is implemented in M1.
+**A planned action is not a generated result. A generated result is not a passed QC check.** No Flow automation, image/video generation, media inspection, or automatic visual QC is implemented yet.
