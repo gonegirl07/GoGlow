@@ -676,7 +676,7 @@ async function loadInputs(args) {
     throw new Error("Scene JSON must contain a non-empty character_description in ASCII English unless face_description_mode is 'reference_only'.");
   }
   if (!/^[\x00-\x7F]+$/.test(scene.prompt)) throw new Error("Prompt must be ASCII/English only; non-ASCII characters are blocked before touching Flow.");
-  if (!/^[\x00-\x7F]+$/.test(scene.character_description)) throw new Error("Character description must be ASCII/English only; non-ASCII characters are blocked before touching Flow.");
+  if (scene.character_description && !/^[\x00-\x7F]+$/.test(scene.character_description)) throw new Error("Character description must be ASCII/English only; non-ASCII characters are blocked before touching Flow.");
   if (!Array.isArray(scene.reference_images) || scene.reference_images.length < 1 || scene.reference_images.length > 3) {
     throw new Error("Scene JSON must provide reference_images as an array of 1 to 3 local file paths.");
   }
@@ -749,7 +749,7 @@ async function loadInputs(args) {
   }
   if (scene.duration && scene.duration !== "8s") throw new Error("Phase 3 pilot is restricted to duration='8s'.");
   requiredSelectorConfig(selectors);
-  return { scene, selectors, referenceImages: orderedReferenceImages, faceReferenceImage };
+  return { scene, selectors, referenceImages: orderedReferenceImages, faceReferenceImage: faceReferenceImages[0], faceReferenceImages };
 }
 async function chooseFlowTab(browser, args) {
   const pages = await listPages(browser);
@@ -963,6 +963,8 @@ async function prepare(args, browser, rl) {
     reference_image_names: referenceImages.map(file => path.basename(file)),
     face_reference_id: scene.face_reference_id,
     face_reference_image: path.basename(faceReferenceImage),
+    face_reference_ids: (scene.face_reference_ids || [scene.face_reference_id]).map(value => path.basename(value)),
+    face_description_mode: scene.face_description_mode || "include",
     reference_order: "primary face reference first, supporting references after",
     character_description: scene.character_description,
     model: scene.model,
