@@ -1,6 +1,8 @@
 {
   "scene_id": "pilot-scene-01",
+  "character_id": "mai",
   "model": "Omni 1.1 Flash",
   "resolution": "360p",
-  "prompt": "A young adult woman performs one controlled yoga flow in a quiet studio. Full body visible, stable camera, natural motion, realistic anatomy, soft daylight. One continuous shot, no cuts, no text, no logos."
+  "duration": "8s",
+  "prompt": "An adult woman performs one controlled yoga flow in a quiet studio. Full body visible, stable camera, natural motion, realistic anatomy, soft daylight. One continuous shot, no cuts, no text, no logos."
 }
