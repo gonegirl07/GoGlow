@@ -150,7 +150,7 @@ function nextLedgerAttemptNumber(pathname, sceneId) {
   return max + 1;
 }
 
-function makeGenerationLedgerRecord({ scene, projectId, prompt, estimatedCost, beforeBalance, afterBalance, resultStatus, mediaUri, downloadedFile, downloadError, timeoutError, attemptNumber }) {
+function makeGenerationLedgerRecord({ scene, projectId, prompt, estimatedCost, beforeBalance, afterBalance, resultStatus, mediaUri, downloadedFile, downloadError, timeoutError, attemptNumber, startedOn }) {
   const observedDelta = beforeBalance !== null && afterBalance !== null && beforeBalance >= afterBalance
     ? beforeBalance - afterBalance : null;
   const actualAmount = observedDelta !== null && observedDelta > 0 ? observedDelta : null;
@@ -165,7 +165,7 @@ function makeGenerationLedgerRecord({ scene, projectId, prompt, estimatedCost, b
     attempt_number: attemptNumber || 1,
     retry_of: null,
     provider: "google_flow",
-    started_on: null,
+    started_on: startedOn || null,
     finished_on: timestamp,
     configuration: {
       model_label: scene.model || "Omni 1.1 Flash",
@@ -190,7 +190,7 @@ function makeGenerationLedgerRecord({ scene, projectId, prompt, estimatedCost, b
       charge_status: chargeStatus,
       before_balance: beforeBalance,
       after_balance: afterBalance,
-      evidence_source: beforeBalance !== null || afterBalance !== null ? "user_observation" : "unknown",
+      evidence_source: beforeBalance !== null && afterBalance !== null ? "provider_display" : "unknown",
       notes: actualAmount !== null ? `Observed balance delta: ${beforeBalance} -> ${afterBalance}.` : (beforeBalance !== null && afterBalance !== null && beforeBalance === afterBalance ? "Balance unchanged during the observation window; actual charge remains unknown." : "Credit delta not confirmed; no charge amount inferred."),
     },
     media: {
@@ -896,6 +896,7 @@ async function prepare(args, browser, rl) {
 
   await askExact(rl, `This action may consume credit. Type CREATE ONE VIDEO FOR ${scene.scene_id} to submit exactly once: `,
     `CREATE ONE VIDEO FOR ${scene.scene_id}`);
+  args._waitStartedOn = new Date().toISOString();
   appendEvent(args.log, {
     event: "submission_intent", scene_id: scene.scene_id, reference_image_count: referenceImages.length, reference_image_names: referenceImages.map(file => path.basename(file)), character_description: scene.character_description, model: scene.model, resolution: scene.resolution,
     prompt: scene.prompt, account_email: account.observedEmail, project_id: chosen.projectId,
@@ -956,7 +957,7 @@ async function prepare(args, browser, rl) {
       const ledgerRecord = makeGenerationLedgerRecord({
         scene, projectId: chosen.projectId, prompt: scene.prompt, estimatedCost: creditCost,
         beforeBalance: args._waitInitialBalance ?? null, afterBalance,
-        resultStatus, mediaUri, downloadedFile, downloadError, timeoutError, attemptNumber,
+        resultStatus, mediaUri, downloadedFile, downloadError, timeoutError, attemptNumber, startedOn: args._waitStartedOn,
       });
       try {
         const ledgerPath = appendGenerationLedger(args.ledgerOutput, ledgerRecord);
@@ -965,12 +966,15 @@ async function prepare(args, browser, rl) {
       } catch (error) {
         appendEvent(args.log, { event: "generation_ledger_write_failed", scene_id: scene.scene_id, error: String(error) });
         console.error(`CRITICAL: generation completed/unknown but ledger write failed: ${error.message}`);
-        throw error;
+        process.exitCode = 2;
       }
       if (resultStatus === "succeeded") {
         console.log(`Generation result verified. Media URI: ${mediaUri}`);
         if (downloadedFile) console.log(`Downloaded clip: ${downloadedFile}`);
-        else console.error(`Clip is ready but download failed: ${downloadError}`);
+        else {
+          console.error(`Clip is ready but download failed: ${downloadError}`);
+          process.exitCode = 2;
+        }
       } else {
         console.error("Generation result remains unverified. Do NOT retry automatically; inspect Flow manually.");
         throw new Error("Generation was submitted but completion could not be verified; ledger recorded status=unknown.");
