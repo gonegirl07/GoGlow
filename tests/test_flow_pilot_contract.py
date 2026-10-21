@@ -250,6 +250,8 @@ class FlowPilotContractTests(unittest.TestCase):
         self.assertIn("async function collectAllGeneratedItems(page, selector", self.script)
         self.assertIn("Flow's media grid may virtualize its DOM", self.script)
         self.assertIn("const initialScan = await collectAllGeneratedItems", self.script)
+        self.assertIn("const videosTabState = await activateVideosTab", self.script)
+        self.assertIn('page.getByRole("tab", { name: /^Videos$/i })', self.script)
         self.assertIn("full virtualized-grid sweep", self.script)
 
     def test_generation_failure_is_detected_and_logged_without_retry(self):
