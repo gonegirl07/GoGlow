@@ -234,28 +234,36 @@ class FlowPilotContractTests(unittest.TestCase):
 
 
     def test_face_reference_is_selected_from_this_jobs_reference_images(self):
-        self.assertIn("const requestedFaceReference = scene.face_reference_id;", self.script)
+        self.assertIn("const requestedFaceReferences = scene.face_reference_ids;", self.script)
+        self.assertIn("Every face_reference_ids entry must match a path in this job's reference_images.", self.script)
         self.assertIn("face_reference_id must match one of the image paths in this job's reference_images.", self.script)
-        self.assertIn("face_reference_id must identify one path from reference_images.", self.script)
+        self.assertIn("Use either face_reference_ids or face_reference_id, not both.", self.script)
         self.assertIn("const orderedReferenceImages = [", self.script)
-        self.assertIn("faceReferenceImage,\n    ...referenceImages.filter(imagePath => imagePath !== faceReferenceImage)", self.script)
-        self.assertIn('referenceImages: orderedReferenceImages, faceReferenceImage', self.script)
+        self.assertIn("...faceReferenceImages,", self.script)
+        self.assertIn("...referenceImages.filter(imagePath => !faceReferenceImages.includes(imagePath))", self.script)
+        self.assertIn("referenceImages: orderedReferenceImages, faceReferenceImage: faceReferenceImages[0], faceReferenceImages", self.script)
 
-    def test_primary_face_anchor_is_explicit_in_ascii_composed_prompt(self):
-        self.assertIn("PRIMARY FACE REFERENCE: The first attached reference image is the primary face identity anchor.", self.script)
-        self.assertIn("Match its facial structure, eye shape and spacing, nose, lips, jawline, and overall likeness as closely as possible.", self.script)
-        self.assertIn("Use the remaining attached reference images only as supporting references", self.script)
-        self.assertIn("if (!/^[\\x00-\\x7F]+$/.test(scene.prompt))", self.script)
+    def test_multiple_face_references_are_described_as_same_person(self):
+        self.assertIn("The other selected face reference images show the SAME PERSON from additional angles", self.script)
+        self.assertIn("face_reference_ids must contain distinct paths.", self.script)
+        self.assertIn("face_reference_ids must be an array of 1 to 3 paths from this job's reference_images.", self.script)
+
+    def test_reference_only_mode_can_omit_character_description(self):
+        self.assertIn('const faceDescriptionMode = scene.face_description_mode ?? "include";', self.script)
+        self.assertIn('["include", "reference_only"].includes(faceDescriptionMode)', self.script)
+        self.assertIn('face_description_mode is \'reference_only\'', self.script)
+        self.assertIn('faceDescriptionMode === "reference_only" || !scene.character_description', self.script)
+        self.assertIn("Use the attached reference images for all appearance details; do not invent or reinterpret facial features.", self.script)
 
     def test_dry_run_reports_selected_face_reference_and_order(self):
         self.assertIn("face_reference_id: scene.face_reference_id", self.script)
         self.assertIn("face_reference_image: path.basename(faceReferenceImage)", self.script)
-        self.assertIn('reference_order: "primary face reference first, supporting references after"', self.script)
+        self.assertIn('face_reference_ids: (scene.face_reference_ids || [scene.face_reference_id]).map(value => path.basename(value))', self.script)
+        self.assertIn('face_description_mode: scene.face_description_mode || "include"', self.script)
 
     def test_face_reference_defaults_to_first_image_for_older_jobs(self):
-        self.assertIn("faceReferenceImage = referenceImages[0];", self.script)
+        self.assertIn("singleFaceReference = referenceImages[0];", self.script)
         self.assertIn("scene.face_reference_id = scene.reference_images[0];", self.script)
-
 
     def test_prepare_destructures_face_reference_image_from_load_inputs(self):
         prepare = self.script.split("async function prepare(args, browser, rl) {", 1)[1].split(
