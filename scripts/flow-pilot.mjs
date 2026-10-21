@@ -512,6 +512,38 @@ async function chooseFlowTab(browser, args) {
   return { ...chosen, projectId };
 }
 
+async function closeAccountMenuIfOpen(page, selectors, expectedEmail) {
+  // Escape first to dismiss transient menus. Only click the account button if a visible
+  // menu/dialog still looks like Google's account panel; do not toggle unrelated UI.
+  await page.keyboard.press("Escape").catch(() => {});
+  const panels = page.locator(selectors.account_menu || '[role="menu"]:visible, [role="dialog"]:visible');
+  const count = await panels.count().catch(() => 0);
+  let accountPanelVisible = false;
+  for (let i = 0; i < count; i += 1) {
+    const panel = panels.nth(i);
+    if (!(await panel.isVisible().catch(() => false))) continue;
+    const text = (await panel.innerText().catch(() => "")).toLowerCase();
+    if (text.includes("google account") || text.includes("manage your google account")
+      || (expectedEmail && text.includes(expectedEmail.toLowerCase()))) {
+      accountPanelVisible = true;
+      break;
+    }
+  }
+  if (accountPanelVisible) {
+    const accountSelector = selectors.account_button || '[role="button"][aria-label^="Google Account:"]';
+    const accountButton = await exactVisibleLocator(page, accountSelector, "Google account button for menu cleanup").catch(() => null);
+    if (accountButton) await accountButton.click({ timeout: 2000 }).catch(() => {});
+  }
+  try {
+    await page.waitForFunction(selector => !Array.from(document.querySelectorAll(selector)).some(node => {
+      const style = window.getComputedStyle(node);
+      return style.visibility !== "hidden" && style.display !== "none" && Number(style.opacity || 1) > 0;
+    }), selectors.account_menu || '[role="menu"], [role="dialog"]', { timeout: 3000 });
+  } catch {
+    // Do not mask the original preflight error if the UI has a non-account dialog.
+  }
+}
+
 async function verifyAccount(page, selectors, expectedEmail) {
   const selector = selectors.account_button || '[role="button"][aria-label^="Google Account:"]';
   const account = await exactVisibleLocator(page, selector, "Google account button");
@@ -534,6 +566,7 @@ async function readCreditCost(page) {
 async function prepare(args, browser, rl) {
   const { scene, selectors, referenceImages } = await loadInputs(args);
   const chosen = await chooseFlowTab(browser, args);
+  try {
   console.log(`Selected existing tab [${chosen.index}] context=${chosen.contextIndex}\nTitle: ${chosen.title}\nURL: ${chosen.url}\nProject ID: ${chosen.projectId || "legacy Flow route"}`);
   const account = await verifyAccount(chosen.page, selectors, args.expectedEmail);
   console.log(`Verified account email from page DOM: ${account.observedEmail}`);
@@ -700,6 +733,10 @@ async function prepare(args, browser, rl) {
     appendEvent(args.log, { event: "submission_outcome_unknown", scene_id: scene.scene_id,
       status: "unknown_do_not_retry", error: String(error) });
     console.error("Submission outcome is unknown. Do NOT click again or retry automatically. Inspect Flow manually.");
+    throw error;
+  }
+  } catch (error) {
+    await closeAccountMenuIfOpen(chosen.page, selectors, args.expectedEmail);
     throw error;
   }
 }
