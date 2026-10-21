@@ -761,6 +761,7 @@ async function prepare(args, browser, rl) {
   const { scene, selectors, referenceImages } = await loadInputs(args);
   waitForSelectors(selectors, args);
   const chosen = await chooseFlowTab(browser, args);
+  const originalUrl = chosen.page.url();
   try {
   console.log(`Selected existing tab [${chosen.index}] context=${chosen.contextIndex}\nTitle: ${chosen.title}\nURL: ${chosen.url}\nProject ID: ${chosen.projectId || "legacy Flow route"}`);
   const account = await verifyAccount(chosen.page, selectors, args.expectedEmail);
@@ -771,7 +772,6 @@ async function prepare(args, browser, rl) {
     `CONFIRM ACCOUNT ${args.accountLabel} HAS CREDIT`,
   );
 
-  const originalUrl = chosen.page.url();
   const prompt = await exactVisibleLocator(chosen.page, selectors.prompt, "prompt field");
   const create = await exactVisibleLocator(chosen.page, selectors.create, "Create button");
   const settings = await exactVisibleLocator(chosen.page, selectors.settings_trigger, "settings trigger");
