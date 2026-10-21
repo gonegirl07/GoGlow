@@ -151,9 +151,10 @@ function nextLedgerAttemptNumber(pathname, sceneId) {
 }
 
 function makeGenerationLedgerRecord({ scene, projectId, prompt, estimatedCost, beforeBalance, afterBalance, resultStatus, mediaUri, downloadedFile, downloadError, timeoutError, attemptNumber }) {
-  const actualAmount = beforeBalance !== null && afterBalance !== null && beforeBalance >= afterBalance
+  const observedDelta = beforeBalance !== null && afterBalance !== null && beforeBalance >= afterBalance
     ? beforeBalance - afterBalance : null;
-  const chargeStatus = actualAmount !== null && actualAmount > 0 ? "charged" : "unknown";
+  const actualAmount = observedDelta !== null && observedDelta > 0 ? observedDelta : null;
+  const chargeStatus = actualAmount !== null ? "charged" : "unknown";
   const timestamp = new Date().toISOString();
   const attemptId = "attempt-" + randomUUID();
   return {
@@ -190,7 +191,7 @@ function makeGenerationLedgerRecord({ scene, projectId, prompt, estimatedCost, b
       before_balance: beforeBalance,
       after_balance: afterBalance,
       evidence_source: beforeBalance !== null || afterBalance !== null ? "user_observation" : "unknown",
-      notes: actualAmount !== null ? `Observed balance delta: ${beforeBalance} -> ${afterBalance}.` : "Credit delta not confirmed; no charge amount inferred.",
+      notes: actualAmount !== null ? `Observed balance delta: ${beforeBalance} -> ${afterBalance}.` : (beforeBalance !== null && afterBalance !== null && beforeBalance === afterBalance ? "Balance unchanged during the observation window; actual charge remains unknown." : "Credit delta not confirmed; no charge amount inferred."),
     },
     media: {
       uri: mediaUri || null,
