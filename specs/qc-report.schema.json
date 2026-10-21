@@ -1,0 +1,19 @@
+{
+  "$schema":"https://json-schema.org/draft/2020-12/schema",
+  "title":"GoGlow QC Report",
+  "type":"object","additionalProperties":false,
+  "required":["scene_id","review_status","checks","reviewed_by","reviewed_at"],
+  "properties":{
+    "scene_id":{"type":"string"},
+    "review_status":{"enum":["PASS","REVIEW","FAIL","NOT_REVIEWED"]},
+    "checks":{"type":"array","items":{"type":"object","required":["category","status","notes"],"properties":{
+      "category":{"enum":["identity","anatomy","action","physics","continuity","camera","artifacts","duration","format","other"]},
+      "status":{"enum":["PASS","REVIEW","FAIL","NOT_CHECKED"]},
+      "notes":{"type":"string"},"evidence":{"type":"string"}
+    },"additionalProperties":false}},
+    "defects":{"type":"array","items":{"type":"string"}},
+    "revision_prompt":{"type":"string"},
+    "reviewed_by":{"type":"string"},"reviewed_at":{"type":"string","format":"date-time"},
+    "media_uri":{"type":"string"}
+  }
+}
