@@ -985,11 +985,12 @@ async function prepare(args, browser, rl) {
         appendEvent(args.log, { event: "generation_wait_unverified", scene_id: scene.scene_id, status: "unknown_do_not_retry", error: timeoutError });
         console.error(`WAIT STOPPED SAFELY: ${timeoutError}`);
       }
-      const balanceDeadline = Date.now() + 30000;
       // Detail pages do not expose credits; return to the original project before polling.
       if (chosen.page.url() !== originalUrl) {
         await chosen.page.goBack({ waitUntil: "domcontentloaded", timeout: 15000 }).catch(() => {});
       }
+      // Start the polling budget only after navigation recovery has had its chance.
+      const balanceDeadline = Date.now() + 30000;
       do {
         try { afterBalance = await readCreditBalance(chosen.page, selectors); } catch {}
         if (afterBalance !== null && args._waitInitialBalance !== null && afterBalance !== args._waitInitialBalance) break;
