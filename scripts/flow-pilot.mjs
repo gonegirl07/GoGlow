@@ -113,7 +113,7 @@ function waitForSelectors(selectors, args) {
 async function readCreditBalance(page, selector) {
   const locator = await exactVisibleLocator(page, selector, "credit balance");
   const text = (await locator.innerText({ timeout: 2500 }).catch(() => "")).replace(/,/g, "");
-  const match = text.match(/(?:^|\\D)(\\d+)(?:\\D|$)/);
+  const match = text.match(/(?:^|\D)(\d+)(?:\D|$)/);
   return match ? Number(match[1]) : null;
 }
 
@@ -132,11 +132,25 @@ async function generatedItemKeys(page, selector) {
 function appendGenerationLedger(pathname, record) {
   const absolute = path.resolve(pathname);
   fs.mkdirSync(path.dirname(absolute), { recursive: true });
-  fs.appendFileSync(absolute, JSON.stringify(record) + "\\n", { encoding: "utf8", flag: "a" });
+  fs.appendFileSync(absolute, JSON.stringify(record) + "\n", { encoding: "utf8", flag: "a" });
   return absolute;
 }
 
-function makeGenerationLedgerRecord({ scene, projectId, prompt, estimatedCost, beforeBalance, afterBalance, resultStatus, mediaUri, downloadedFile, downloadError, timeoutError }) {
+function nextLedgerAttemptNumber(pathname, sceneId) {
+  const absolute = path.resolve(pathname);
+  if (!fs.existsSync(absolute)) return 1;
+  let max = 0;
+  for (const line of fs.readFileSync(absolute, "utf8").split(/\\r?\\n/)) {
+    if (!line.trim()) continue;
+    try {
+      const record = JSON.parse(line);
+      if (record.scene_id === sceneId && Number.isInteger(record.attempt_number)) max = Math.max(max, record.attempt_number);
+    } catch { /* Ignore malformed historical lines; append remains non-destructive. */ }
+  }
+  return max + 1;
+}
+
+function makeGenerationLedgerRecord({ scene, projectId, prompt, estimatedCost, beforeBalance, afterBalance, resultStatus, mediaUri, downloadedFile, downloadError, timeoutError, attemptNumber }) {
   const actualAmount = beforeBalance !== null && afterBalance !== null && beforeBalance >= afterBalance
     ? beforeBalance - afterBalance : null;
   const chargeStatus = actualAmount !== null && actualAmount > 0 ? "charged" : "unknown";
@@ -147,7 +161,7 @@ function makeGenerationLedgerRecord({ scene, projectId, prompt, estimatedCost, b
     attempt_id: attemptId,
     project_id: projectId || "google-flow-project",
     scene_id: scene.scene_id,
-    attempt_number: 1,
+    attempt_number: attemptNumber || 1,
     retry_of: null,
     provider: "google_flow",
     started_on: null,
@@ -208,25 +222,40 @@ async function waitForGenerationAndDownload(page, selectors, { beforeKeys, befor
     await page.waitForTimeout(1000);
   }
   if (!newItem) throw new Error(`No uniquely identifiable new video tile appeared within ${timeoutMs}ms. Submission may still be processing; do not retry.`);
+
   await newItem.click({ timeout: 5000 });
+  const remainingMs = Math.max(1000, deadline - Date.now());
+  const downloadButtonLocator = page.locator(selectors.download_media_button);
+  try {
+    await downloadButtonLocator.waitFor({ state: "visible", timeout: remainingMs });
+  } catch {
+    throw new Error("A new video tile appeared, but Download media did not become visible before the wait deadline; completion remains unverified.");
+  }
   const downloadButton = await exactVisibleLocator(page, selectors.download_media_button, "Download media button");
-  await downloadButton.waitFor({ state: "visible", timeout: Math.max(1000, deadline - Date.now()) });
-  await downloadButton.click({ timeout: 5000 });
-  const quality = await exactVisibleLocator(page, selectors.download_360p_original_button, "360p Original size download option");
-  await quality.waitFor({ state: "visible", timeout: 10000 });
-  const downloadPromise = page.waitForEvent("download", { timeout: 30000 });
-  await quality.click({ timeout: 5000 });
-  const download = await downloadPromise;
-  const suggested = download.suggestedFilename() || "flow-clip-360p.mp4";
-  const safeName = suggested.replace(/[^a-zA-Z0-9._-]/g, "_");
-  const targetDir = path.resolve(downloadDir);
-  fs.mkdirSync(targetDir, { recursive: true });
-  let target = path.join(targetDir, safeName);
-  if (fs.existsSync(target)) target = path.join(targetDir, `${Date.now()}-${safeName}`);
-  await download.saveAs(target);
-  const stat = fs.statSync(target);
-  if (!stat.size) throw new Error("Downloaded media file is empty.");
-  return { downloadedFile: target, mediaUri: page.url(), downloadError: null };
+  const mediaUri = page.url();
+  try {
+    await downloadButton.click({ timeout: 5000 });
+    const qualityLocator = page.locator(selectors.download_360p_original_button);
+    await qualityLocator.waitFor({ state: "visible", timeout: 10000 });
+    const quality = await exactVisibleLocator(page, selectors.download_360p_original_button, "360p Original size download option");
+    const downloadPromise = page.waitForEvent("download", { timeout: 30000 });
+    await quality.click({ timeout: 5000 });
+    const download = await downloadPromise;
+    const suggested = download.suggestedFilename() || "flow-clip-360p.mp4";
+    const safeName = suggested.replace(/[^a-zA-Z0-9._-]/g, "_");
+    const targetDir = path.resolve(downloadDir);
+    fs.mkdirSync(targetDir, { recursive: true });
+    let target = path.join(targetDir, safeName);
+    if (fs.existsSync(target)) target = path.join(targetDir, `${Date.now()}-${safeName}`);
+    await download.saveAs(target);
+    const stat = fs.statSync(target);
+    if (!stat.size) throw new Error("Downloaded media file is empty.");
+    return { downloadedFile: target, mediaUri, downloadError: null };
+  } catch (error) {
+    // The clip is ready if the download control is available; keep success separate from
+    // the download outcome so a download failure does not mislabel generation as unknown.
+    return { downloadedFile: null, mediaUri, downloadError: String(error.message || error) };
+  }
 }
 
 function createConfirmationReader() {
@@ -898,7 +927,9 @@ async function prepare(args, browser, rl) {
       let downloadError = null;
       let timeoutError = null;
       let afterBalance = null;
+      let attemptNumber = 1;
       try {
+        attemptNumber = nextLedgerAttemptNumber(args.ledgerOutput, scene.scene_id);
         const result = await waitForGenerationAndDownload(chosen.page, selectors, {
           beforeKeys: args._waitInitialItemKeys,
           beforeCount: args._waitInitialItemCount,
@@ -914,11 +945,16 @@ async function prepare(args, browser, rl) {
         appendEvent(args.log, { event: "generation_wait_unverified", scene_id: scene.scene_id, status: "unknown_do_not_retry", error: timeoutError });
         console.error(`WAIT STOPPED SAFELY: ${timeoutError}`);
       }
-      try { afterBalance = await readCreditBalance(chosen.page, selectors.credit_balance); } catch {}
+      const balanceDeadline = Date.now() + 30000;
+      do {
+        try { afterBalance = await readCreditBalance(chosen.page, selectors.credit_balance); } catch {}
+        if (afterBalance !== null && args._waitInitialBalance !== null && afterBalance !== args._waitInitialBalance) break;
+        await chosen.page.waitForTimeout(1000);
+      } while (Date.now() < balanceDeadline);
       const ledgerRecord = makeGenerationLedgerRecord({
         scene, projectId: chosen.projectId, prompt: scene.prompt, estimatedCost: creditCost,
         beforeBalance: args._waitInitialBalance ?? null, afterBalance,
-        resultStatus, mediaUri, downloadedFile, downloadError, timeoutError,
+        resultStatus, mediaUri, downloadedFile, downloadError, timeoutError, attemptNumber,
       });
       try {
         const ledgerPath = appendGenerationLedger(args.ledgerOutput, ledgerRecord);
