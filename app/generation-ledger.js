@@ -109,6 +109,35 @@
     if (!record || !record.credits || !["provider_display", "user_observation", "provider_receipt", "estimate_only", "unknown"].includes(record.credits.evidence_source)) errors.push("Invalid credit evidence source.");
     return { valid: errors.length === 0, errors };
   }
+  function updateAttemptQC(record, form, now) {
+    if (!record || typeof record !== "object" || !record.attempt_id) {
+      throw new Error("A valid generation attempt is required.");
+    }
+    const status = String(form && form.status || "");
+    if (!["not_reviewed", "pass", "fail", "needs_review"].includes(status)) {
+      throw new Error("Invalid QC status.");
+    }
+    const reviewer = String(form && form.reviewed_by || "").trim();
+    if (!reviewer) throw new Error("Reviewer is required to record QC.");
+    const defects = form && Array.isArray(form.defects)
+      ? form.defects.map(value => String(value).trim()).filter(Boolean)
+      : [];
+    if (status === "fail" && !defects.length) {
+      throw new Error("QC FAIL requires at least one observed defect.");
+    }
+    if (status === "pass" && defects.length) {
+      throw new Error("QC PASS cannot include unresolved defects.");
+    }
+    const timestamp = now || new Date().toISOString();
+    record.qc = Object.assign({}, record.qc || {}, {
+      status,
+      observed_defects: defects,
+      reviewed_by: reviewer,
+      reviewed_on: timestamp,
+      notes: String(form && form.notes || "").trim()
+    });
+    return record;
+  }
   function appendAttempt(scene, project, form, now) {
     const record = makeAttempt(scene, project, form, now);
     const check = validateAttempt(record);
@@ -117,5 +146,5 @@
     scene.generation_attempts.push(record);
     return record;
   }
-  root.GoGlowGenerationLedger = { version: VERSION, makeAttempt, validateAttempt, appendAttempt };
+  root.GoGlowGenerationLedger = { version: VERSION, makeAttempt, validateAttempt, appendAttempt, updateAttemptQC };
 })(typeof window !== "undefined" ? window : globalThis);
