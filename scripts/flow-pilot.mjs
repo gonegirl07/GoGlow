@@ -8,6 +8,7 @@ import path from "node:path";
 import readline from "node:readline";
 import { stdin as input, stdout as output } from "node:process";
 import { chromium } from "playwright";
+import { loadCharacterProfile, composeCharacterPrompt } from "./character-profile.mjs";
 
 const CDP_ENDPOINT = "http://127.0.0.1:9224";
 const LEGACY_FLOW_HOST = "labs.google";
@@ -16,7 +17,7 @@ const PROJECT_PATH = /^\/project\/([0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89a
 
 function argsOf(argv) {
   const args = { inspect: false, execute: false, dryRun: false, clearAfterDryRun: true, tab: null, scene: null, selectors: null,
-    accountLabel: null, expectedEmail: null, expectedProject: null, log: "flow-pilot.jsonl", screenshot: null };
+    accountLabel: null, expectedEmail: null, expectedProject: null, characterProfile: null, log: "flow-pilot.jsonl", screenshot: null };
   for (let i = 0; i < argv.length; i += 1) {
     const arg = argv[i];
     if (arg === "--inspect") args.inspect = true;
@@ -26,6 +27,7 @@ function argsOf(argv) {
     else if (arg === "--tab") args.tab = Number(argv[++i]);
     else if (arg === "--scene") args.scene = argv[++i];
     else if (arg === "--selectors") args.selectors = argv[++i];
+    else if (arg === "--character-profile") args.characterProfile = argv[++i];
     else if (arg === "--account-label") args.accountLabel = argv[++i];
     else if (arg === "--expected-email") args.expectedEmail = argv[++i];
     else if (arg === "--expected-project") args.expectedProject = argv[++i];
@@ -224,8 +226,33 @@ async function chooseModel(page, selectors, model) {
   if (!selectedText.includes(model)) throw new Error(`Model selection did not persist; current label is ${JSON.stringify(selectedText)}.`);
 }
 
+
+async function uploadCharacterReferences(page, selectors, character) {
+  const fileInput = page.locator(selectors.ingredient_file_input);
+  const inputCount = await fileInput.count().catch(() => 0);
+  if (inputCount !== 1) throw new Error(`Ingredient file-input selector matched ${inputCount} elements; expected exactly one. No reference upload attempted.`);
+  const inputType = await fileInput.getAttribute("type").catch(() => null);
+  if (inputType !== "file") throw new Error("ingredient_file_input must select exactly one input[type=file].");
+  await fileInput.setInputFiles(character.reference_images, { timeout: 5000 });
+  const selectedFiles = await fileInput.evaluate(element => Array.from(element.files || []).map(file => file.name));
+  if (selectedFiles.length !== character.reference_images.length) {
+    throw new Error(`Browser file input accepted ${selectedFiles.length} reference files; expected ${character.reference_images.length}.`);
+  }
+  const expectedCount = character.reference_images.length;
+  try {
+    await page.waitForFunction(({ selector, expected }) => document.querySelectorAll(selector).length === expected,
+      { selector: selectors.ingredient_reference_items, expected: expectedCount }, { timeout: 8000 });
+  } catch {
+    const observed = await page.locator(selectors.ingredient_reference_items).count().catch(() => -1);
+    throw new Error(`Reference upload could not be verified in the Flow Ingredients UI: expected exactly ${expectedCount} attached reference items, observed ${observed}. Stopping before prompt fill/Create.`);
+  }
+  const observed = await page.locator(selectors.ingredient_reference_items).count();
+  if (observed !== expectedCount) throw new Error(`Ingredients reference count mismatch: expected ${expectedCount}, observed ${observed}.`);
+  console.log(`Verified ${observed} character reference image(s) attached in Ingredients: ${selectedFiles.join(", ")}`);
+}
+
 function requiredSelectorConfig(selectors) {
-  const required = ["prompt", "settings_trigger", "model", "model_option", "resolution", "ingredients_mode", "aspect_9_16", "duration", "create"];
+  const required = ["prompt", "settings_trigger", "model", "model_option", "resolution", "ingredients_mode", "ingredient_file_input", "ingredient_reference_items", "aspect_9_16", "duration", "create"];
   for (const key of required) {
     if (typeof selectors[key] !== "string" || !selectors[key].trim()) {
       throw new Error(`Selector config must provide a non-empty CSS selector for '${key}'.`);
@@ -234,8 +261,8 @@ function requiredSelectorConfig(selectors) {
 }
 
 async function loadInputs(args) {
-  if (!args.scene || !args.selectors || args.tab === null || !args.accountLabel || !args.expectedEmail) {
-    throw new Error("--tab, --scene, --selectors, --account-label, and --expected-email are required outside --inspect.");
+  if (!args.scene || !args.selectors || !args.characterProfile || args.tab === null || !args.accountLabel || !args.expectedEmail) {
+    throw new Error("--tab, --scene, --selectors, --character-profile, --account-label, and --expected-email are required outside --inspect.");
   }
   const scene = JSON.parse(fs.readFileSync(args.scene, "utf8"));
   const selectors = JSON.parse(fs.readFileSync(args.selectors, "utf8"));
@@ -246,8 +273,12 @@ async function loadInputs(args) {
     throw new Error("Phase 3 pilot is restricted to model='Omni 1.1 Flash' and resolution='360p'.");
   }
   if (scene.duration && scene.duration !== "8s") throw new Error("Phase 3 pilot is restricted to duration='8s'.");
+  if (typeof scene.character_id !== "string" || !scene.character_id.trim()) throw new Error("Scene JSON must contain a non-empty character_id.");
+  const character = loadCharacterProfile(args.characterProfile, scene.character_id);
+  scene.scene_prompt = scene.prompt;
+  scene.prompt = composeCharacterPrompt(scene.prompt, character);
   requiredSelectorConfig(selectors);
-  return { scene, selectors };
+  return { scene, selectors, character };
 }
 
 async function chooseFlowTab(browser, args) {
@@ -282,7 +313,7 @@ async function readCreditCost(page) {
 }
 
 async function prepare(args, browser, rl) {
-  const { scene, selectors } = await loadInputs(args);
+  const { scene, selectors, character } = await loadInputs(args);
   const chosen = await chooseFlowTab(browser, args);
   console.log(`Selected existing tab [${chosen.index}] context=${chosen.contextIndex}\nTitle: ${chosen.title}\nURL: ${chosen.url}\nProject ID: ${chosen.projectId || "legacy Flow route"}`);
   const account = await verifyAccount(chosen.page, selectors, args.expectedEmail);
@@ -340,6 +371,7 @@ async function prepare(args, browser, rl) {
     await chooseModel(chosen.page, selectors, scene.model);
     await checkedRadio(chosen.page, selectors.resolution, scene.resolution, "resolution");
     await checkedRadio(chosen.page, selectors.ingredients_mode, "Ingredients", "Ingredients mode");
+    await uploadCharacterReferences(chosen.page, selectors, character);
     await checkedRadio(chosen.page, selectors.aspect_9_16, "9:16", "aspect ratio");
     await checkedRadio(chosen.page, selectors.duration, scene.duration || "8s", "duration");
 
@@ -420,7 +452,7 @@ async function prepare(args, browser, rl) {
   await askExact(rl, `This action may consume credit. Type CREATE ONE VIDEO FOR ${scene.scene_id} to submit exactly once: `,
     `CREATE ONE VIDEO FOR ${scene.scene_id}`);
   appendEvent(args.log, {
-    event: "submission_intent", scene_id: scene.scene_id, model: scene.model, resolution: scene.resolution,
+    event: "submission_intent", scene_id: scene.scene_id, character_id: character.id, character_name: character.name, reference_image_count: character.reference_images.length, reference_image_names: character.reference_images.map(file => path.basename(file)), model: scene.model, resolution: scene.resolution,
     prompt: scene.prompt, account_email: account.observedEmail, project_id: chosen.projectId,
     estimated_credit_cost: creditCost, url: chosen.page.url(), status: "submission_in_progress",
   });
