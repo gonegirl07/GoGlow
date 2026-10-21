@@ -8,6 +8,7 @@ import path from "node:path";
 import readline from "node:readline";
 import { stdin as input, stdout as output } from "node:process";
 import { chromium } from "playwright";
+import { createHash, randomUUID } from "node:crypto";
 
 const CDP_ENDPOINT = "http://127.0.0.1:9224";
 const LEGACY_FLOW_HOST = "labs.google";
@@ -20,7 +21,8 @@ if (!Number.isInteger(ASSET_READY_TIMEOUT_MS) || ASSET_READY_TIMEOUT_MS < 15000 
 
 function argsOf(argv) {
   const args = { inspect: false, execute: false, dryRun: false, clearAfterDryRun: true, tab: null, scene: null, selectors: null,
-    accountLabel: null, expectedEmail: null, expectedProject: null, log: "flow-pilot.jsonl", screenshot: null };
+    accountLabel: null, expectedEmail: null, expectedProject: null, log: "flow-pilot.jsonl", screenshot: null,
+    waitForResult: false, waitTimeoutMs: 600000, downloadDir: "flow-downloads", ledgerOutput: "flow-generation-ledger.jsonl" };
   for (let i = 0; i < argv.length; i += 1) {
     const arg = argv[i];
     if (arg === "--inspect") args.inspect = true;
@@ -35,11 +37,18 @@ function argsOf(argv) {
     else if (arg === "--expected-project") args.expectedProject = argv[++i];
     else if (arg === "--log") args.log = argv[++i];
     else if (arg === "--screenshot") args.screenshot = argv[++i];
+    else if (arg === "--wait") args.waitForResult = true;
+    else if (arg === "--wait-timeout-ms") args.waitTimeoutMs = Number(argv[++i]);
+    else if (arg === "--download-dir") args.downloadDir = argv[++i];
+    else if (arg === "--ledger-output") args.ledgerOutput = argv[++i];
     else if (arg === "--help" || arg === "-h") args.help = true;
     else throw new Error(`Unknown argument: ${arg}`);
   }
   if (args.inspect && args.execute) throw new Error("Use --inspect or --execute, not both.");
   if (args.execute && args.dryRun) throw new Error("Use --dry-run or --execute, not both.");
+  if (args.waitForResult && !args.execute) throw new Error("--wait requires --execute; dry-run never waits for or downloads a generation.");
+  if (!Number.isInteger(args.waitTimeoutMs) || args.waitTimeoutMs < 30000 || args.waitTimeoutMs > 1800000) throw new Error("--wait-timeout-ms must be an integer from 30000 to 1800000.");
+  if (args.waitForResult && (!args.downloadDir || !args.ledgerOutput)) throw new Error("--wait requires non-empty --download-dir and --ledger-output paths.");
   if (args.tab !== null && (!Number.isInteger(args.tab) || args.tab < 0)) throw new Error("--tab must be a zero-based non-negative index.");
   return args;
 }
@@ -60,6 +69,12 @@ Actual one-scene submission (requires a separate second confirmation):
     --selectors local/flow-selectors.json --account-label "my Flow account" \\\
     --expected-email "you@example.com" --expected-project "project-uuid"
 
+Wait for completion, download 360p Original size, and append a credit/media ledger record:
+  node scripts/flow-pilot.mjs --execute --wait --wait-timeout-ms 600000 \\
+    --download-dir local/flow-downloads --ledger-output local/flow-generation-ledger.jsonl ...
+
+--wait requires selector keys: credit_balance, generated_video_items, download_media_button,
+and download_360p_original_button. Configure and dry-run the selectors before enabling it.
 Never run --execute until the dry-run and selector inspection have passed.
 `);
 }
@@ -84,6 +99,134 @@ function appendEvent(logPath, event) {
   const absolute = path.resolve(logPath);
   fs.mkdirSync(path.dirname(absolute), { recursive: true });
   fs.appendFileSync(absolute, JSON.stringify({ at: new Date().toISOString(), ...event }) + "\n", { encoding: "utf8", flag: "a" });
+}
+
+function waitForSelectors(selectors, args) {
+  if (!args.waitForResult) return;
+  for (const key of ["credit_balance", "generated_video_items", "download_media_button", "download_360p_original_button"]) {
+    if (typeof selectors[key] !== "string" || !selectors[key].trim()) {
+      throw new Error(`--wait requires a non-empty '${key}' selector in the selector config.`);
+    }
+  }
+}
+
+async function readCreditBalance(page, selector) {
+  const locator = await exactVisibleLocator(page, selector, "credit balance");
+  const text = (await locator.innerText({ timeout: 2500 }).catch(() => "")).replace(/,/g, "");
+  const match = text.match(/(?:^|\\D)(\\d+)(?:\\D|$)/);
+  return match ? Number(match[1]) : null;
+}
+
+async function generatedItemKeys(page, selector) {
+  return page.locator(selector).evaluateAll(elements => elements.map(element => {
+    const key = element.getAttribute("data-id")
+      || element.getAttribute("data-testid")
+      || element.getAttribute("href")
+      || element.querySelector("a[href]")?.getAttribute("href")
+      || element.querySelector("video, img")?.getAttribute("src")
+      || "";
+    return String(key).trim();
+  }));
+}
+
+function appendGenerationLedger(pathname, record) {
+  const absolute = path.resolve(pathname);
+  fs.mkdirSync(path.dirname(absolute), { recursive: true });
+  fs.appendFileSync(absolute, JSON.stringify(record) + "\\n", { encoding: "utf8", flag: "a" });
+  return absolute;
+}
+
+function makeGenerationLedgerRecord({ scene, projectId, prompt, estimatedCost, beforeBalance, afterBalance, resultStatus, mediaUri, downloadedFile, downloadError, timeoutError }) {
+  const actualAmount = beforeBalance !== null && afterBalance !== null && beforeBalance >= afterBalance
+    ? beforeBalance - afterBalance : null;
+  const chargeStatus = actualAmount !== null && actualAmount > 0 ? "charged" : "unknown";
+  const timestamp = new Date().toISOString();
+  const attemptId = "attempt-" + randomUUID();
+  return {
+    schema_version: "1.0",
+    attempt_id: attemptId,
+    project_id: projectId || "google-flow-project",
+    scene_id: scene.scene_id,
+    attempt_number: 1,
+    retry_of: null,
+    provider: "google_flow",
+    started_on: null,
+    finished_on: timestamp,
+    configuration: {
+      model_label: scene.model || "Omni 1.1 Flash",
+      resolution: scene.resolution || "360p",
+      duration_seconds: Number.parseInt(scene.duration || "8s", 10) || 8,
+      aspect_ratio: "9:16",
+      pose_reference_id: null,
+      face_reference_id: null,
+      other_reference_ids: (scene.reference_images || []).map(item => path.basename(item)),
+    },
+    prompt: { text: prompt, sha256: createHash("sha256").update(prompt, "utf8").digest("hex"), template_version: null },
+    rule_ids: [],
+    result: {
+      status: resultStatus,
+      provider_message: timeoutError || null,
+      failure: resultStatus === "failed" ? { category: "download_or_wait", message: timeoutError || downloadError || "Flow result was not verified.", provider_error_code: null, retryable: false, suggested_prompt_revision: null, revision_rationale: null } : null,
+    },
+    credits: {
+      estimated_amount: estimatedCost,
+      actual_amount: actualAmount,
+      currency_or_unit: "credits",
+      charge_status: chargeStatus,
+      before_balance: beforeBalance,
+      after_balance: afterBalance,
+      evidence_source: beforeBalance !== null || afterBalance !== null ? "user_observation" : "unknown",
+      notes: actualAmount !== null ? `Observed balance delta: ${beforeBalance} -> ${afterBalance}.` : "Credit delta not confirmed; no charge amount inferred.",
+    },
+    media: {
+      uri: mediaUri || null,
+      downloaded_file: downloadedFile || null,
+      sha256: downloadedFile && fs.existsSync(downloadedFile) ? createHash("sha256").update(fs.readFileSync(downloadedFile)).digest("hex") : null,
+      integrity_status: downloadedFile ? "sha256_checked" : (mediaUri ? "not_downloaded" : "missing"),
+    },
+    qc: { status: "not_reviewed", observed_defects: [], checks_passed: null, checks_total: null, reviewed_by: null, reviewed_on: null, notes: "Human QC has not been recorded." },
+    created_by: "flow-pilot",
+    notes: [downloadError ? `Download failed: ${downloadError}` : null, timeoutError ? `Wait ended without verified completion: ${timeoutError}` : null].filter(Boolean).join(" "),
+  };
+}
+
+async function waitForGenerationAndDownload(page, selectors, { beforeKeys, beforeCount, timeoutMs, downloadDir }) {
+  const itemLocator = page.locator(selectors.generated_video_items);
+  const deadline = Date.now() + timeoutMs;
+  let newItem = null;
+  while (Date.now() < deadline) {
+    const count = await itemLocator.count().catch(() => 0);
+    if (count > beforeCount) {
+      const keys = await generatedItemKeys(page, selectors.generated_video_items).catch(() => []);
+      const newIndexes = keys.map((key, index) => ({ key, index })).filter(item => item.key && !beforeKeys.includes(item.key));
+      if (newIndexes.length === 1) {
+        newItem = itemLocator.nth(newIndexes[0].index);
+        break;
+      }
+      if (newIndexes.length > 1) throw new Error(`More than one new Flow video tile appeared (${newIndexes.length}); refusing to guess which clip to download.`);
+    }
+    await page.waitForTimeout(1000);
+  }
+  if (!newItem) throw new Error(`No uniquely identifiable new video tile appeared within ${timeoutMs}ms. Submission may still be processing; do not retry.`);
+  await newItem.click({ timeout: 5000 });
+  const downloadButton = await exactVisibleLocator(page, selectors.download_media_button, "Download media button");
+  await downloadButton.waitFor({ state: "visible", timeout: Math.max(1000, deadline - Date.now()) });
+  await downloadButton.click({ timeout: 5000 });
+  const quality = await exactVisibleLocator(page, selectors.download_360p_original_button, "360p Original size download option");
+  await quality.waitFor({ state: "visible", timeout: 10000 });
+  const downloadPromise = page.waitForEvent("download", { timeout: 30000 });
+  await quality.click({ timeout: 5000 });
+  const download = await downloadPromise;
+  const suggested = download.suggestedFilename() || "flow-clip-360p.mp4";
+  const safeName = suggested.replace(/[^a-zA-Z0-9._-]/g, "_");
+  const targetDir = path.resolve(downloadDir);
+  fs.mkdirSync(targetDir, { recursive: true });
+  let target = path.join(targetDir, safeName);
+  if (fs.existsSync(target)) target = path.join(targetDir, `${Date.now()}-${safeName}`);
+  await download.saveAs(target);
+  const stat = fs.statSync(target);
+  if (!stat.size) throw new Error("Downloaded media file is empty.");
+  return { downloadedFile: target, mediaUri: page.url(), downloadError: null };
 }
 
 function createConfirmationReader() {
@@ -565,6 +708,7 @@ async function readCreditCost(page) {
 
 async function prepare(args, browser, rl) {
   const { scene, selectors, referenceImages } = await loadInputs(args);
+  waitForSelectors(selectors, args);
   const chosen = await chooseFlowTab(browser, args);
   try {
   console.log(`Selected existing tab [${chosen.index}] context=${chosen.contextIndex}\nTitle: ${chosen.title}\nURL: ${chosen.url}\nProject ID: ${chosen.projectId || "legacy Flow route"}`);
@@ -651,6 +795,17 @@ async function prepare(args, browser, rl) {
   // If Flow does not expose a unique add button, file input, and visible reference-item selector,
   // stop before filling the prompt or enabling a possible Create action.
   const attachedReferenceUuids = await uploadSceneReferences(chosen.page, selectors, referenceImages, prompt);
+  if (args.waitForResult) {
+    const initialBalance = await readCreditBalance(chosen.page, selectors.credit_balance);
+    if (initialBalance === null) throw new Error("Could not read an integer credit balance; refusing --wait submission before Create.");
+    const initialItems = await generatedItemKeys(chosen.page, selectors.generated_video_items);
+    if (initialItems.some(key => !key) || new Set(initialItems).size !== initialItems.length) {
+      throw new Error("generated_video_items selector must match distinct tiles with stable data-id, data-testid, href, link href, or media src keys.");
+    }
+    args._waitInitialBalance = initialBalance;
+    args._waitInitialItemKeys = initialItems;
+    args._waitInitialItemCount = initialItems.length;
+  }
 
   // Only now modify the prompt. If fill fails, attempt to clear it before returning an error.
   const screenshot = path.resolve(args.screenshot || `flow-pilot-${scene.scene_id.replace(/[^a-zA-Z0-9_-]/g, "_")}-${args.execute ? "execute" : "dry-run"}.png`);
@@ -724,11 +879,65 @@ async function prepare(args, browser, rl) {
     await verifyAttachedReferenceUuids(chosen.page, selectors, attachedReferenceUuids);
     const finalButton = await exactVisibleLocator(chosen.page, selectors.create, "Create button");
     if (!(await finalButton.isEnabled())) throw new Error("Create button became disabled; refusing to click.");
+    if (args.waitForResult) {
+      const currentBalance = await readCreditBalance(chosen.page, selectors.credit_balance);
+      if (currentBalance === null) throw new Error("Credit balance could not be re-read immediately before Create; refusing to click.");
+      args._waitInitialBalance = currentBalance;
+      args._waitInitialItemKeys = await generatedItemKeys(chosen.page, selectors.generated_video_items);
+      args._waitInitialItemCount = args._waitInitialItemKeys.length;
+    }
     await finalButton.click({ timeout: 2500 });
     appendEvent(args.log, { event: "create_click_returned", scene_id: scene.scene_id, model: scene.model,
       resolution: scene.resolution, status: "submitted_unverified",
       note: "Click returned; generation completion and credit charge are not inferred." });
     console.log(`Create click returned once. Completion/credit status is unverified. Receipt: ${path.resolve(args.log)}`);
+    if (args.waitForResult) {
+      let resultStatus = "unknown";
+      let mediaUri = chosen.page.url();
+      let downloadedFile = null;
+      let downloadError = null;
+      let timeoutError = null;
+      let afterBalance = null;
+      try {
+        const result = await waitForGenerationAndDownload(chosen.page, selectors, {
+          beforeKeys: args._waitInitialItemKeys,
+          beforeCount: args._waitInitialItemCount,
+          timeoutMs: args.waitTimeoutMs,
+          downloadDir: args.downloadDir,
+        });
+        downloadedFile = result.downloadedFile;
+        mediaUri = result.mediaUri || chosen.page.url();
+        downloadError = result.downloadError;
+        resultStatus = "succeeded";
+      } catch (error) {
+        timeoutError = String(error.message || error);
+        appendEvent(args.log, { event: "generation_wait_unverified", scene_id: scene.scene_id, status: "unknown_do_not_retry", error: timeoutError });
+        console.error(`WAIT STOPPED SAFELY: ${timeoutError}`);
+      }
+      try { afterBalance = await readCreditBalance(chosen.page, selectors.credit_balance); } catch {}
+      const ledgerRecord = makeGenerationLedgerRecord({
+        scene, projectId: chosen.projectId, prompt: scene.prompt, estimatedCost: creditCost,
+        beforeBalance: args._waitInitialBalance ?? null, afterBalance,
+        resultStatus, mediaUri, downloadedFile, downloadError, timeoutError,
+      });
+      try {
+        const ledgerPath = appendGenerationLedger(args.ledgerOutput, ledgerRecord);
+        appendEvent(args.log, { event: "generation_ledger_recorded", scene_id: scene.scene_id, attempt_id: ledgerRecord.attempt_id, status: ledgerRecord.result.status, ledger_path: ledgerPath, before_balance: ledgerRecord.credits.before_balance, after_balance: ledgerRecord.credits.after_balance, actual_amount: ledgerRecord.credits.actual_amount, charge_status: ledgerRecord.credits.charge_status, media_uri: ledgerRecord.media.uri, downloaded_file: ledgerRecord.media.downloaded_file });
+        console.log(`Generation ledger appended: ${ledgerPath}`);
+      } catch (error) {
+        appendEvent(args.log, { event: "generation_ledger_write_failed", scene_id: scene.scene_id, error: String(error) });
+        console.error(`CRITICAL: generation completed/unknown but ledger write failed: ${error.message}`);
+        throw error;
+      }
+      if (resultStatus === "succeeded") {
+        console.log(`Generation result verified. Media URI: ${mediaUri}`);
+        if (downloadedFile) console.log(`Downloaded clip: ${downloadedFile}`);
+        else console.error(`Clip is ready but download failed: ${downloadError}`);
+      } else {
+        console.error("Generation result remains unverified. Do NOT retry automatically; inspect Flow manually.");
+        throw new Error("Generation was submitted but completion could not be verified; ledger recorded status=unknown.");
+      }
+    }
   } catch (error) {
     appendEvent(args.log, { event: "submission_outcome_unknown", scene_id: scene.scene_id,
       status: "unknown_do_not_retry", error: String(error) });
