@@ -8,7 +8,6 @@ import path from "node:path";
 import readline from "node:readline";
 import { stdin as input, stdout as output } from "node:process";
 import { chromium } from "playwright";
-import { loadCharacterProfile, composeCharacterPrompt } from "./character-profile.mjs";
 
 const CDP_ENDPOINT = "http://127.0.0.1:9224";
 const LEGACY_FLOW_HOST = "labs.google";
@@ -17,7 +16,7 @@ const PROJECT_PATH = /^\/project\/([0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89a
 
 function argsOf(argv) {
   const args = { inspect: false, execute: false, dryRun: false, clearAfterDryRun: true, tab: null, scene: null, selectors: null,
-    accountLabel: null, expectedEmail: null, expectedProject: null, characterProfile: null, log: "flow-pilot.jsonl", screenshot: null };
+    accountLabel: null, expectedEmail: null, expectedProject: null, log: "flow-pilot.jsonl", screenshot: null };
   for (let i = 0; i < argv.length; i += 1) {
     const arg = argv[i];
     if (arg === "--inspect") args.inspect = true;
@@ -27,7 +26,6 @@ function argsOf(argv) {
     else if (arg === "--tab") args.tab = Number(argv[++i]);
     else if (arg === "--scene") args.scene = argv[++i];
     else if (arg === "--selectors") args.selectors = argv[++i];
-    else if (arg === "--character-profile") args.characterProfile = argv[++i];
     else if (arg === "--account-label") args.accountLabel = argv[++i];
     else if (arg === "--expected-email") args.expectedEmail = argv[++i];
     else if (arg === "--expected-project") args.expectedProject = argv[++i];
@@ -227,22 +225,22 @@ async function chooseModel(page, selectors, model) {
 }
 
 
-async function uploadCharacterReferences(page, selectors, character) {
+async function uploadSceneReferences(page, selectors, referenceImages) {
   const beforeCount = await page.locator(selectors.ingredient_reference_items).count().catch(() => -1);
   if (beforeCount !== 0) throw new Error(`Ingredients already contains ${beforeCount} reference item(s); clear the panel manually and rerun so this run can prove which images it attached.`);
-  const addButton = await exactVisibleLocator(page, selectors.ingredient_add_button, "add character reference button");
+  const addButton = await exactVisibleLocator(page, selectors.ingredient_add_button, "add reference button");
   await addButton.click({ timeout: 2500 });
   const fileInput = page.locator(selectors.ingredient_file_input);
   const inputCount = await fileInput.count().catch(() => 0);
   if (inputCount !== 1) throw new Error(`Ingredient file-input selector matched ${inputCount} elements; expected exactly one. No reference upload attempted.`);
   const inputType = await fileInput.getAttribute("type").catch(() => null);
   if (inputType !== "file") throw new Error("ingredient_file_input must select exactly one input[type=file].");
-  await fileInput.setInputFiles(character.reference_images, { timeout: 5000 });
+  await fileInput.setInputFiles(referenceImages, { timeout: 5000 });
   const selectedFiles = await fileInput.evaluate(element => Array.from(element.files || []).map(file => file.name));
-  if (selectedFiles.length !== character.reference_images.length) {
-    throw new Error(`Browser file input accepted ${selectedFiles.length} reference files; expected ${character.reference_images.length}.`);
+  if (selectedFiles.length !== referenceImages.length) {
+    throw new Error(`Browser file input accepted ${selectedFiles.length} reference files; expected ${referenceImages.length}.`);
   }
-  const expectedCount = character.reference_images.length;
+  const expectedCount = referenceImages.length;
   try {
     await page.waitForFunction(({ selector, expected }) => document.querySelectorAll(selector).length === expected,
       { selector: selectors.ingredient_reference_items, expected: expectedCount }, { timeout: 8000 });
@@ -252,7 +250,7 @@ async function uploadCharacterReferences(page, selectors, character) {
   }
   const observed = await page.locator(selectors.ingredient_reference_items).count();
   if (observed !== expectedCount) throw new Error(`Ingredients reference count mismatch: expected ${expectedCount}, observed ${observed}.`);
-  console.log(`Verified ${observed} character reference image(s) attached in Ingredients: ${selectedFiles.join(", ")}`);
+  console.log(`Verified ${observed} scene reference image(s) attached in Ingredients: ${selectedFiles.join(", ")}`);
 }
 
 function requiredSelectorConfig(selectors) {
@@ -265,26 +263,43 @@ function requiredSelectorConfig(selectors) {
 }
 
 async function loadInputs(args) {
-  if (!args.scene || !args.selectors || !args.characterProfile || args.tab === null || !args.accountLabel || !args.expectedEmail) {
-    throw new Error("--tab, --scene, --selectors, --character-profile, --account-label, and --expected-email are required outside --inspect.");
+  if (!args.scene || !args.selectors || args.tab === null || !args.accountLabel || !args.expectedEmail) {
+    throw new Error("--tab, --scene, --selectors, --account-label, and --expected-email are required outside --inspect.");
   }
-  const scene = JSON.parse(fs.readFileSync(args.scene, "utf8"));
+  const scenePath = path.resolve(args.scene);
+  const scene = JSON.parse(fs.readFileSync(scenePath, "utf8"));
   const selectors = JSON.parse(fs.readFileSync(args.selectors, "utf8"));
   if (typeof scene.scene_id !== "string" || !scene.scene_id.trim()) throw new Error("Scene JSON must contain a non-empty scene_id.");
   if (typeof scene.prompt !== "string" || !scene.prompt.trim()) throw new Error("Scene JSON must contain a non-empty prompt.");
-  if (!/^[\x00-\x7F]+$/.test(scene.prompt)) throw new Error("Prompt must be ASCII/English only; non-ASCII characters are blocked before touching Flow.");
+  if (typeof scene.character_description !== "string" || !scene.character_description.trim()) {
+    throw new Error("Scene JSON must contain a non-empty character_description in ASCII English.");
+  }
+  if (!/^[\\x00-\\x7F]+$/.test(scene.prompt)) throw new Error("Prompt must be ASCII/English only; non-ASCII characters are blocked before touching Flow.");
+  if (!/^[\\x00-\\x7F]+$/.test(scene.character_description)) throw new Error("Character description must be ASCII/English only; non-ASCII characters are blocked before touching Flow.");
+  if (!Array.isArray(scene.reference_images) || scene.reference_images.length < 1 || scene.reference_images.length > 3) {
+    throw new Error("Scene JSON must provide reference_images as an array of 1 to 3 local file paths.");
+  }
+  const referenceImages = scene.reference_images.map((value, index) => {
+    if (typeof value !== "string" || !value.trim()) throw new Error(`reference_images[${index}] must be a non-empty local path.`);
+    const resolved = path.resolve(path.dirname(scenePath), value);
+    if (!fs.existsSync(resolved) || !fs.statSync(resolved).isFile()) throw new Error(`Reference image does not exist or is not a file: ${resolved}`);
+    if (![".png", ".jpg", ".jpeg", ".webp"].includes(path.extname(resolved).toLowerCase())) {
+      throw new Error(`Reference image must be PNG, JPG, JPEG, or WEBP: ${resolved}`);
+    }
+    return resolved;
+  });
+  if (new Set(referenceImages).size !== referenceImages.length) throw new Error("reference_images must contain distinct file paths.");
+  scene.character_description = scene.character_description.trim();
+  scene.scene_prompt = scene.prompt;
+  scene.prompt = `CHARACTER DESCRIPTION: ${scene.character_description}\\n\\nSCENE: ${scene.prompt.trim()}\\n\\nUse the attached reference images as the visual identity source for the person. Preserve the same facial features, hair, skin tone, and body proportions. Do not substitute a different person.`;
+  if (!/^[\\x00-\\x7F]+$/.test(scene.prompt)) throw new Error("Composed prompt must contain ASCII characters only.");
   if (scene.model !== "Omni 1.1 Flash" || scene.resolution !== "360p") {
     throw new Error("Phase 3 pilot is restricted to model='Omni 1.1 Flash' and resolution='360p'.");
   }
   if (scene.duration && scene.duration !== "8s") throw new Error("Phase 3 pilot is restricted to duration='8s'.");
-  if (typeof scene.character_id !== "string" || !scene.character_id.trim()) throw new Error("Scene JSON must contain a non-empty character_id.");
-  const character = loadCharacterProfile(args.characterProfile, scene.character_id);
-  scene.scene_prompt = scene.prompt;
-  scene.prompt = composeCharacterPrompt(scene.prompt, character);
   requiredSelectorConfig(selectors);
-  return { scene, selectors, character };
+  return { scene, selectors, referenceImages };
 }
-
 async function chooseFlowTab(browser, args) {
   const pages = await listPages(browser);
   if (args.tab >= pages.length) throw new Error(`--tab ${args.tab} is out of range; inspect the current list and select an existing tab.`);
@@ -317,7 +332,7 @@ async function readCreditCost(page) {
 }
 
 async function prepare(args, browser, rl) {
-  const { scene, selectors, character } = await loadInputs(args);
+  const { scene, selectors, referenceImages } = await loadInputs(args);
   const chosen = await chooseFlowTab(browser, args);
   console.log(`Selected existing tab [${chosen.index}] context=${chosen.contextIndex}\nTitle: ${chosen.title}\nURL: ${chosen.url}\nProject ID: ${chosen.projectId || "legacy Flow route"}`);
   const account = await verifyAccount(chosen.page, selectors, args.expectedEmail);
@@ -402,7 +417,7 @@ async function prepare(args, browser, rl) {
   // Attach and verify the exact character references only after closing Settings.
   // If Flow does not expose a unique add button, file input, and visible reference-item selector,
   // stop before filling the prompt or enabling a possible Create action.
-  await uploadCharacterReferences(chosen.page, selectors, character);
+  await uploadSceneReferences(chosen.page, selectors, referenceImages);
 
   // Only now modify the prompt. If fill fails, attempt to clear it before returning an error.
   const screenshot = path.resolve(args.screenshot || `flow-pilot-${scene.scene_id.replace(/[^a-zA-Z0-9_-]/g, "_")}-${args.execute ? "execute" : "dry-run"}.png`);
@@ -432,10 +447,9 @@ async function prepare(args, browser, rl) {
     project_id: chosen.projectId,
     url: chosen.page.url(),
     scene_id: scene.scene_id,
-    character_id: character.id,
-    character_name: character.name,
-    reference_image_count: character.reference_images.length,
-    reference_image_names: character.reference_images.map(file => path.basename(file)),
+    reference_image_count: referenceImages.length,
+    reference_image_names: referenceImages.map(file => path.basename(file)),
+    character_description: scene.character_description,
     model: scene.model,
     resolution: scene.resolution,
     ingredients_mode: "Ingredients",
@@ -490,8 +504,8 @@ async function prepare(args, browser, rl) {
 async function main() {
   const args = argsOf(process.argv.slice(2));
   if (args.help) return usage();
-  if (args.inspect && (args.scene || args.selectors || args.characterProfile || args.execute || args.expectedEmail || args.expectedProject)) {
-    throw new Error("--inspect is read-only and cannot be combined with scene, selectors, --character-profile, --execute, or expected account/project.");
+  if (args.inspect && (args.scene || args.selectors || args.execute || args.expectedEmail || args.expectedProject)) {
+    throw new Error("--inspect is read-only and cannot be combined with scene, selectors, --execute, or expected account/project.");
   }
   if (args.inspect) {
     const browser = await chromium.connectOverCDP(CDP_ENDPOINT);
