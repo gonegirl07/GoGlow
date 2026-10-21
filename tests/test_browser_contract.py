@@ -71,6 +71,32 @@ class BrowserContractTests(unittest.TestCase):
             self.assertIn(category, scene_categories)
             self.assertIn(category, report_categories)
 
+    def test_qc_button_uses_scene_article_not_nested_button_data_i(self):
+        self.assertIn('b.closest("article[data-i]")', self.html)
+        self.assertNotIn('b.closest("[data-i]")', self.html)
+
+    def test_approval_requires_720p_final_and_matching_activity(self):
+        self.assertIn('finalUri&&s.media_uri===finalUri', self.html)
+        self.assertIn('r.activity===settings().activity', self.html)
+        self.assertIn('s.qc_report={scene_id:s.id,activity:settings().activity', self.html)
+
+    def test_scene_duration_must_match_flow_clip_length(self):
+        self.assertIn('[8,10].includes(Number(s.duration_seconds))', self.html)
+        self.assertIn('String(s.flow_clip_seconds)!==String(s.duration_seconds)', self.html)
+        self.assertIn('duration_seconds:durations[i]', self.html)
+
+    def test_editing_final_uri_or_activity_invalidates_qc(self):
+        self.assertIn('if(s.status==="APPROVED"){let prior=s.status;s.status="QC_REVIEW"', self.html)
+        self.assertIn('Đã đổi hoạt động; QC cũ bị hủy', self.html)
+        self.assertIn('APPROVED:["QC_REVIEW","WAITING_FOR_GENERATION"]', self.html)
+
+    def test_credit_estimates_are_editable_and_persisted(self):
+        self.assertIn('id="credit360" type="number"', self.html)
+        self.assertIn('id="credit720" type="number"', self.html)
+        self.assertIn('credit_estimates:{test_360p_8s:Number($("credit360").value),final_720p_10s:Number($("credit720").value)}', self.html)
+        self.assertIn('p.credit_estimates?.test_360p_8s??6', self.html)
+        self.assertIn('Ước tính credits 360p/8s:', self.html)
+
     def test_browser_disclaims_automatic_media_verification(self):
         self.assertIn("không phải xác minh file hay tự động xem video", self.html)
         self.assertIn("không tự đánh giá video", self.html)
