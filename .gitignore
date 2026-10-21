@@ -11,3 +11,8 @@ build/
 .env.*
 !.env.example
 .DS_Store
+local/
+node_modules/
+package-lock.json
+flow-pilot-*.png
+flow-pilot.jsonl
