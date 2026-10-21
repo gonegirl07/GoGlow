@@ -87,7 +87,7 @@ def create_project(activity: str, target_duration_seconds: int = DEFAULT_TARGET_
             "continuity_in": ["character identity", "wardrobe", "props", "screen direction"] if index else [],
             "continuity_out": ["ending position", "facing", "pose", "props", "camera relationship"],
             "reference_ids": [], "image_brief": "", "prompt": prompt, "negative_constraints": [],
-            "qc_checklist": _qc_for(activity), "status": "PLANNED",
+            "qc_checklist": _qc_for(activity), "status": "PLANNED", "status_history": ["PLANNED"],
         })
     return {
         "project_id": project_id or f"goglow-{datetime.now(timezone.utc).strftime('%Y%m%dT%H%M%SZ')}",
