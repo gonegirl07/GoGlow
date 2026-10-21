@@ -232,6 +232,28 @@ class FlowPilotContractTests(unittest.TestCase):
         self.assertNotIn('--character-profile', self.script)
         self.assertNotIn('character_id', self.script)
 
+    def test_hybrid_face_description_and_expression_are_composed_near_prompt_end(self):
+        self.assertIn('faceDescriptionMode === "hybrid"', self.script)
+        self.assertIn("HYBRID FACE DESCRIPTION (brief matching traits only; reference images remain authoritative)", self.script)
+        self.assertIn("const expressionSection = scene.expression", self.script)
+        self.assertIn("EXPRESSION AND EYE STATE (follow throughout the entire shot)", self.script)
+        self.assertIn("this instruction takes priority over breathing or other subtle motion", self.script)
+        self.assertIn("Expression must be ASCII/English only", self.script)
+
+    def test_generation_ledger_records_face_reference_configuration(self):
+        self.assertIn("face_reference_ids: selectedFaceRefs.map(item => path.basename(item))", self.script)
+        self.assertIn('face_description_mode: scene.face_description_mode || "include"', self.script)
+        self.assertIn("other_reference_ids: referenceImages.filter(item => !selectedPaths.has", self.script)
+
+    def test_credit_preflight_waits_for_render_and_retries_once(self):
+        self.assertIn('waitFor({ state: "visible", timeout: 8000 })', self.script)
+        self.assertIn("for (let attempt = 0; attempt < 2; attempt += 1)", self.script)
+        self.assertIn("retry opening the account panel once", self.script)
+
+    def test_cleanup_does_not_click_clear_when_already_clean(self):
+        self.assertIn("const initialChipCount = await page.locator(selectors.ingredient_reference_items)", self.script)
+        self.assertIn('String(initialValue).trim() === "" && initialChipCount === 0', self.script)
+
 
     def test_face_reference_is_selected_from_this_jobs_reference_images(self):
         self.assertIn("const requestedFaceReferences = scene.face_reference_ids;", self.script)
@@ -250,7 +272,7 @@ class FlowPilotContractTests(unittest.TestCase):
 
     def test_reference_only_mode_can_omit_character_description(self):
         self.assertIn('const faceDescriptionMode = scene.face_description_mode ?? "include";', self.script)
-        self.assertIn('["include", "reference_only"].includes(faceDescriptionMode)', self.script)
+        self.assertIn('["include", "hybrid", "reference_only"].includes(faceDescriptionMode)', self.script)
         self.assertIn('face_description_mode is \'reference_only\'', self.script)
         self.assertIn('faceDescriptionMode === "reference_only" || !scene.character_description', self.script)
         self.assertIn("Use the attached reference images for all appearance details; do not invent or reinterpret facial features.", self.script)
