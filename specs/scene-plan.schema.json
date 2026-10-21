@@ -15,7 +15,11 @@
       "type": "string"
     },
     "aspect_ratio": {
-      "enum": ["9:16", "16:9", "1:1"]
+      "enum": [
+        "9:16",
+        "16:9",
+        "1:1"
+      ]
     },
     "target_duration_seconds": {
       "type": "integer",
@@ -65,8 +69,11 @@
             "type": "string"
           },
           "duration_seconds": {
-            "type": "number",
-            "exclusiveMinimum": 0
+            "type": "integer",
+            "enum": [
+              8,
+              10
+            ]
           },
           "wardrobe": {
             "type": "string"
@@ -157,17 +164,46 @@
             "type": "string"
           },
           "flow_clip_seconds": {
-            "enum": ["8", "10"],
-            "default": "8"
+            "type": "string",
+            "enum": [
+              "8",
+              "10"
+            ]
           },
-          "pose_reference_uri": {"type": "string"},
-          "face_reference_uri": {"type": "string"},
-          "media_uri_360p": {"type": "string"},
-          "media_uri_720p": {"type": "string"},
-          "breath_cue": {"type": "string"},
-          "movement_benefit": {"type": "string"},
-          "edit_transition": {"enum": ["hard_cut", "crossfade", "fade"], "default": "hard_cut"},
-          "watermark_status": {"enum": ["not_checked", "removed", "not_present"], "default": "not_checked"},
+          "pose_reference_uri": {
+            "type": "string"
+          },
+          "face_reference_uri": {
+            "type": "string"
+          },
+          "media_uri_360p": {
+            "type": "string"
+          },
+          "media_uri_720p": {
+            "type": "string"
+          },
+          "breath_cue": {
+            "type": "string"
+          },
+          "movement_benefit": {
+            "type": "string"
+          },
+          "edit_transition": {
+            "enum": [
+              "hard_cut",
+              "crossfade",
+              "fade"
+            ],
+            "default": "hard_cut"
+          },
+          "watermark_status": {
+            "enum": [
+              "not_checked",
+              "removed",
+              "not_present"
+            ],
+            "default": "not_checked"
+          },
           "review_notes": {
             "type": "string"
           },
@@ -343,11 +379,22 @@
     "brief": {
       "type": "string"
     },
-    "music_direction": {"type": "string"},
-    "editing_notes": {"type": "string"},
-    "pre_publish_approved": {"type": "boolean"},
-    "ai_label_required": {"type": "boolean"},
-    "auto_advance": {"type": "boolean"},
+    "music_direction": {
+      "type": "string"
+    },
+    "editing_notes": {
+      "type": "string"
+    },
+    "pre_publish_approved": {
+      "type": "boolean"
+    },
+    "ai_label_required": {
+      "type": "boolean"
+    },
+    "auto_advance": {
+      "type": "boolean",
+      "description": "Browser preference: automatically advance after manual evidence gates pass."
+    },
     "created_at": {
       "type": "string",
       "format": "date-time"
@@ -394,9 +441,25 @@
       "minimum": 1,
       "maximum": 20
     },
-    "auto_advance": {
-      "type": "boolean",
-      "description": "Browser preference: automatically advance after manual evidence gates pass."
+    "credit_estimates": {
+      "type": "object",
+      "properties": {
+        "test_360p_8s": {
+          "type": "number",
+          "minimum": 0,
+          "default": 6
+        },
+        "final_720p_10s": {
+          "type": "number",
+          "minimum": 0,
+          "default": 15
+        }
+      },
+      "required": [
+        "test_360p_8s",
+        "final_720p_10s"
+      ],
+      "additionalProperties": false
     }
   }
 }
