@@ -24,5 +24,13 @@ Failures may transition to NEEDS_REVISION → PROMPT_REVISED → WAITING_FOR_GEN
 
 A copied prompt is not a generated result. A checklist is not a QC pass.
 
+## QC mapping (canonical source)
+
+The mapping from QC report results (`PASS`, `REVIEW`, `FAIL`,
+`NOT_REVIEWED` in `specs/qc-report.schema.json`) to the workflow
+states above is defined in `docs/media-qc-protocol.md`, Section 2.3.
+That section is the canonical mapping for media review; this workflow
+document does not restate it, so the two cannot drift apart.
+
 ## Duration
 Scene durations must sum to the target runtime. This is a planning constraint, not a guarantee that one model request supports the full runtime.
