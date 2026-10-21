@@ -123,6 +123,16 @@ class GenerationLedgerRuntimeTests(unittest.TestCase):
         self.assertIn("JSON.stringify(project(),null,2)", self.html)
         self.assertIn("scenes.map(s=>Object.assign({},s", self.html)
 
+    def test_flow_jsonl_import_validates_and_appends_without_duplicate_attempt_ids(self):
+        self.assertIn('id="importFlowLedger"', self.html)
+        self.assertIn('id="flowLedgerFile"', self.html)
+        self.assertIn('window.GoGlowGenerationLedger.validateAttempt(records[i])', self.html)
+        self.assertIn('const known=new Set(generationLedger.map(record=>record.attempt_id))', self.html)
+        self.assertIn('if(known.has(record.attempt_id)){skipped++;continue}', self.html)
+        self.assertIn('generationLedger.push(record);known.add(record.attempt_id);added++', self.html)
+        self.assertIn('scene.generation_attempts=generationLedger.filter(record=>record.scene_id===scene.id)', self.html)
+        self.assertIn('Đã nhập "+added+" attempt vào Generation Ledger', self.html)
+
 
 if __name__ == "__main__":
     unittest.main()
