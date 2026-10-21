@@ -1,0 +1,174 @@
+{
+  "project_id": "demo-cycling-36s",
+  "aspect_ratio": "9:16",
+  "target_duration_seconds": 36,
+  "activity": "cycling",
+  "character_id": "demo-character",
+  "character_name": "Demo AI Character",
+  "brief": "Outdoor scenic ride, morning light, stable camera, realistic forward motion.",
+  "model_labels": {
+    "video": "",
+    "image": ""
+  },
+  "scenes": [
+    {
+      "id": "scene-01",
+      "duration_seconds": 9,
+      "start_state": "Rider is centered on the paved path, bicycle aligned with the lane, both hands on handlebars and feet on pedals.",
+      "primary_action": "Ride forward at a steady, realistic pace with continuous pedaling.",
+      "motion_direction": "Travel away from the starting landmark along the path; no lane change.",
+      "speed_and_timing": "Steady cadence and continuous forward speed.",
+      "body_mechanics": "Hands remain on handlebars; feet remain on pedals; wheels rotate with forward travel.",
+      "camera": "Side-tracking shot at a constant distance and height.",
+      "environment": "Paved park path in morning light, no crossing traffic.",
+      "end_state": "Rider has moved several meters forward and remains aligned with the same path.",
+      "continuity_in": [],
+      "continuity_out": [
+        "rider position farther along path",
+        "same travel direction",
+        "same wardrobe",
+        "same bicycle"
+      ],
+      "reference_ids": [],
+      "image_brief": "",
+      "prompt": "Vertical 9:16 side-tracking shot of the referenced AI character cycling on a paved park path. The rider travels forward along the same lane at a steady realistic speed, pedaling continuously with both hands on the handlebars and both feet on the pedals. Wheels rotate consistently with travel. The camera tracks parallel at a constant distance and height. End with the rider farther along the path, maintaining the same direction and cadence. Preserve character identity, wardrobe, bicycle geometry, contact points, road direction, and natural shadows.",
+      "negative_constraints": [
+        "no reversing direction",
+        "no sideways wheel sliding",
+        "no floating feet",
+        "no abrupt lane change"
+      ],
+      "qc_checklist": [
+        "Travel direction and road direction agree.",
+        "Wheel rotation matches forward speed.",
+        "Hands stay on handlebars and feet on pedals.",
+        "Rider remains in the intended lane.",
+        "Identity and wardrobe match references."
+      ],
+      "status": "PLANNED"
+    },
+    {
+      "id": "scene-02",
+      "duration_seconds": 9,
+      "start_state": "Continue from scene-01 with the rider farther along the same path, same orientation and speed.",
+      "primary_action": "Pass one visible path-side landmark without changing lanes.",
+      "motion_direction": "Continue forward in the established direction.",
+      "speed_and_timing": "Maintain steady cadence; pass landmark smoothly.",
+      "body_mechanics": "Keep hips stable, hands on handlebars, and feet cycling through a consistent pedal rotation.",
+      "camera": "Side tracking continues at the same distance and height.",
+      "environment": "Same park path, light, and background style.",
+      "end_state": "Rider has passed the landmark and remains centered on the path.",
+      "continuity_in": [
+        "position from scene-01",
+        "same direction",
+        "same wardrobe",
+        "same bicycle"
+      ],
+      "continuity_out": [
+        "position after landmark",
+        "same direction",
+        "same wardrobe",
+        "same bicycle"
+      ],
+      "reference_ids": [],
+      "image_brief": "",
+      "prompt": "Continue the same vertical 9:16 side-tracking cycling shot from the prior ending state. The referenced AI character pedals steadily and passes one visible path-side landmark without changing lanes. Maintain bicycle orientation, forward wheel rotation, hand and foot contact, realistic speed, consistent camera distance, wardrobe, and morning lighting. End after the landmark, still traveling in the same direction.",
+      "negative_constraints": [
+        "no reversing",
+        "no sudden speed jump",
+        "no lane change"
+      ],
+      "qc_checklist": [
+        "Screen direction remains consistent.",
+        "Landmark/background movement matches tracking.",
+        "Pedaling and wheel rotation remain coherent.",
+        "Bicycle and rider anatomy remain stable."
+      ],
+      "status": "PLANNED"
+    },
+    {
+      "id": "scene-03",
+      "duration_seconds": 9,
+      "start_state": "Rider continues from scene-02 after the landmark, centered on the same path.",
+      "primary_action": "Continue riding past trees and scenery with a consistent cadence.",
+      "motion_direction": "Forward along the path; no turn in this scene.",
+      "speed_and_timing": "Steady forward motion with no unexplained slowdown.",
+      "body_mechanics": "Natural torso posture, continuous pedaling, hands gripping the same handlebar positions.",
+      "camera": "Front three-quarter tracking shot, smooth and at a consistent distance.",
+      "environment": "Same park path and time of day; trees move naturally relative to camera.",
+      "end_state": "Rider remains in motion, approaching a clear section of path.",
+      "continuity_in": [
+        "position after landmark",
+        "same direction",
+        "same wardrobe",
+        "same bicycle"
+      ],
+      "continuity_out": [
+        "approaching clear path section",
+        "same direction",
+        "same wardrobe",
+        "same bicycle"
+      ],
+      "reference_ids": [],
+      "image_brief": "",
+      "prompt": "Vertical 9:16 front three-quarter tracking shot of the same referenced AI character cycling along the same park path. Continue forward at a consistent realistic speed with continuous pedaling and correct wheel rotation. Keep both hands on the handlebars and feet on pedals. Maintain the same identity, outfit, bicycle, lighting, and travel direction. The camera tracks smoothly in front at a consistent distance. End while the rider approaches a clear section of path.",
+      "negative_constraints": [
+        "no reverse motion",
+        "no sliding bicycle",
+        "no changes to bicycle design"
+      ],
+      "qc_checklist": [
+        "Forward motion is visually clear.",
+        "Pedaling and wheel rotation match speed.",
+        "Hands and feet remain attached to correct contact points.",
+        "Character and bicycle remain consistent."
+      ],
+      "status": "PLANNED"
+    },
+    {
+      "id": "scene-04",
+      "duration_seconds": 9,
+      "start_state": "Rider approaches a clear section of path, continuing in the established direction.",
+      "primary_action": "Ride through the clear section and finish at a deliberate end position.",
+      "motion_direction": "Continue forward along the same path; no abrupt turn.",
+      "speed_and_timing": "Maintain cadence; if slowing, decelerate gradually near the end.",
+      "body_mechanics": "Keep balanced posture, hands on handlebars, feet on pedals until any controlled stop.",
+      "camera": "Smooth side-tracking shot, then hold the final composition briefly.",
+      "environment": "Same park path, morning lighting, and visual continuity.",
+      "end_state": "Rider reaches a clearly visible point on the path and remains stable, ready for the next clip.",
+      "continuity_in": [
+        "approaching clear path section",
+        "same direction",
+        "same wardrobe",
+        "same bicycle"
+      ],
+      "continuity_out": [
+        "stable final position",
+        "defined facing direction",
+        "same wardrobe",
+        "same bicycle"
+      ],
+      "reference_ids": [],
+      "image_brief": "",
+      "prompt": "Vertical 9:16 shot of the same AI character continuing to cycle forward through the clear section of the same park path. Keep realistic speed, continuous wheel rotation and pedaling, stable hand/foot contact, and consistent bicycle geometry. Use a smooth side-tracking camera at a constant distance. End at a clearly visible point on the path with a stable composition and no abrupt turn or stop. Preserve identity, outfit, bicycle, lighting, and direction.",
+      "negative_constraints": [
+        "no reversing direction",
+        "no abrupt stop",
+        "no lane change",
+        "no wheel sliding"
+      ],
+      "qc_checklist": [
+        "Motion remains forward and continuous.",
+        "Speed and pedaling are plausible.",
+        "Ending position is clear and stable.",
+        "Continuity of character, outfit, bicycle, and lighting is preserved."
+      ],
+      "status": "PLANNED"
+    }
+  ],
+  "metadata": {
+    "planner": "hand-authored-demo",
+    "model_called": false,
+    "note": "Example plan only; replace references and verify exact model labels/settings before generation."
+  }
+}
