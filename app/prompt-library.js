@@ -19,10 +19,10 @@
 
   // Strict prompt-output guard: reject Vietnamese precomposed letters and decomposed diacritic marks.
   // UI strings may remain Vietnamese; callers pass only prompt text intended for Flow.
-  function validateEnglishPrompt(text) {
+  function validateEnglishPrompt(text, fieldLabel) {
     const source = String(text == null ? "" : text);
     const matches = [];
-    const re = /[àáạảãâầấẩẫậăằắẳẵặèéẹẻẽêềếểễệìíịỉĩòóọỏõôồốổỗộơờớởỡợùúụủũưừứửữựỳýỵỷỹđÀÁẠẢÃÂẦẤẨẪẬĂẰẮẲẴẶÈÉẸẺẼÊỀẾỂỄỆÌÍỊỈĨÒÓỌỎÕÔỒỐỔỖỘƠỜỚỞỠỢÙÚỤỦŨƯỪỨỬỮỰỲÝỴỶỸĐ\u0300-\u036f]/g;
+    const re = /[^\x09\x0A\x0D\x20-\x7E]/g;
     let match;
     while ((match = re.exec(source)) !== null) {
       matches.push({ character: match[0], index: match.index });
