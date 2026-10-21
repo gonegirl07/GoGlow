@@ -63,6 +63,22 @@ class GenerationLedgerRuntimeTests(unittest.TestCase):
         self.assertIn('- Project ID: "+p.project_id', self.html)
         self.assertIn('project_id="+a.project_id+" · "+a.scene_id', self.html)
 
+    def test_markdown_scene_attempts_include_project_and_scene_ids(self):
+        self.assertIn('s.generation_attempts.map(a=>"- project_id="+a.project_id+" · "+a.scene_id+" #"+a.attempt_number', self.html)
+
+    def test_markdown_project_archive_preserves_balance_evidence_charge_and_qc(self):
+        archive = self.html.split('## Project-wide generation ledger (including deleted scenes)', 1)[1]
+        for marker in (
+            '· balance="+(a.credits.before_balance==null?"?":a.credits.before_balance)+"→"+(a.credits.after_balance==null?"?":a.credits.after_balance)',
+            '· evidence="+(a.credits.evidence_source||"unknown")',
+            '· charge="+(a.credits.charge_status||"unknown")',
+            '· QC="+(a.qc.status||"not_reviewed")',
+            '· estimated="+(a.credits.estimated_amount==null?"unknown":a.credits.estimated_amount)',
+            'actual="+(a.credits.actual_amount==null?"unknown":a.credits.actual_amount)',
+        ):
+            with self.subTest(marker=marker):
+                self.assertIn(marker, archive)
+
     def test_attempt_captures_exact_prompt_configuration_and_rule_ids(self):
         for marker in ("text: String(scene.prompt || \"\")", "model_label:", "resolution:", "duration_seconds:", "aspect_ratio:", "rule_ids:"):
             with self.subTest(marker=marker):
