@@ -36,11 +36,11 @@ class FlowPilotContractTests(unittest.TestCase):
     def test_google_account_email_accepts_suffixes_and_newlines(self):
         # Mirror the JavaScript extraction pattern against the aria-label variants
         # reported by Google. The email is inside parentheses, not necessarily at end.
-        self.assertIn(r"label.match(/\\(([^()\\s]+@[^()\\s]+)\\)/)", self.script)
-        pattern = re.compile(r"\\(([^()\\s]+@[^()\\s]+)\\)")
+        self.assertIn(r"label.match(/\(([^()\s]+@[^()\s]+)\)/)", self.script)
+        pattern = re.compile(r"\(([^()\s]+@[^()\s]+)\)")
         labels = [
             "Google Account: <name> (vudinhhuy11cdtm1@gmail.com), Google membership",
-            "Google Account: <name> (vudinhhuy11cdtm1@gmail.com)\\nGoogle membership",
+            "Google Account: <name> (vudinhhuy11cdtm1@gmail.com)\nGoogle membership",
             "Google Account: <name> (vudinhhuy11cdtm1@gmail.com)",
         ]
         for label in labels:
