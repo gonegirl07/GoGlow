@@ -777,10 +777,12 @@ async function readCreditCost(page) {
 }
 
 async function prepare(args, browser, rl) {
-  const { scene, selectors, referenceImages } = await loadInputs(args);
+  const { scene, selectors, referenceImages, faceReferenceImage } = await loadInputs(args);
   waitForSelectors(selectors, args);
   const chosen = await chooseFlowTab(browser, args);
   const originalUrl = chosen.page.url();
+  let promptForCleanup = null;
+  let createMayHaveBeenClicked = false;
   try {
   console.log(`Selected existing tab [${chosen.index}] context=${chosen.contextIndex}\nTitle: ${chosen.title}\nURL: ${chosen.url}\nProject ID: ${chosen.projectId || "legacy Flow route"}`);
   const account = await verifyAccount(chosen.page, selectors, args.expectedEmail);
@@ -791,7 +793,7 @@ async function prepare(args, browser, rl) {
     `CONFIRM ACCOUNT ${args.accountLabel} HAS CREDIT`,
   );
 
-  const prompt = await exactVisibleLocator(chosen.page, selectors.prompt, "prompt field");
+  const prompt = promptForCleanup = await exactVisibleLocator(chosen.page, selectors.prompt, "prompt field");
   const create = await exactVisibleLocator(chosen.page, selectors.create, "Create button");
   const settings = await exactVisibleLocator(chosen.page, selectors.settings_trigger, "settings trigger");
 
@@ -973,6 +975,7 @@ async function prepare(args, browser, rl) {
       args._waitInitialItemKeys = await generatedItemKeys(chosen.page, selectors.generated_video_items);
       args._waitInitialItemCount = args._waitInitialItemKeys.length;
     }
+    createMayHaveBeenClicked = true; // Conservatively preserve state if the click result is ambiguous.
     await finalButton.click({ timeout: 2500 });
     appendEvent(args.log, { event: "create_click_returned", scene_id: scene.scene_id, model: scene.model,
       resolution: scene.resolution, status: "submitted_unverified",
@@ -1051,6 +1054,16 @@ async function prepare(args, browser, rl) {
     throw error;
   }
   } catch (error) {
+    // Any pre-submit failure after locating the prompt must leave Flow clean. In particular,
+    // failures while building/printing READY-TO-CREATE metadata must not strand Ingredients chips.
+    if (promptForCleanup && !createMayHaveBeenClicked) {
+      try {
+        await clearPromptVerified(promptForCleanup, selectors, 4000);
+        console.error("Failure cleanup: prompt and Ingredients chips cleared and verified.");
+      } catch (cleanupError) {
+        console.error(`CRITICAL: failure cleanup could not verify prompt/chips empty: ${cleanupError.message}. Inspect Flow and clear manually before rerunning.`);
+      }
+    }
     await closeAccountMenuIfOpen(chosen.page, selectors, args.expectedEmail);
     if (args.waitForResult && chosen.page.url() !== originalUrl) {
       await chosen.page.goBack({ waitUntil: "domcontentloaded", timeout: 10000 }).catch(() => {});
