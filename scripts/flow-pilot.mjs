@@ -799,7 +799,7 @@ async function readCreditCost(page) {
 }
 
 async function prepare(args, browser, rl) {
-  const { scene, selectors, referenceImages, faceReferenceImage } = await loadInputs(args);
+  const { scene, selectors, referenceImages, faceReferenceImage, faceReferenceImages } = await loadInputs(args);
   waitForSelectors(selectors, args);
   const chosen = await chooseFlowTab(browser, args);
   const originalUrl = chosen.page.url();
@@ -946,8 +946,11 @@ async function prepare(args, browser, rl) {
     reference_image_count: referenceImages.length,
     reference_image_names: referenceImages.map(file => path.basename(file)),
     face_reference_id: scene.face_reference_id,
+    face_reference_ids: scene.face_reference_ids,
+    face_reference_images: faceReferenceImages.map(file => path.basename(file)),
     face_reference_image: path.basename(faceReferenceImage),
-    reference_order: "primary face reference first, supporting references after",
+    face_description_mode: scene.face_description_mode || "include",
+    reference_order: "selected face references first in configured order, supporting references after",
     character_description: scene.character_description,
     model: scene.model,
     resolution: scene.resolution,
@@ -978,7 +981,7 @@ async function prepare(args, browser, rl) {
     `CREATE ONE VIDEO FOR ${scene.scene_id}`);
   args._waitStartedOn = new Date().toISOString();
   appendEvent(args.log, {
-    event: "submission_intent", scene_id: scene.scene_id, reference_image_count: referenceImages.length, reference_image_names: referenceImages.map(file => path.basename(file)), face_reference_id: scene.face_reference_id, face_reference_image: path.basename(faceReferenceImage), character_description: scene.character_description, model: scene.model, resolution: scene.resolution,
+    event: "submission_intent", scene_id: scene.scene_id, reference_image_count: referenceImages.length, reference_image_names: referenceImages.map(file => path.basename(file)), face_reference_id: scene.face_reference_id, face_reference_ids: scene.face_reference_ids, face_reference_images: faceReferenceImages.map(file => path.basename(file)), face_reference_image: path.basename(faceReferenceImage), face_description_mode: scene.face_description_mode || "include", character_description: scene.character_description, model: scene.model, resolution: scene.resolution,
     prompt: scene.prompt, account_email: account.observedEmail, project_id: chosen.projectId,
     estimated_credit_cost: creditCost, url: chosen.page.url(), status: "submission_in_progress",
   });
