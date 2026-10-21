@@ -50,8 +50,7 @@ test("rejects missing reference images and more than three references", () => {
 test("rejects non-ASCII character descriptions and composed prompts", () => {
   const f = fixture();
   assert.throws(() => assertAsciiEnglish("Mai có tóc dài", "profile"), /ASCII characters only/);
-  const profile = { ...f.profile, reference_images: [] };
-  assert.throws(() => composeCharacterPrompt("Perform yoga", profile), /Composed prompt/);
+  assert.throws(() => validateCharacterProfile({ ...f.profile, fixed_appearance: "có tóc dài" }, f.profilePath), /ASCII characters only/);
   fs.rmSync(f.root, { recursive: true, force: true });
 });
 
