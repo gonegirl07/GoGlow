@@ -22,7 +22,7 @@ if (!Number.isInteger(ASSET_READY_TIMEOUT_MS) || ASSET_READY_TIMEOUT_MS < 15000 
 function argsOf(argv) {
   const args = { inspect: false, execute: false, dryRun: false, clearAfterDryRun: true, tab: null, scene: null, selectors: null,
     accountLabel: null, expectedEmail: null, expectedProject: null, log: "flow-pilot.jsonl", screenshot: null,
-    waitForResult: false, waitTimeoutMs: 600000, downloadDir: "local/flow-downloads", ledgerOutput: "local/flow-generation-ledger.jsonl" };
+    waitForResult: false, waitTimeoutMs: 600000, downloadDir: "local/flow-downloads", ledgerOutput: "local/flow-generation-ledger.jsonl", ledgerProjectId: null };
   for (let i = 0; i < argv.length; i += 1) {
     const arg = argv[i];
     if (arg === "--inspect") args.inspect = true;
@@ -41,6 +41,7 @@ function argsOf(argv) {
     else if (arg === "--wait-timeout-ms") args.waitTimeoutMs = Number(argv[++i]);
     else if (arg === "--download-dir") args.downloadDir = argv[++i];
     else if (arg === "--ledger-output") args.ledgerOutput = argv[++i];
+    else if (arg === "--ledger-project-id") args.ledgerProjectId = argv[++i];
     else if (arg === "--help" || arg === "-h") args.help = true;
     else throw new Error(`Unknown argument: ${arg}`);
   }
@@ -150,7 +151,7 @@ function nextLedgerAttemptNumber(pathname, sceneId) {
   return max + 1;
 }
 
-function makeGenerationLedgerRecord({ scene, projectId, prompt, estimatedCost, beforeBalance, afterBalance, resultStatus, mediaUri, downloadedFile, downloadError, timeoutError, attemptNumber, startedOn }) {
+function makeGenerationLedgerRecord({ scene, projectId, ledgerProjectId, prompt, estimatedCost, beforeBalance, afterBalance, resultStatus, mediaUri, downloadedFile, downloadError, timeoutError, attemptNumber, startedOn }) {
   const observedDelta = beforeBalance !== null && afterBalance !== null && beforeBalance >= afterBalance
     ? beforeBalance - afterBalance : null;
   const actualAmount = observedDelta !== null && observedDelta > 0 ? observedDelta : null;
@@ -160,7 +161,7 @@ function makeGenerationLedgerRecord({ scene, projectId, prompt, estimatedCost, b
   return {
     schema_version: "1.0",
     attempt_id: attemptId,
-    project_id: projectId || "google-flow-project",
+    project_id: ledgerProjectId || scene.goglow_project_id || projectId || "google-flow-project",
     scene_id: scene.scene_id,
     attempt_number: attemptNumber || 1,
     retry_of: null,
@@ -955,7 +956,7 @@ async function prepare(args, browser, rl) {
         await chosen.page.waitForTimeout(1000);
       } while (Date.now() < balanceDeadline);
       const ledgerRecord = makeGenerationLedgerRecord({
-        scene, projectId: chosen.projectId, prompt: scene.prompt, estimatedCost: creditCost,
+        scene, projectId: chosen.projectId, ledgerProjectId: args.ledgerProjectId, prompt: scene.prompt, estimatedCost: creditCost,
         beforeBalance: args._waitInitialBalance ?? null, afterBalance,
         resultStatus, mediaUri, downloadedFile, downloadError, timeoutError, attemptNumber, startedOn: args._waitStartedOn,
       });
