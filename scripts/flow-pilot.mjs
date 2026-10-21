@@ -963,7 +963,7 @@ async function loadInputs(args) {
   if (!/^[\x00-\x7F]+$/.test(scene.prompt)) throw new Error("Prompt must be ASCII/English only; non-ASCII characters are blocked before touching Flow.");
   const variants = scene.variants === undefined ? 1 : scene.variants;
   if (!Number.isInteger(variants) || variants < 1 || variants > 3) throw new Error("variants must be an integer from 1 to 3.");
-  const seatedShot = /\b(?:seated|sitting|sit|kneeling|kneel)\b/i.test(scene.scene_id + " " + scene.prompt);
+  const seatedShot = /\b(?:seated|sitting|sit|sits|kneeling|kneel|kneels)\b/i.test(scene.scene_id + " " + scene.prompt);
   scene.framing_helper_applied = scene.framing_helper === false ? false : (scene.framing_helper === true || seatedShot);
   if (scene.framing_helper_applied) {
     const framingSentence = "Camera pulled back, with a wide margin on both sides of the knees; keep both knees comfortably inside the frame.";
