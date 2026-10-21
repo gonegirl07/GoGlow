@@ -11,3 +11,6 @@ build/
 .env.*
 !.env.example
 .DS_Store
+local/
+flow-pilot-*.png
+flow-pilot.jsonl
