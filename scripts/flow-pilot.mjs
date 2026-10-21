@@ -1301,6 +1301,10 @@ async function prepare(args, browser, rl) {
           console.error(`Clip is ready but download failed: ${downloadError}`);
           process.exitCode = 2;
         }
+      } else if (resultStatus === "failed") {
+        console.error("Flow generation failure was detected and recorded in the ledger. Do NOT retry automatically.");
+        process.exitCode = 2;
+        return;
       } else {
         console.error("Generation result remains unverified. Do NOT retry automatically; inspect Flow manually.");
         throw new Error("Generation was submitted but completion could not be verified; ledger recorded status=unknown.");
