@@ -181,8 +181,10 @@ class FlowPilotContractTests(unittest.TestCase):
         self.assertIn('event: "submission_intent"', self.script)
         self.assertIn('event: "submission_outcome_unknown"', self.script)
         self.assertIn('status: "unknown_do_not_retry"', self.script)
-        self.assertNotIn("while (", self.script)
-        self.assertNotIn("for (;;)", self.script)
+        self.assertEqual(self.script.count('await finalButton.click({ timeout: 2500 })'), 1)
+        submission = self.script.split('await finalButton.click({ timeout: 2500 })', 1)[1].split('event: "create_click_returned"', 1)[0]
+        self.assertNotIn("finalButton.click", submission)
+        self.assertNotIn("CREATE ONE VIDEO FOR", submission)
 
     def test_requires_unique_visible_selectors(self):
         self.assertIn("expected exactly one", self.script)
