@@ -260,7 +260,7 @@ class FlowPilotContractTests(unittest.TestCase):
         self.assertIn("wait-timeout screenshot saved", self.script)
 
     def test_hybrid_face_description_strips_trailing_period_before_adding_punctuation(self):
-        self.assertIn('scene.character_description.trim().replace(/[.\\s]+$/, "")', self.script)
+        self.assertIn(r'scene.character_description.trim().replace(/[.\s]+$/, "")', self.script)
 
     def test_credit_preflight_waits_for_render_and_retries_once(self):
         self.assertIn('waitFor({ state: "visible", timeout: 8000 })', self.script)
