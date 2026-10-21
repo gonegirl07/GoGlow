@@ -25,13 +25,18 @@ jobs:
         run: python -m pip install -e .
       - name: Run unit tests
         run: python -m unittest discover -s tests -v
-      - name: Syntax-check Flow pilot runner
-        run: node --check scripts/flow-pilot.mjs
+      - name: Syntax-check Flow pilot runner and character profile module
+        run: |
+          node --check scripts/flow-pilot.mjs
+          node --check scripts/character-profile.mjs
+      - name: Test character profile module
+        run: npm test
       - name: Validate JSON examples
         run: |
           python -m json.tool examples/cycling-36s.json >/dev/null
           python -m json.tool examples/flow-pilot-scene.example.json >/dev/null
           python -m json.tool examples/flow-pilot-selectors.example.json >/dev/null
+          python -m json.tool examples/character-profile.template.json >/dev/null
       - name: Validate example project
         run: goglow validate examples/cycling-36s.json
       - name: Smoke-test CLI export
