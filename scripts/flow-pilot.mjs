@@ -96,7 +96,7 @@ function createConfirmationReader() {
   });
   interface_.on("close", () => {
     closed = true;
-    while (waiters.length) waiters.shift().reject(new Error("stdin closed"));
+    waiters.splice(0).forEach(waiter => waiter.reject(new Error("stdin closed")));
   });
   return {
     question(prompt) {
