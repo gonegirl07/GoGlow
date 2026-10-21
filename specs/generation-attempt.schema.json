@@ -52,7 +52,10 @@
       ]
     },
     "started_on": {
-      "type": "string",
+      "type": [
+        "string",
+        "null"
+      ],
       "format": "date-time"
     },
     "finished_on": {
