@@ -17,10 +17,12 @@
     { id: "explicit-real-time", status: "candidate", label: "Đề xuất tốc độ real-time", match: /slow motion|real[- ]time/i, warning: "Rule candidate về tốc độ: chỉ thêm cụm từ sau khi người dùng xem preview và chủ động duyệt." }
   ];
 
-  function uniqueLines(parts) {
+  function uniqueSentences(parts) {
     const seen = new Set();
-    return parts.map(v => String(v || "").trim()).filter(Boolean).filter(v => {
-      const key = v.replace(/\s+/g, " ").toLocaleLowerCase();
+    const segments = parts.map(v => String(v || "").trim()).filter(Boolean)
+      .flatMap(v => v.split(/\\n+|(?<=[.!?])\\s+/));
+    return segments.map(v => v.trim()).filter(Boolean).filter(v => {
+      const key = v.replace(/\\s+/g, " ").toLocaleLowerCase();
       if (seen.has(key)) return false;
       seen.add(key);
       return true;
@@ -66,7 +68,9 @@
     const camera = String(scene.camera || "").trim() ||
       "Eye-level static camera, front view, wide full-body framing, both hands and feet inside the frame, no zoom.";
     const parts = [
-      "Mai keeping exactly her face, hair, body.",
+      String(project.character_name || "").trim().toLocaleLowerCase() === "mai" ?
+        "Mai keeping exactly her face, hair, body." :
+        "Keep exactly the selected character's face, hair, and body.",
       outfit,
       room,
       camera,
@@ -76,7 +80,9 @@
       "Body parts that stay still: " + (scene.body_mechanics || "Keep support points and all unmentioned body parts still."),
       "Ending state: " + (scene.end_state || "Reach the described ending state and hold still until the end."),
       "Movement direction and speed: " + (scene.motion_direction || "Use clear, physically plausible movement."),
-      "Avoid: " + (Array.isArray(scene.negative_constraints) ? scene.negative_constraints.join("; ") : (scene.negative_constraints || "No morphing, fused fingers, sliding, or unrequested actions."))
+      "Avoid: " + (Array.isArray(scene.negative_constraints) ? scene.negative_constraints.join("; ") : (scene.negative_constraints || "No morphing, fused fingers, sliding, or unrequested actions.")),
+      // Preserve any user-authored prompt text not already represented by the structured fields.
+      scene.prompt ? "Existing prompt details: " + scene.prompt : ""
     ];
     if (analysis.in_warrior_scope && options && options.include_confirmed_stable_hold) {
       parts.push(RULES[0].append);
