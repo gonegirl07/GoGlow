@@ -22,7 +22,7 @@ if (!Number.isInteger(ASSET_READY_TIMEOUT_MS) || ASSET_READY_TIMEOUT_MS < 15000 
 function argsOf(argv) {
   const args = { inspect: false, execute: false, dryRun: false, clearAfterDryRun: true, tab: null, scene: null, selectors: null,
     accountLabel: null, expectedEmail: null, expectedProject: null, log: "flow-pilot.jsonl", screenshot: null,
-    waitForResult: false, waitTimeoutMs: 600000, downloadDir: "flow-downloads", ledgerOutput: "flow-generation-ledger.jsonl" };
+    waitForResult: false, waitTimeoutMs: 600000, downloadDir: "local/flow-downloads", ledgerOutput: "local/flow-generation-ledger.jsonl" };
   for (let i = 0; i < argv.length; i += 1) {
     const arg = argv[i];
     if (arg === "--inspect") args.inspect = true;
@@ -181,7 +181,7 @@ function makeGenerationLedgerRecord({ scene, projectId, prompt, estimatedCost, b
     result: {
       status: resultStatus,
       provider_message: timeoutError || null,
-      failure: resultStatus === "failed" ? { category: "download_or_wait", message: timeoutError || downloadError || "Flow result was not verified.", provider_error_code: null, retryable: false, suggested_prompt_revision: null, revision_rationale: null } : null,
+      failure: resultStatus === "failed" ? { category: "browser_automation", message: timeoutError || downloadError || "Flow result was not verified.", provider_error_code: null, retryable: false, suggested_prompt_revision: null, revision_rationale: null } : null,
     },
     credits: {
       estimated_amount: estimatedCost,
