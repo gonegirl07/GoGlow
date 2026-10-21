@@ -1,10 +1,17 @@
 {
   "scene_id": "pilot-scene-01",
   "reference_images": [
-    "/workspace/mai-fitness/refs/REPLACE_WITH_REAL_FACE_IMAGE_FILENAME.png"
+    "/workspace/mai-fitness/refs/REPLACE_WITH_FRONT_FACE_IMAGE.png",
+    "/workspace/mai-fitness/refs/REPLACE_WITH_THREE_QUARTER_FACE_IMAGE.png",
+    "/workspace/mai-fitness/refs/REPLACE_WITH_OPTIONAL_FULL_BODY_IMAGE.png"
   ],
-  "face_reference_id": "/workspace/mai-fitness/refs/REPLACE_WITH_REAL_FACE_IMAGE_FILENAME.png",
-  "character_description": "REPLACE WITH AN ASCII ENGLISH DESCRIPTION OF THE PERSON SHOWN IN THE REFERENCE IMAGES. Describe stable visual identity only.",
+  "face_reference_ids": [
+    "/workspace/mai-fitness/refs/REPLACE_WITH_FRONT_FACE_IMAGE.png",
+    "/workspace/mai-fitness/refs/REPLACE_WITH_THREE_QUARTER_FACE_IMAGE.png"
+  ],
+  "face_description_mode": "reference_only",
+  "character_description": "",
+
   "model": "Omni 1.1 Flash",
   "resolution": "360p",
   "duration": "8s",
