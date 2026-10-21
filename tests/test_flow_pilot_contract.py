@@ -50,10 +50,55 @@ class FlowPilotContractTests(unittest.TestCase):
         self.assertIn("Create button did not become enabled within", self.script)
 
     def test_prompt_cleanup_is_verified_after_failure_and_dry_run(self):
-        self.assertIn("async function clearPromptVerified(prompt", self.script)
+        self.assertIn("async function clearPromptVerified(prompt, selectors", self.script)
         self.assertIn("Prompt was cleared and verified empty.", self.script)
-        self.assertIn("textbox did not become empty within the verification timeout", self.script)
+        self.assertIn("Clear prompt was clicked but textbox did not become empty within the verification timeout", self.script)
         self.assertIn("CRITICAL: prompt could not be verified empty", self.script)
+
+    def test_every_prompt_cleanup_call_receives_selector_config(self):
+        self.assertNotIn('clearPromptVerified(prompt, 2500)', self.script)
+        self.assertIn('clearPromptVerified(prompt, selectors, 2500)', self.script)
+
+    def test_asset_upload_wait_is_configurable_and_defaults_to_90_seconds(self):
+        self.assertIn('process.env.FLOW_ASSET_READY_TIMEOUT_MS || 90000', self.script)
+        self.assertIn('FLOW_ASSET_READY_TIMEOUT_MS must be an integer from 15000 to 180000', self.script)
+        self.assertIn('{ timeout: ASSET_READY_TIMEOUT_MS }', self.script)
+        self.assertIn('within " + ASSET_READY_TIMEOUT_MS + "ms', self.script)
+        self.assertNotIn('within 15000ms', self.script)
+
+    def test_picker_closure_clicks_backdrop_edge_and_verifies_closed(self):
+        self.assertIn('position: { x: 5, y: 5 }', self.script)
+        self.assertIn('Ingredients picker closure verification failed; backdrop remains visible', self.script)
+        self.assertIn('Clicked the edge of the Ingredients picker backdrop, but the overlay is still open', self.script)
+        self.assertIn('await page.waitForFunction(selector => !Array.from(document.querySelectorAll(selector))', self.script)
+
+    def test_upload_failure_runs_verified_cleanup_in_finally(self):
+        self.assertIn('async function uploadSceneReferences(page, selectors, referenceImages, prompt)', self.script)
+        self.assertIn('finally {\n    if (uploadError)', self.script)
+        self.assertIn('Upload failure cleanup (finally):', self.script)
+        self.assertIn('await closeIngredientsPicker(page, selectors)', self.script)
+        self.assertIn('await clearPromptContentsVerified(prompt, selectors, 4000)', self.script)
+        self.assertIn('chipCount !== 0', self.script)
+
+    def test_deduplicated_upload_can_reuse_a_verifiable_existing_asset(self):
+        self.assertIn('event: reusedExistingUuid ? "asset_upload_reused_existing" : "asset_upload_uuid_timeout"', self.script)
+        self.assertIn('existing_uuids_before_upload: Array.from(existingUuids)', self.script)
+        self.assertIn('matching_uuids_after_timeout: diagnostics', self.script)
+        self.assertIn('selected_existing_uuid: reusedExistingUuid', self.script)
+        self.assertIn('Reusing existing Flow library asset', self.script)
+        self.assertIn('no reusable same-name asset UUID was verifiable', self.script)
+
+    def test_chip_images_are_loaded_and_uuids_rechecked_before_create(self):
+        self.assertIn('async function waitForChipImagesReady(page, selectors, timeout = 15000)', self.script)
+        self.assertIn('image.complete && image.naturalWidth > 0', self.script)
+        self.assertIn('async function verifyAttachedReferenceUuids(page, selectors, expectedUuids', self.script)
+        self.assertIn('await verifyAttachedReferenceUuids(chosen.page, selectors, attachedReferenceUuids);', self.script)
+        self.assertLess(self.script.index('await verifyAttachedReferenceUuids(chosen.page, selectors, attachedReferenceUuids);', self.script.index('This action may consume credit')), self.script.index('await finalButton.click({ timeout: 2500 })'))
+
+    def test_account_panel_cleanup_runs_when_preflight_fails(self):
+        self.assertIn('async function closeAccountMenuIfOpen(page, selectors, expectedEmail)', self.script)
+        self.assertIn('await closeAccountMenuIfOpen(chosen.page, selectors, args.expectedEmail);', self.script)
+        self.assertIn('Google account button for menu cleanup', self.script)
 
     def test_confirmation_reader_buffers_piped_stdin(self):
         self.assertIn("function createConfirmationReader()", self.script)
@@ -112,6 +157,20 @@ class FlowPilotContractTests(unittest.TestCase):
         self.assertIn("expected exactly one", self.script)
         self.assertIn("isVisible", self.script)
         self.assertIn("create_button_enabled", self.script)
+
+    def test_each_scene_supplies_its_own_reference_images_and_character_description(self):
+        self.assertIn('scene.character_description', self.script)
+        self.assertIn('scene.reference_images', self.script)
+        self.assertIn('reference_images as an array of 1 to 3 local file paths', self.script)
+        self.assertIn('Character description must be ASCII/English only', self.script)
+        self.assertIn('Scene JSON must contain a non-empty character_description', self.script)
+        self.assertIn('uploadSceneReferences(chosen.page, selectors, referenceImages, prompt)', self.script)
+        self.assertLess(self.script.index('await uploadSceneReferences(chosen.page, selectors, referenceImages, prompt)'), self.script.index('await prompt.fill(scene.prompt'))
+        self.assertIn('reference_image_count: referenceImages.length', self.script)
+        self.assertIn('ingredient_reference_items', self.script)
+        self.assertIn('Stopping before prompt fill/Create', self.script)
+        self.assertNotIn('--character-profile', self.script)
+        self.assertNotIn('character_id', self.script)
 
 
 if __name__ == "__main__":

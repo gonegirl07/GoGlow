@@ -1,6 +1,11 @@
 {
   "scene_id": "pilot-scene-01",
+  "reference_images": [
+    "/workspace/mai-fitness/refs/REPLACE_WITH_REAL_IMAGE_FILENAME.png"
+  ],
+  "character_description": "REPLACE WITH AN ASCII ENGLISH DESCRIPTION OF THE PERSON SHOWN IN THE REFERENCE IMAGES. Describe stable visual identity only.",
   "model": "Omni 1.1 Flash",
   "resolution": "360p",
-  "prompt": "A young adult woman performs one controlled yoga flow in a quiet studio. Full body visible, stable camera, natural motion, realistic anatomy, soft daylight. One continuous shot, no cuts, no text, no logos."
+  "duration": "8s",
+  "prompt": "An adult woman performs one controlled yoga flow in a quiet studio. Full body visible, stable camera, natural motion, realistic anatomy, soft daylight. One continuous shot, no cuts, no text, no logos. Keep the chest fully covered and the waist slim and clearly defined."
 }

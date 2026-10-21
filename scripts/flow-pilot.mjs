@@ -13,6 +13,10 @@ const CDP_ENDPOINT = "http://127.0.0.1:9224";
 const LEGACY_FLOW_HOST = "labs.google";
 const FLOW_HOST = "flow.google.com";
 const PROJECT_PATH = /^\/project\/([0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12})\/?$/i;
+const ASSET_READY_TIMEOUT_MS = Number(process.env.FLOW_ASSET_READY_TIMEOUT_MS || 90000);
+if (!Number.isInteger(ASSET_READY_TIMEOUT_MS) || ASSET_READY_TIMEOUT_MS < 15000 || ASSET_READY_TIMEOUT_MS > 180000) {
+  throw new Error("FLOW_ASSET_READY_TIMEOUT_MS must be an integer from 15000 to 180000.");
+}
 
 function argsOf(argv) {
   const args = { inspect: false, execute: false, dryRun: false, clearAfterDryRun: true, tab: null, scene: null, selectors: null,
@@ -131,20 +135,53 @@ async function waitForCreateEnabled(page, create, timeout = 5000) {
   }
 }
 
-async function clearPromptVerified(prompt, timeout = 2000) {
-  await prompt.fill("", { timeout });
+async function closeIngredientsPicker(page, selectors) {
+  const backdropSelector = selectors.ingredient_picker_backdrop || ".cdk-overlay-backdrop-showing";
+  const backdrop = page.locator(backdropSelector);
+  const count = await backdrop.count().catch(() => 0);
+  if (count === 0) return;
+  const visible = await backdrop.last().isVisible().catch(() => false);
+  if (!visible) return;
+  const bounds = await backdrop.last().boundingBox().catch(() => null);
+  if (!bounds) throw new Error("Ingredients picker backdrop is visible but has no bounding box; cannot verify picker closure.");
+  await backdrop.last().click({ position: { x: 5, y: 5 }, timeout: 2500, force: true });
+  try {
+    await page.waitForFunction(selector => !Array.from(document.querySelectorAll(selector)).some(node => {
+      const style = window.getComputedStyle(node);
+      return style.visibility !== "hidden" && style.display !== "none" && Number(style.opacity || 1) > 0;
+    }), backdropSelector, { timeout: 2500 });
+  } catch {
+    throw new Error("Clicked the edge of the Ingredients picker backdrop, but the overlay is still open.");
+  }
+  const remaining = await backdrop.count().catch(() => -1);
+  if (remaining > 0 && await backdrop.last().isVisible().catch(() => false)) {
+    throw new Error("Ingredients picker closure verification failed; backdrop remains visible.");
+  }
+}
+
+async function clearPromptContentsVerified(prompt, selectors, timeout = 2500) {
+  const page = prompt.page();
+  const clearButton = await exactVisibleLocator(page, selectors.clear_prompt, "Clear prompt button");
+  await clearButton.click({ timeout: 2500 });
   const handle = await prompt.elementHandle();
   if (!handle) throw new Error("Prompt textbox disappeared before empty-state verification.");
   try {
-    await prompt.page().waitForFunction(element => {
+    await page.waitForFunction(element => {
       const value = ("value" in element) ? element.value : (element.innerText || element.textContent || "");
       return String(value).trim() === "";
     }, handle, { timeout });
   } catch {
-    throw new Error("Prompt clear was attempted but textbox did not become empty within the verification timeout.");
+    throw new Error("Clear prompt was clicked but textbox did not become empty within the verification timeout.");
   }
   const remaining = await handle.evaluate(element => ("value" in element) ? element.value : (element.innerText || element.textContent || ""));
-  if (String(remaining).trim() !== "") throw new Error("Prompt clear verification failed; textbox still contains text.");
+  if (String(remaining).trim() !== "") throw new Error("Clear prompt verification failed; textbox still contains text.");
+  const chipCount = await page.locator(selectors.ingredient_reference_items).count().catch(() => -1);
+  if (chipCount !== 0) throw new Error(`Clear prompt removed text but left ${chipCount} Ingredients chip(s).`);
+}
+
+async function clearPromptVerified(prompt, selectors, timeout = 2500) {
+  await closeIngredientsPicker(prompt.page(), selectors);
+  await clearPromptContentsVerified(prompt, selectors, timeout);
 }
 
 async function listPages(browser) {
@@ -224,8 +261,200 @@ async function chooseModel(page, selectors, model) {
   if (!selectedText.includes(model)) throw new Error(`Model selection did not persist; current label is ${JSON.stringify(selectedText)}.`);
 }
 
+
+function assetUuidFromUrl(value) {
+  const match = String(value || "").match(/[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}/i);
+  return match?.[0]?.toLowerCase() || null;
+}
+
+async function waitForChipImagesReady(page, selectors, timeout = 15000) {
+  try {
+    await page.waitForFunction(selector => {
+      const chips = Array.from(document.querySelectorAll(selector));
+      return chips.every(chip => {
+        const image = chip.querySelector("img.chip-image");
+        return Boolean(image && image.complete && image.naturalWidth > 0);
+      });
+    }, selectors.ingredient_reference_items, { timeout });
+  } catch {
+    throw new Error(`One or more Ingredients chip thumbnails did not finish loading within ${timeout}ms.`);
+  }
+}
+
+async function verifyAttachedReferenceUuids(page, selectors, expectedUuids, timeout = 15000) {
+  await waitForChipImagesReady(page, selectors, timeout);
+  const chips = page.locator(selectors.ingredient_reference_items);
+  const count = await chips.count();
+  if (count !== expectedUuids.length) {
+    throw new Error(`Ingredients chip count changed: expected ${expectedUuids.length}, observed ${count}.`);
+  }
+  const actualUuids = [];
+  for (let i = 0; i < count; i += 1) {
+    const src = await chips.nth(i).locator("img.chip-image").getAttribute("src").catch(() => null);
+    actualUuids.push(assetUuidFromUrl(src));
+  }
+  if (actualUuids.some(uuid => !uuid)) throw new Error("One or more attached Ingredients chips have no verifiable UUID.");
+  if (actualUuids.some((uuid, index) => uuid !== expectedUuids[index])) {
+    throw new Error(`Ingredients chip UUID/order mismatch: expected ${expectedUuids.join(", ")}, observed ${actualUuids.join(", ")}.`);
+  }
+  return actualUuids;
+}
+
+async function openIngredientsPicker(page, selectors) {
+  const addButton = await exactVisibleLocator(page, selectors.ingredient_add_button, "add ingredients button");
+  await addButton.click({ timeout: 2500 });
+  await page.locator(selectors.ingredient_library_item).first().waitFor({ state: "visible", timeout: 5000 }).catch(() => {});
+}
+
+async function uploadSceneReferencesUnsafe(page, selectors, referenceImages) {
+  const chips = page.locator(selectors.ingredient_reference_items);
+  const beforeCount = await chips.count().catch(() => -1);
+  if (beforeCount !== 0) throw new Error(`Ingredients already contains ${beforeCount} reference chip(s); clear the prompt manually and rerun so this run can prove which images it attached.`);
+  const expectedUuids = [];
+
+  for (const imagePath of referenceImages) {
+    const filename = path.basename(imagePath);
+    await openIngredientsPicker(page, selectors);
+    const picker = page.locator(selectors.ingredient_library_item);
+    const matchingAssets = picker.filter({ hasText: filename });
+    const existingUuids = new Set();
+    const existingCount = await matchingAssets.count().catch(() => 0);
+    for (let i = 0; i < existingCount; i += 1) {
+      const src = await matchingAssets.nth(i).locator("img").first().getAttribute("src").catch(() => null);
+      const uuid = assetUuidFromUrl(src);
+      if (uuid) existingUuids.add(uuid);
+    }
+
+    const uploadButton = await exactVisibleLocator(page, selectors.ingredient_upload_button, "Upload media button");
+    const chooserPromise = page.waitForEvent("filechooser", { timeout: 5000 });
+    await uploadButton.click({ timeout: 2500 });
+    const chooser = await chooserPromise;
+    await chooser.setFiles(imagePath);
+    let reusedExistingUuid = null;
+    try {
+      await page.waitForFunction(({ selector, filename, oldUuids }) => {
+        // Flow inserts the newest upload at the top. Wait for the first same-name entry's
+        // thumbnail UUID rather than accepting a slower-loading old duplicate lower in the list.
+        const newestMatch = Array.from(document.querySelectorAll(selector)).find(asset =>
+          (asset.innerText || asset.textContent || "").includes(filename));
+        if (!newestMatch) return false;
+        const src = newestMatch.querySelector("img")?.getAttribute("src") || "";
+        const match = src.match(/[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}/i);
+        return Boolean(match && !oldUuids.includes(match[0].toLowerCase()));
+      }, { selector: selectors.ingredient_library_item, filename, oldUuids: Array.from(existingUuids) }, { timeout: ASSET_READY_TIMEOUT_MS });
+    } catch {
+      const diagnostics = [];
+      const countAfterTimeout = await matchingAssets.count().catch(() => 0);
+      for (let i = 0; i < countAfterTimeout; i += 1) {
+        const src = await matchingAssets.nth(i).locator("img").first().getAttribute("src").catch(() => null);
+        const uuid = assetUuidFromUrl(src);
+        if (uuid) diagnostics.push(uuid);
+      }
+      // Flow can deduplicate an upload and keep the existing project-library UUID.
+      // Reuse is allowed only when the existing same-name asset has a readable UUID;
+      // the dry-run reports it so the operator can inspect the thumbnail before execution.
+      reusedExistingUuid = diagnostics.find(uuid => existingUuids.has(uuid)) || null;
+      console.warn(JSON.stringify({
+        event: reusedExistingUuid ? "asset_upload_reused_existing" : "asset_upload_uuid_timeout",
+        filename,
+        timeout_ms: ASSET_READY_TIMEOUT_MS,
+        existing_uuids_before_upload: Array.from(existingUuids),
+        matching_uuids_after_timeout: diagnostics,
+        selected_existing_uuid: reusedExistingUuid,
+      }));
+      if (!reusedExistingUuid) {
+        throw new Error("Upload " + filename + " did not expose a new UUID within " + ASSET_READY_TIMEOUT_MS + "ms and no reusable same-name asset UUID was verifiable. Stopping before prompt fill/Create.");
+      }
+    }
+    let asset = matchingAssets.first();
+    if (reusedExistingUuid) {
+      let reuseIndex = -1;
+      const currentCount = await matchingAssets.count().catch(() => 0);
+      for (let i = 0; i < currentCount; i += 1) {
+        const src = await matchingAssets.nth(i).locator("img").first().getAttribute("src").catch(() => null);
+        if (assetUuidFromUrl(src) === reusedExistingUuid) { reuseIndex = i; break; }
+      }
+      if (reuseIndex < 0) throw new Error("Reusable asset UUID disappeared from the library; refusing to select an unverified item.");
+      asset = matchingAssets.nth(reuseIndex);
+    }
+    const assetSrc = await asset.locator("img").first().getAttribute("src").catch(() => null);
+    const assetUuid = assetUuidFromUrl(assetSrc);
+    if (!assetUuid || (existingUuids.has(assetUuid) && assetUuid !== reusedExistingUuid)) {
+      throw new Error("Library entry for " + filename + " did not have a verifiable new UUID or an explicitly identified reusable UUID.");
+    }
+    if (reusedExistingUuid) console.warn(`Reusing existing Flow library asset ${filename} -> UUID ${assetUuid}; inspect its thumbnail during dry-run before any execute.`);
+
+    await asset.click({ timeout: 2500 });
+    let attached = false;
+    const chipsAfterClick = await chips.count().catch(() => -1);
+    for (let i = 0; i < chipsAfterClick; i += 1) {
+      const src = await chips.nth(i).locator("img.chip-image").getAttribute("src").catch(() => null);
+      if (assetUuidFromUrl(src) === assetUuid) attached = true;
+    }
+    if (!attached) {
+      const addToPrompt = await exactVisibleLocator(page, selectors.ingredient_add_to_prompt, "Add to prompt button");
+      await addToPrompt.click({ timeout: 2500 });
+      try {
+        await page.waitForFunction(({ selector, uuid }) => Array.from(document.querySelectorAll(selector)).some(chip => {
+          const src = chip.querySelector("img.chip-image")?.getAttribute("src") || "";
+          return src.toLowerCase().includes(uuid);
+        }), { selector: selectors.ingredient_reference_items, uuid: assetUuid }, { timeout: 5000 });
+      } catch {
+        await closeIngredientsPicker(page, selectors);
+        throw new Error(`Asset ${filename} was selected but its UUID ${assetUuid} never appeared in an attached prompt chip. Stopping before prompt fill/Create.`);
+      }
+    }
+    await closeIngredientsPicker(page, selectors);
+    const attachedUuids = [];
+    const finalChipCount = await chips.count();
+    for (let i = 0; i < finalChipCount; i += 1) {
+      const src = await chips.nth(i).locator("img.chip-image").getAttribute("src").catch(() => null);
+      attachedUuids.push(assetUuidFromUrl(src));
+    }
+    if (attachedUuids.some(uuid => !uuid)) throw new Error(`One or more prompt chips lack a verifiable asset UUID after attaching ${filename}.`);
+    if (new Set(attachedUuids).size !== attachedUuids.length) throw new Error("Duplicate Ingredients chip UUID detected; refusing to continue.");
+    if (!attachedUuids.includes(assetUuid)) throw new Error(`Attached chip identity mismatch for ${filename}: expected asset UUID ${assetUuid}, observed ${attachedUuids.join(", ")}.`);
+    expectedUuids.push(assetUuid);
+    console.log(`Verified Ingredients asset ${filename} -> UUID ${assetUuid}`);
+  }
+
+  const finalCount = await chips.count();
+  if (finalCount !== referenceImages.length) throw new Error(`Ingredients chip count mismatch: expected ${referenceImages.length}, observed ${finalCount}. Stopping before prompt fill/Create.`);
+  await verifyAttachedReferenceUuids(page, selectors, expectedUuids);
+  console.log(`Verified exact asset identity and loaded thumbnails for ${finalCount} reference chip(s).`);
+  return expectedUuids;
+}
+
+async function uploadSceneReferences(page, selectors, referenceImages, prompt) {
+  let uploadError = null;
+  try {
+    return await uploadSceneReferencesUnsafe(page, selectors, referenceImages);
+  } catch (error) {
+    uploadError = error;
+    throw error;
+  } finally {
+    if (uploadError) {
+      const cleanup = [];
+      try {
+        await closeIngredientsPicker(page, selectors);
+        cleanup.push("picker closed and verified");
+      } catch (closeError) {
+        cleanup.push(`picker closure FAILED: ${closeError.message}`);
+      }
+      try {
+        // Attempt clearing even if backdrop closure verification failed; report either failure explicitly.
+        await clearPromptContentsVerified(prompt, selectors, 4000);
+        cleanup.push("prompt and Ingredients chips cleared and verified");
+      } catch (clearError) {
+        cleanup.push(`prompt/chip cleanup FAILED: ${clearError.message}`);
+      }
+      console.error(`Upload failure cleanup (finally): ${cleanup.join("; ")}`);
+    }
+  }
+}
+
 function requiredSelectorConfig(selectors) {
-  const required = ["prompt", "settings_trigger", "model", "model_option", "resolution", "ingredients_mode", "aspect_9_16", "duration", "create"];
+  const required = ["prompt", "settings_trigger", "model", "model_option", "resolution", "ingredients_mode", "ingredient_add_button", "ingredient_upload_button", "ingredient_library_item", "ingredient_add_to_prompt", "ingredient_reference_items", "clear_prompt", "aspect_9_16", "duration", "create"];
   for (const key of required) {
     if (typeof selectors[key] !== "string" || !selectors[key].trim()) {
       throw new Error(`Selector config must provide a non-empty CSS selector for '${key}'.`);
@@ -237,19 +466,40 @@ async function loadInputs(args) {
   if (!args.scene || !args.selectors || args.tab === null || !args.accountLabel || !args.expectedEmail) {
     throw new Error("--tab, --scene, --selectors, --account-label, and --expected-email are required outside --inspect.");
   }
-  const scene = JSON.parse(fs.readFileSync(args.scene, "utf8"));
+  const scenePath = path.resolve(args.scene);
+  const scene = JSON.parse(fs.readFileSync(scenePath, "utf8"));
   const selectors = JSON.parse(fs.readFileSync(args.selectors, "utf8"));
   if (typeof scene.scene_id !== "string" || !scene.scene_id.trim()) throw new Error("Scene JSON must contain a non-empty scene_id.");
   if (typeof scene.prompt !== "string" || !scene.prompt.trim()) throw new Error("Scene JSON must contain a non-empty prompt.");
+  if (typeof scene.character_description !== "string" || !scene.character_description.trim()) {
+    throw new Error("Scene JSON must contain a non-empty character_description in ASCII English.");
+  }
   if (!/^[\x00-\x7F]+$/.test(scene.prompt)) throw new Error("Prompt must be ASCII/English only; non-ASCII characters are blocked before touching Flow.");
+  if (!/^[\x00-\x7F]+$/.test(scene.character_description)) throw new Error("Character description must be ASCII/English only; non-ASCII characters are blocked before touching Flow.");
+  if (!Array.isArray(scene.reference_images) || scene.reference_images.length < 1 || scene.reference_images.length > 3) {
+    throw new Error("Scene JSON must provide reference_images as an array of 1 to 3 local file paths.");
+  }
+  const referenceImages = scene.reference_images.map((value, index) => {
+    if (typeof value !== "string" || !value.trim()) throw new Error(`reference_images[${index}] must be a non-empty local path.`);
+    const resolved = path.resolve(path.dirname(scenePath), value);
+    if (!fs.existsSync(resolved) || !fs.statSync(resolved).isFile()) throw new Error(`Reference image does not exist or is not a file: ${resolved}`);
+    if (![".png", ".jpg", ".jpeg", ".webp"].includes(path.extname(resolved).toLowerCase())) {
+      throw new Error(`Reference image must be PNG, JPG, JPEG, or WEBP: ${resolved}`);
+    }
+    return resolved;
+  });
+  if (new Set(referenceImages).size !== referenceImages.length) throw new Error("reference_images must contain distinct file paths.");
+  scene.character_description = scene.character_description.trim();
+  scene.scene_prompt = scene.prompt;
+  scene.prompt = `CHARACTER DESCRIPTION: ${scene.character_description}\n\nSCENE: ${scene.prompt.trim()}\n\nUse the attached reference images as the visual identity source for the person. Preserve the same facial features, hair, skin tone, and body proportions. Do not substitute a different person.`;
+  if (!/^[\x00-\x7F]+$/.test(scene.prompt)) throw new Error("Composed prompt must contain ASCII characters only.");
   if (scene.model !== "Omni 1.1 Flash" || scene.resolution !== "360p") {
     throw new Error("Phase 3 pilot is restricted to model='Omni 1.1 Flash' and resolution='360p'.");
   }
   if (scene.duration && scene.duration !== "8s") throw new Error("Phase 3 pilot is restricted to duration='8s'.");
   requiredSelectorConfig(selectors);
-  return { scene, selectors };
+  return { scene, selectors, referenceImages };
 }
-
 async function chooseFlowTab(browser, args) {
   const pages = await listPages(browser);
   if (args.tab >= pages.length) throw new Error(`--tab ${args.tab} is out of range; inspect the current list and select an existing tab.`);
@@ -260,6 +510,38 @@ async function chooseFlowTab(browser, args) {
     throw new Error(`Selected project ID ${JSON.stringify(projectId)} does not match --expected-project ${JSON.stringify(args.expectedProject)}.`);
   }
   return { ...chosen, projectId };
+}
+
+async function closeAccountMenuIfOpen(page, selectors, expectedEmail) {
+  // Escape first to dismiss transient menus. Only click the account button if a visible
+  // menu/dialog still looks like Google's account panel; do not toggle unrelated UI.
+  await page.keyboard.press("Escape").catch(() => {});
+  const panels = page.locator(selectors.account_menu || '[role="menu"]:visible, [role="dialog"]:visible');
+  const count = await panels.count().catch(() => 0);
+  let accountPanelVisible = false;
+  for (let i = 0; i < count; i += 1) {
+    const panel = panels.nth(i);
+    if (!(await panel.isVisible().catch(() => false))) continue;
+    const text = (await panel.innerText().catch(() => "")).toLowerCase();
+    if (text.includes("google account") || text.includes("manage your google account")
+      || (expectedEmail && text.includes(expectedEmail.toLowerCase()))) {
+      accountPanelVisible = true;
+      break;
+    }
+  }
+  if (accountPanelVisible) {
+    const accountSelector = selectors.account_button || '[role="button"][aria-label^="Google Account:"]';
+    const accountButton = await exactVisibleLocator(page, accountSelector, "Google account button for menu cleanup").catch(() => null);
+    if (accountButton) await accountButton.click({ timeout: 2000 }).catch(() => {});
+  }
+  try {
+    await page.waitForFunction(selector => !Array.from(document.querySelectorAll(selector)).some(node => {
+      const style = window.getComputedStyle(node);
+      return style.visibility !== "hidden" && style.display !== "none" && Number(style.opacity || 1) > 0;
+    }), selectors.account_menu || '[role="menu"], [role="dialog"]', { timeout: 3000 });
+  } catch {
+    // Do not mask the original preflight error if the UI has a non-account dialog.
+  }
 }
 
 async function verifyAccount(page, selectors, expectedEmail) {
@@ -282,8 +564,9 @@ async function readCreditCost(page) {
 }
 
 async function prepare(args, browser, rl) {
-  const { scene, selectors } = await loadInputs(args);
+  const { scene, selectors, referenceImages } = await loadInputs(args);
   const chosen = await chooseFlowTab(browser, args);
+  try {
   console.log(`Selected existing tab [${chosen.index}] context=${chosen.contextIndex}\nTitle: ${chosen.title}\nURL: ${chosen.url}\nProject ID: ${chosen.projectId || "legacy Flow route"}`);
   const account = await verifyAccount(chosen.page, selectors, args.expectedEmail);
   console.log(`Verified account email from page DOM: ${account.observedEmail}`);
@@ -364,17 +647,23 @@ async function prepare(args, browser, rl) {
     throw new Error("Flow tab URL changed unexpectedly while preparing. Stopping before Create.");
   }
 
+  // Attach and verify the exact per-scene reference images only after closing Settings.
+  // If Flow does not expose a unique add button, file input, and visible reference-item selector,
+  // stop before filling the prompt or enabling a possible Create action.
+  const attachedReferenceUuids = await uploadSceneReferences(chosen.page, selectors, referenceImages, prompt);
+
   // Only now modify the prompt. If fill fails, attempt to clear it before returning an error.
   const screenshot = path.resolve(args.screenshot || `flow-pilot-${scene.scene_id.replace(/[^a-zA-Z0-9_-]/g, "_")}-${args.execute ? "execute" : "dry-run"}.png`);
   try {
     await prompt.fill(scene.prompt, { timeout: 2500 });
     await waitForCreateEnabled(chosen.page, create, 5000);
+    await verifyAttachedReferenceUuids(chosen.page, selectors, attachedReferenceUuids);
     fs.mkdirSync(path.dirname(screenshot), { recursive: true });
     await chosen.page.screenshot({ path: screenshot, fullPage: false, timeout: 4000 });
   } catch (error) {
     let cleanupStatus;
     try {
-      await clearPromptVerified(prompt, 2500);
+      await clearPromptVerified(prompt, selectors, 2500);
       cleanupStatus = "Prompt was cleared and verified empty.";
     } catch (cleanupError) {
       cleanupStatus = `CRITICAL: prompt could not be verified empty (${cleanupError.message}). Inspect Flow and clear it manually before continuing.`;
@@ -382,7 +671,7 @@ async function prepare(args, browser, rl) {
     throw new Error(`Dry-run preparation failed after prompt fill: ${error.message}. ${cleanupStatus}`);
   }
   const createEnabled = await create.isEnabled().catch(() => false);
-  console.log("\nREADY-TO-CREATE CHECK");
+  console.log("\nREADY-TO-CREATE CHECK (reference images were attached and verified before this check)");
   console.log(JSON.stringify({
     mode: args.execute ? "execute-awaiting-final-confirmation" : "dry-run",
     account_email_verified: account.observedEmail,
@@ -392,6 +681,9 @@ async function prepare(args, browser, rl) {
     project_id: chosen.projectId,
     url: chosen.page.url(),
     scene_id: scene.scene_id,
+    reference_image_count: referenceImages.length,
+    reference_image_names: referenceImages.map(file => path.basename(file)),
+    character_description: scene.character_description,
     model: scene.model,
     resolution: scene.resolution,
     ingredients_mode: "Ingredients",
@@ -406,7 +698,7 @@ async function prepare(args, browser, rl) {
   if (!args.execute) {
     if (args.clearAfterDryRun) {
       try {
-        await clearPromptVerified(prompt, 2500);
+        await clearPromptVerified(prompt, selectors, 2500);
       } catch (error) {
         throw new Error(`Dry-run finished but prompt could not be verified empty: ${error.message}. Clear it manually before continuing.`);
       }
@@ -420,7 +712,7 @@ async function prepare(args, browser, rl) {
   await askExact(rl, `This action may consume credit. Type CREATE ONE VIDEO FOR ${scene.scene_id} to submit exactly once: `,
     `CREATE ONE VIDEO FOR ${scene.scene_id}`);
   appendEvent(args.log, {
-    event: "submission_intent", scene_id: scene.scene_id, model: scene.model, resolution: scene.resolution,
+    event: "submission_intent", scene_id: scene.scene_id, reference_image_count: referenceImages.length, reference_image_names: referenceImages.map(file => path.basename(file)), character_description: scene.character_description, model: scene.model, resolution: scene.resolution,
     prompt: scene.prompt, account_email: account.observedEmail, project_id: chosen.projectId,
     estimated_credit_cost: creditCost, url: chosen.page.url(), status: "submission_in_progress",
   });
@@ -428,6 +720,8 @@ async function prepare(args, browser, rl) {
     if (chosen.page.url() !== originalUrl || !isFlowUrl(chosen.page.url())) throw new Error("Flow tab changed after confirmation; refusing to click Create.");
     const currentAccount = await verifyAccount(chosen.page, selectors, args.expectedEmail);
     if (currentAccount.observedEmail !== account.observedEmail) throw new Error("Google account changed after confirmation; refusing to click Create.");
+    // Recheck every chip UUID and loaded thumbnail after the operator's final confirmation.
+    await verifyAttachedReferenceUuids(chosen.page, selectors, attachedReferenceUuids);
     const finalButton = await exactVisibleLocator(chosen.page, selectors.create, "Create button");
     if (!(await finalButton.isEnabled())) throw new Error("Create button became disabled; refusing to click.");
     await finalButton.click({ timeout: 2500 });
@@ -439,6 +733,10 @@ async function prepare(args, browser, rl) {
     appendEvent(args.log, { event: "submission_outcome_unknown", scene_id: scene.scene_id,
       status: "unknown_do_not_retry", error: String(error) });
     console.error("Submission outcome is unknown. Do NOT click again or retry automatically. Inspect Flow manually.");
+    throw error;
+  }
+  } catch (error) {
+    await closeAccountMenuIfOpen(chosen.page, selectors, args.expectedEmail);
     throw error;
   }
 }
