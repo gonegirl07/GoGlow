@@ -33,7 +33,7 @@ class FlowPilotContractTests(unittest.TestCase):
         self.assertIn("account_email_verified", self.script)
 
     def test_waits_for_settings_model_selector_after_opening_settings(self):
-        self.assertIn('locator(selectors.model).waitFor({ state: "visible", timeout: 5000 })', self.script)
+        self.assertIn('chosen.page.locator(selectors.model).waitFor({ state: "visible", timeout: 5000 })', self.script)
         self.assertIn("Model selector did not become visible within 5000ms", self.script)
 
     def test_waits_for_model_option_after_opening_model_menu(self):
