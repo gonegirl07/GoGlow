@@ -137,6 +137,27 @@ class FlowPilotContractTests(unittest.TestCase):
         self.assertIn('--ledger-project-id', self.script)
         self.assertIn('ledgerProjectId || scene.goglow_project_id || projectId', self.script)
 
+    def test_wait_credit_reader_opens_and_closes_configured_account_panel(self):
+        self.assertIn("async function readCreditBalance(page, selectors)", self.script)
+        self.assertIn("selectors.account_panel_open", self.script)
+        self.assertIn("selectors.account_panel_close", self.script)
+        self.assertIn("span.credits-count", (Path(__file__).parents[1] / "examples" / "flow-pilot-selectors.example.json").read_text(encoding="utf-8"))
+
+    def test_wait_returns_to_project_before_credit_polling_and_recovers_on_error(self):
+        self.assertIn('chosen.page.goBack({ waitUntil: "domcontentloaded", timeout: 15000 })', self.script)
+        self.assertIn('chosen.page.goBack({ waitUntil: "domcontentloaded", timeout: 10000 })', self.script)
+        self.assertLess(self.script.index("chosen.page.goBack({ waitUntil: \"domcontentloaded\", timeout: 15000 })"), self.script.index("const balanceDeadline"))
+
+    def test_download_filename_is_keyed_by_scene_and_attempt(self):
+        self.assertIn('const safeScene = String(sceneId || "scene")', self.script)
+        self.assertIn('const safeAttempt = String(attemptId || "attempt")', self.script)
+        self.assertIn('${safeScene}__${safeAttempt}${extension}', self.script)
+        self.assertIn("Refusing to overwrite an existing scene/attempt download", self.script)
+
+    def test_virtualized_flow_grid_uses_new_stable_keys_not_tile_count(self):
+        self.assertIn("const newIndexes = keys.map((key, index)", self.script)
+        self.assertNotIn("count > beforeCount", self.script)
+
     def test_confirmation_reader_buffers_piped_stdin(self):
         self.assertIn("function createConfirmationReader()", self.script)
         self.assertIn("const queued = [];", self.script)
