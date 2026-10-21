@@ -454,5 +454,12 @@ class FlowPilotContractTests(unittest.TestCase):
         self.assertIn("if (args._stopVariants) break", self.script)
         self.assertIn("later variants will NOT be submitted with the same prompt", self.script)
 
+    def test_face_reference_prompt_uses_plain_character_wording(self):
+        self.assertIn("The first attached image shows the character.", self.script)
+        self.assertIn("Keep the same character as the reference image:", self.script)
+        self.assertNotIn("primary face identity anchor", self.script)
+        self.assertNotIn("overall likeness", self.script)
+        self.assertNotIn("Preserve the selected face identity", self.script)
+
 if __name__ == "__main__":
     unittest.main()
