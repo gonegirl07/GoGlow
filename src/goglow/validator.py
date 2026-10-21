@@ -1,5 +1,6 @@
 """Validation for GoGlow project JSON."""
 from __future__ import annotations
+import math
 from typing import Any
 
 SUPPORTED_ACTIVITIES = {"cycling", "yoga", "dance", "fashion", "other"}
@@ -18,7 +19,7 @@ def validate_project(project: Any) -> list[str]:
     if isinstance(target, bool) or not isinstance(target, int) or target < 31:
         errors.append("target_duration_seconds must be an integer >= 31.")
     activity = project.get("activity")
-    if activity not in SUPPORTED_ACTIVITIES:
+    if not isinstance(activity, str) or activity not in SUPPORTED_ACTIVITIES:
         errors.append(f"activity must be one of: {', '.join(sorted(SUPPORTED_ACTIVITIES))}.")
     scenes = project.get("scenes")
     if not isinstance(scenes, list) or not scenes:
@@ -42,8 +43,8 @@ def validate_project(project: Any) -> list[str]:
         else:
             seen_ids.add(scene_id)
         duration = scene.get("duration_seconds")
-        if isinstance(duration, bool) or not isinstance(duration, (int, float)) or duration <= 0:
-            errors.append(f"{prefix}.duration_seconds must be a positive number.")
+        if isinstance(duration, bool) or not isinstance(duration, (int, float)) or not math.isfinite(duration) or duration <= 0:
+            errors.append(f"{prefix}.duration_seconds must be a finite positive number.")
         else:
             total += duration
         for field in ("start_state", "primary_action", "end_state", "prompt"):
@@ -54,9 +55,9 @@ def validate_project(project: Any) -> list[str]:
         if not isinstance(checklist, list) or not checklist or any(not isinstance(item, str) or not item.strip() for item in checklist):
             errors.append(f"{prefix}.qc_checklist must be a non-empty array of non-empty strings.")
         status = scene.get("status", "PLANNED")
-        if status not in VALID_STATUSES:
+        if not isinstance(status, str) or status not in VALID_STATUSES:
             errors.append(f"{prefix}.status is not a recognized production state.")
-        if status in {"GENERATED", "QC_REVIEW", "APPROVED"} and not scene.get("media_uri"):
+        elif status in {"GENERATED", "QC_REVIEW", "APPROVED"} and not scene.get("media_uri"):
             errors.append(f"{prefix} status {status} requires media_uri; a prompt alone is not generated media.")
     if isinstance(target, int) and not isinstance(target, bool) and abs(total - target) > 0.001:
         errors.append(f"Scene durations total {total:g}s but target_duration_seconds is {target}s.")
