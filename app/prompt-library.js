@@ -31,9 +31,9 @@
       valid: matches.length === 0,
       matches,
       message: matches.length
-        ? "Prompt must be English only; Vietnamese/accented characters detected at position(s): " +
+        ? (fieldLabel ? String(fieldLabel) + ": " : "") + "Flow prompt must contain ASCII characters only; non-ASCII character(s) detected at position(s): " +
           matches.slice(0, 8).map(item => (item.index + 1)).join(", ") +
-          (matches.length > 8 ? " …" : "")
+          (matches.length > 8 ? " ..." : "")
         : ""
     };
   }
