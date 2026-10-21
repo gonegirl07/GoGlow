@@ -231,6 +231,11 @@
         ],
         "additionalProperties": false
       }
+    },
+    "scene_count": {
+      "type": "integer",
+      "minimum": 1,
+      "maximum": 20
     }
   }
 }
