@@ -32,9 +32,14 @@ class PlannerTests(unittest.TestCase):
         self.assertEqual([s["duration_seconds"] for s in project["scenes"]], [10, 9, 9, 9])
         self.assertEqual(validate_project(project), [])
 
-    def test_rejects_short_duration(self):
+    def test_accepts_minimum_duration_of_30_seconds(self):
+        project = create_project("yoga", target_duration_seconds=30, scene_count=3)
+        self.assertEqual(sum(s["duration_seconds"] for s in project["scenes"]), 30)
+        self.assertEqual(validate_project(project), [])
+
+    def test_rejects_duration_below_30_seconds(self):
         with self.assertRaises(ValueError):
-            create_project("yoga", target_duration_seconds=30)
+            create_project("yoga", target_duration_seconds=29)
 
     def test_rejects_unknown_activity(self):
         with self.assertRaises(ValueError):
