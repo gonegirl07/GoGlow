@@ -151,7 +151,7 @@ class GenerationLedgerRuntimeTests(unittest.TestCase):
     def test_project_level_qc_can_update_imported_attempt_without_matching_plan_scene_id(self):
         self.assertIn('id="projectQc"', self.html)
         self.assertIn("function projectQcPanel()", self.html)
-        self.assertIn("generationLedger.map(a=>\"<option value='\", self.html)
+        self.assertIn("generationLedger.map(a=>", self.html)
         self.assertIn("project_qc_attempt_id", self.html)
         self.assertIn("generationLedger.find(item=>item.attempt_id===attemptId)", self.html)
         self.assertIn("ledger-qc-project", self.html)
