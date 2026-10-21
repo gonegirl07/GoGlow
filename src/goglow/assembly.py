@@ -175,6 +175,12 @@ def assemble_reel(
                 ffmpeg, "-hide_banner", "-loglevel", "error", "-y",
                 "-ss", f'{clip["trim_start_seconds"]:.6f}',
                 "-i", str(clip["source_path"]),
+            ]
+            if not clip["source_info"]["has_audio"]:
+                command += [
+                    "-f", "lavfi", "-i", "anullsrc=channel_layout=stereo:sample_rate=48000",
+                ]
+            command += [
                 "-t", f"{duration:.6f}",
                 "-map", "0:v:0",
                 "-vf", (
@@ -185,14 +191,13 @@ def assemble_reel(
                 "-c:v", "libx264", "-preset", "medium", "-crf", "20",
             ]
             if clip["source_info"]["has_audio"]:
-                command += ["-map", "0:a:0?", "-af", "aresample=async=1:first_pts=0"]
+                command += ["-map", "0:a:0", "-af", "aresample=async=1:first_pts=0"]
             else:
-                command += [
-                    "-f", "lavfi", "-i", f"anullsrc=channel_layout=stereo:sample_rate=48000",
-                    "-map", "1:a:0", "-shortest",
-                ]
-            command += ["-c:a", "aac", "-b:a", "192k", "-ar", "48000", "-ac", "2",
-                        "-movflags", "+faststart", str(target)]
+                command += ["-map", "1:a:0", "-shortest"]
+            command += [
+                "-c:a", "aac", "-b:a", "192k", "-ar", "48000", "-ac", "2",
+                "-movflags", "+faststart", str(target),
+            ]
             result = _run(command)
             if result.returncode or not target.is_file() or target.stat().st_size == 0:
                 detail = result.stderr.strip() or "FFmpeg did not produce a non-empty file."
