@@ -42,3 +42,10 @@ document does not restate it, so the two cannot drift apart.
 
 ## Duration
 Scene durations must sum to the target runtime. This is a planning constraint, not a guarantee that one model request supports the full runtime.
+
+
+## Google Flow scene settings
+
+Each scene can record the selected Flow clip length (8 or 10 seconds), separate pose and face/identity references for the Ingredients workflow, and separate 360p test and 720p final media URIs. Choose the relevant URI when performing QC so the saved report remains bound to the exact clip under review. Subtitle/breathing cues, movement-benefit copy, music direction, hard-cut preference, watermark review, pre-publication approval, and AI-label requirements are planning records only; GoGlow does not operate Flow or perform video editing.
+
+Credit estimates shown in the UI (about 6 for 360p/8s and 15 for 720p/10s) are user-provided estimates, not verified provider pricing. Confirm actual cost and model availability in Flow.
