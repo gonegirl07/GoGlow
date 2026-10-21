@@ -233,9 +233,6 @@ class FlowPilotContractTests(unittest.TestCase):
         self.assertNotIn('character_id', self.script)
 
 
-if __name__ == "__main__":
-    unittest.main()
-
     def test_face_reference_is_selected_from_this_jobs_reference_images(self):
         self.assertIn("const requestedFaceReference = scene.face_reference_id;", self.script)
         self.assertIn("face_reference_id must match one of the image paths in this job's reference_images.", self.script)
@@ -259,3 +256,6 @@ if __name__ == "__main__":
         self.assertIn("faceReferenceImage = referenceImages[0];", self.script)
         self.assertIn("scene.face_reference_id = scene.reference_images[0];", self.script)
 
+
+if __name__ == "__main__":
+    unittest.main()
