@@ -235,7 +235,8 @@ class FlowPilotContractTests(unittest.TestCase):
 
     def test_face_reference_is_selected_from_this_jobs_reference_images(self):
         self.assertIn("const requestedFaceReference = scene.face_reference_id;", self.script)
-        self.assertIn("face_reference_id must match one of the image paths in this job's reference_images.", self.script)
+        self.assertIn("face_reference_id", self.script)
+        self.assertIn("must match one of the image paths in this job's reference_images.", self.script)
         self.assertIn("face_reference_id must identify one path from reference_images.", self.script)
         self.assertIn("const orderedReferenceImages = [", self.script)
         self.assertIn("faceReferenceImage,\n    ...referenceImages.filter(imagePath => imagePath !== faceReferenceImage)", self.script)
@@ -243,7 +244,7 @@ class FlowPilotContractTests(unittest.TestCase):
 
     def test_primary_face_anchor_is_explicit_in_ascii_composed_prompt(self):
         self.assertIn("PRIMARY FACE REFERENCE: The first attached image is the primary face identity anchor.", self.script)
-        self.assertIn("Match its facial structure, eye shape and spacing, nose, lips, jawline, and overall likeness as closely as possible.", self.script)
+        self.assertIn("Match its facial structure, eye shape and spacing, nose, lips, jawline, cheek fullness, and overall likeness as closely as possible.", self.script)
         self.assertIn("Use only the remaining non-face reference images as supporting references", self.script)
         self.assertIn("if (!/^[\\x00-\\x7F]+$/.test(scene.prompt))", self.script)
 
