@@ -15,13 +15,14 @@ const FLOW_HOST = "flow.google.com";
 const PROJECT_PATH = /^\/project\/([0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12})\/?$/i;
 
 function argsOf(argv) {
-  const args = { inspect: false, execute: false, dryRun: false, tab: null, scene: null, selectors: null,
+  const args = { inspect: false, execute: false, dryRun: false, clearAfterDryRun: true, tab: null, scene: null, selectors: null,
     accountLabel: null, expectedEmail: null, expectedProject: null, log: "flow-pilot.jsonl", screenshot: null };
   for (let i = 0; i < argv.length; i += 1) {
     const arg = argv[i];
     if (arg === "--inspect") args.inspect = true;
     else if (arg === "--execute") args.execute = true;
     else if (arg === "--dry-run") args.dryRun = true;
+    else if (arg === "--keep-prompt-after-dry-run") args.clearAfterDryRun = false;
     else if (arg === "--tab") args.tab = Number(argv[++i]);
     else if (arg === "--scene") args.scene = argv[++i];
     else if (arg === "--selectors") args.selectors = argv[++i];
@@ -149,7 +150,9 @@ async function chooseModel(page, selectors, model) {
   const trigger = await exactVisibleLocator(page, selectors.model, "model selector");
   await trigger.click({ timeout: 2500 });
   const option = await exactVisibleLocator(page, selectors.model_option, "model option");
-  const text = (await option.innerText()).trim();
+  const rawText = (await option.innerText()).trim();
+  // Flow prepends a material icon ligature (e.g. volume_up); compare the final visible text line exactly.
+  const text = rawText.split(/\r?\n/).map(line => line.trim()).filter(Boolean).at(-1) || "";
   if (text !== model) throw new Error(`Model option text mismatch: expected ${JSON.stringify(model)}, got ${JSON.stringify(text)}.`);
   await option.click({ timeout: 2500 });
   const selected = await exactVisibleLocator(page, selectors.model, "model selector after selection");
@@ -196,7 +199,7 @@ async function chooseFlowTab(browser, args) {
 }
 
 async function verifyAccount(page, selectors, expectedEmail) {
-  const selector = selectors.account_button || 'button[aria-label^="Google Account:"]';
+  const selector = selectors.account_button || '[role="button"][aria-label^="Google Account:"]';
   const account = await exactVisibleLocator(page, selector, "Google account button");
   const label = await account.getAttribute("aria-label") || "";
   const match = label.match(/\(([^()\s]+@[^()\s]+)\)\s*$/);
@@ -254,22 +257,37 @@ async function prepare(args, browser, rl) {
   const ingredients = await exactVisibleLocator(chosen.page, selectors.ingredients_mode, "Ingredients mode radio");
   const aspect = await exactVisibleLocator(chosen.page, selectors.aspect_9_16, "9:16 aspect radio");
   const duration = await exactVisibleLocator(chosen.page, selectors.duration, "8s duration radio");
-  const creditCost = await readCreditCost(chosen.page);
   const radioChecks = await Promise.all([resolution, ingredients, aspect, duration].map(locator => locator.getAttribute("role")));
   if (radioChecks.some(role => role !== "radio")) throw new Error("Resolution, Ingredients, 9:16 and duration selectors must all match role=radio controls.");
 
-  // Set and verify each setting while the settings panel is open. Never fill the prompt until
-  // all settings and the Create/prompt controls have been successfully located.
-  await chooseModel(chosen.page, selectors, scene.model);
-  await checkedRadio(chosen.page, selectors.resolution, scene.resolution, "resolution");
-  await checkedRadio(chosen.page, selectors.ingredients_mode, "Ingredients", "Ingredients mode");
-  await checkedRadio(chosen.page, selectors.aspect_9_16, "9:16", "aspect ratio");
-  await checkedRadio(chosen.page, selectors.duration, scene.duration || "8s", "duration");
+  // Any failure after opening settings must leave Flow in a clean state for the next run.
+  let creditCost = null;
+  try {
+    // Set and verify each setting while the settings panel is open. Never fill the prompt until
+    // all settings and the Create/prompt controls have been successfully located.
+    await chooseModel(chosen.page, selectors, scene.model);
+    await checkedRadio(chosen.page, selectors.resolution, scene.resolution, "resolution");
+    await checkedRadio(chosen.page, selectors.ingredients_mode, "Ingredients", "Ingredients mode");
+    await checkedRadio(chosen.page, selectors.aspect_9_16, "9:16", "aspect ratio");
+    await checkedRadio(chosen.page, selectors.duration, scene.duration || "8s", "duration");
 
-  // The Flow overlay may intercept pointer events while open. The tester observed that
-  // clicking the trigger again reliably closes it; use a short explicit timeout.
-  const settingsAgain = await exactVisibleLocator(chosen.page, selectors.settings_trigger, "settings trigger to close panel");
-  await settingsAgain.click({ timeout: 2500 });
+    // Read cost only after all settings are applied, so it reflects the final configuration.
+    creditCost = await readCreditCost(chosen.page);
+
+    const settingsAgain = await exactVisibleLocator(chosen.page, selectors.settings_trigger, "settings trigger to close panel");
+    await settingsAgain.click({ timeout: 2500 });
+  } catch (error) {
+    // First close a nested model menu, then toggle Settings closed if it remains open.
+    await chosen.page.keyboard.press("Escape").catch(() => {});
+    const modelStillVisible = await chosen.page.locator(selectors.model).count().then(async count =>
+      count === 1 && await chosen.page.locator(selectors.model).isVisible().catch(() => false)).catch(() => false);
+    const overlayStillVisible = await chosen.page.locator(".cdk-overlay-backdrop:visible").count().catch(() => 0) > 0;
+    if (modelStillVisible || overlayStillVisible) {
+      await chosen.page.locator(selectors.settings_trigger).click({ timeout: 1500 }).catch(() => {});
+      await chosen.page.keyboard.press("Escape").catch(() => {});
+    }
+    throw new Error(`Settings preparation failed; attempted to close Flow overlays before stopping: ${error.message}`);
+  }
   if (chosen.page.url() !== originalUrl || !isFlowUrl(chosen.page.url())) {
     throw new Error("Flow tab URL changed unexpectedly while preparing. Stopping before Create.");
   }
@@ -309,6 +327,12 @@ async function prepare(args, browser, rl) {
   }, null, 2));
 
   if (!args.execute) {
+    if (args.clearAfterDryRun) {
+      await prompt.fill("", { timeout: 2500 }).catch(error => {
+        throw new Error(`Dry-run finished but prompt could not be cleared: ${error.message}. Clear it manually before continuing.`);
+      });
+      console.log("Dry-run prompt cleared.");
+    }
     console.log("\nDRY RUN COMPLETE: stopped before clicking Create. No generation was submitted.");
     return;
   }
