@@ -125,9 +125,12 @@ def assemble_reel(
     if output_path == manifest_path:
         raise AssemblyError("Output path must not overwrite the input manifest.")
 
+    clips = _load_manifest(manifest_path)
+    sidecar = output_path.with_suffix(".manifest.json")
+    if sidecar.exists() and not force:
+        raise AssemblyError(f"Assembly manifest already exists: '{sidecar}'. Use --force to replace it.")
     ffmpeg = _require_tool("ffmpeg")
     ffprobe = _require_tool("ffprobe")
-    clips = _load_manifest(manifest_path)
     validated: list[dict[str, Any]] = []
     for clip in clips:
         source = Path(clip["path"]).expanduser()
@@ -162,8 +165,9 @@ def assemble_reel(
             f"{min_duration_seconds:.3f}s. Add approved clips or adjust trims."
         )
     output_path.parent.mkdir(parents=True, exist_ok=True)
-    if output_path.exists() and force:
-        output_path.unlink()
+    if force:
+        output_path.unlink(missing_ok=True)
+        sidecar.unlink(missing_ok=True)
 
     with tempfile.TemporaryDirectory(prefix="goglow-assemble-") as temporary:
         work = Path(temporary)
@@ -255,6 +259,5 @@ def assemble_reel(
             for item in validated
         ],
     }
-    sidecar = output_path.with_suffix(".manifest.json")
     sidecar.write_text(json.dumps(result_manifest, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
     return result_manifest
