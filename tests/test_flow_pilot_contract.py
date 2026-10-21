@@ -423,5 +423,30 @@ class FlowPilotContractTests(unittest.TestCase):
     def test_watermark_status_is_recorded_for_human_qc(self):
         self.assertIn('watermark_status: scene.watermark_status || "not_reviewed"', self.script)
 
+    def test_flow_prominent_people_policy_failure_text_is_recognized(self):
+        matcher = self.script.split("function isGenerationFailureText(value)", 1)[1].split(
+            "async function activateVideosTab", 1
+        )[0]
+        self.assertIn("might violate", matcher)
+        self.assertIn("violate(?:s|d)? (?:our )?policies", matcher)
+        self.assertIn("prominent people", matcher)
+        self.assertIn("you will be refunded", matcher)
+        self.assertIn(r"/\\bfailed\\b/i.test", self.script)
+
+    def test_failure_detection_checks_new_tiles_without_false_positive_from_old_grid_tiles(self):
+        wait_fn = self.script.split("async function waitForGenerationAndDownload", 1)[1].split(
+            "function createConfirmationReader()", 1
+        )[0]
+        self.assertIn("const failedTile = newItems.find", wait_fn)
+        self.assertIn("if (!/\\\\/(?:edit|video)\\\\//i.test(page.url())) return;", wait_fn)
+        self.assertIn("failedTile.text || failedTile.state", wait_fn)
+
+    def test_failed_variant_stops_batch_and_records_refund_pending_when_provider_says_refund(self):
+        self.assertIn("refundPending", self.script)
+        self.assertIn('"refunded_pending"', self.script)
+        self.assertIn("args._stopVariants = true", self.script)
+        self.assertIn("if (args._stopVariants) break", self.script)
+        self.assertIn("later variants will NOT be submitted with the same prompt", self.script)
+
 if __name__ == "__main__":
     unittest.main()
