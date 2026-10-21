@@ -1,7 +1,13 @@
 {
-  "_comment": "Template only. Replace every selector after running --inspect on the actual Flow UI. Do not use unverified selectors with --execute.",
-  "prompt": "REPLACE_AFTER_INSPECT",
-  "model": "REPLACE_AFTER_INSPECT",
-  "resolution": "REPLACE_AFTER_INSPECT",
-  "create": "REPLACE_AFTER_INSPECT"
+  "_comment": "Template only. Replace selectors using --inspect on the actual Flow UI. Keep this local file untracked.",
+  "account_button": "button[aria-label^=\"Google Account:\"]",
+  "prompt": "div[role=\"textbox\"][aria-label=\"What do you want to create?\"]",
+  "settings_trigger": "button[aria-label=\"Settings trigger\"]",
+  "model": "button[aria-label=\"Select model family\"]",
+  "model_option": "button[role=\"menuitem\"]:has-text(\"Omni 1.1 Flash\")",
+  "resolution": "button[role=\"radio\"]:has-text(\"360p\")",
+  "ingredients_mode": "button[role=\"radio\"]:has-text(\"Ingredients\")",
+  "aspect_9_16": "button[role=\"radio\"]:has-text(\"9:16\")",
+  "duration": "button[role=\"radio\"]:has-text(\"8s\")",
+  "create": "button[aria-label=\"Start generation\"]"
 }
