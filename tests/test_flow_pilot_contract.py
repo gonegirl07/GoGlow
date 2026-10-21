@@ -280,7 +280,7 @@ class FlowPilotContractTests(unittest.TestCase):
             "async function main()", 1
         )[0]
         self.assertIn(
-            "const { scene, selectors, referenceImages, faceReferenceImage } = await loadInputs(args);",
+            "const { scene, selectors, referenceImages, faceReferenceImage, faceReferenceImages } = await loadInputs(args);",
             prepare,
         )
         self.assertIn("face_reference_image: path.basename(faceReferenceImage)", prepare)
