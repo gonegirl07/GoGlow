@@ -119,12 +119,14 @@ function waitForSelectors(selectors, args) {
 
 async function readCreditBalance(page, selectors) {
   const selector = typeof selectors === "string" ? selectors : selectors.credit_balance;
+  const parseBalance = text => {
+    const match = String(text || "").replace(/,/g, "").match(/(?:^|\D)(\d+)(?:\D|$)/);
+    return match ? Number(match[1]) : null;
+  };
   const readVisible = async () => {
     try {
       const locator = await exactVisibleLocator(page, selector, "credit balance");
-      const text = (await locator.innerText({ timeout: 2500 }).catch(() => "")).replace(/,/g, "");
-      const match = text.match(/(?:^|\D)(\d+)(?:\D|$)/);
-      return match ? Number(match[1]) : null;
+      return parseBalance(await locator.innerText({ timeout: 2500 }).catch(() => ""));
     } catch { return null; }
   };
   let balance = await readVisible();
@@ -132,18 +134,24 @@ async function readCreditBalance(page, selectors) {
   if (!selectors.account_panel_open || !selectors.account_panel_close) return null;
   const opener = await exactVisibleLocator(page, selectors.account_panel_open, "account panel open button").catch(() => null);
   if (!opener) return null;
-  await opener.click({ timeout: 2500 }).catch(() => {});
-  try {
-    const locator = await exactVisibleLocator(page, selector, "credit balance after opening account panel", 3000);
-    const text = (await locator.innerText({ timeout: 2500 }).catch(() => "")).replace(/,/g, "");
-    const match = text.match(/(?:^|\D)(\d+)(?:\D|$)/);
-    balance = match ? Number(match[1]) : null;
-  } finally {
-    const closer = await exactVisibleLocator(page, selectors.account_panel_close, "account panel close button").catch(() => null);
-    if (closer) {
-      await closer.click({ timeout: 2500 }).catch(() => {});
-      await page.locator(selectors.account_panel_close).waitFor({ state: "hidden", timeout: 2500 }).catch(() => {});
+  // Wait for asynchronous credit rendering; retry opening the account panel once.
+  for (let attempt = 0; attempt < 2; attempt += 1) {
+    await opener.click({ timeout: 2500 }).catch(() => {});
+    try {
+      await page.locator(selector).first().waitFor({ state: "visible", timeout: 8000 });
+      const locator = await exactVisibleLocator(page, selector, "credit balance after opening account panel", 2500);
+      balance = parseBalance(await locator.innerText({ timeout: 2500 }).catch(() => ""));
+      if (balance !== null) break;
+    } catch {
+      if (attempt === 1) break;
+      await page.keyboard.press("Escape").catch(() => {});
+      await page.waitForTimeout(300).catch(() => {});
     }
+  }
+  const closer = await exactVisibleLocator(page, selectors.account_panel_close, "account panel close button").catch(() => null);
+  if (closer) {
+    await closer.click({ timeout: 2500 }).catch(() => {});
+    await page.locator(selectors.account_panel_close).waitFor({ state: "hidden", timeout: 2500 }).catch(() => {});
   }
   return balance;
 }
@@ -198,15 +206,22 @@ function makeGenerationLedgerRecord({ scene, projectId, ledgerProjectId, prompt,
     provider: "google_flow",
     started_on: startedOn || null,
     finished_on: timestamp,
-    configuration: {
-      model_label: scene.model || "Omni 1.1 Flash",
-      resolution: scene.resolution || "360p",
-      duration_seconds: Number.parseInt(scene.duration || "8s", 10) || 8,
-      aspect_ratio: "9:16",
-      pose_reference_id: null,
-      face_reference_id: null,
-      other_reference_ids: (scene.reference_images || []).map(item => path.basename(item)),
-    },
+    configuration: (() => {
+      const referenceImages = scene.reference_images || [];
+      const selectedFaceRefs = scene.face_reference_ids || [scene.face_reference_id || referenceImages[0]].filter(Boolean);
+      const selectedPaths = new Set(selectedFaceRefs.map(item => path.resolve(String(item))));
+      return {
+        model_label: scene.model || "Omni 1.1 Flash",
+        resolution: scene.resolution || "360p",
+        duration_seconds: Number.parseInt(scene.duration || "8s", 10) || 8,
+        aspect_ratio: "9:16",
+        pose_reference_id: null,
+        face_reference_id: selectedFaceRefs[0] ? path.basename(selectedFaceRefs[0]) : null,
+        face_reference_ids: selectedFaceRefs.map(item => path.basename(item)),
+        face_description_mode: scene.face_description_mode || "include",
+        other_reference_ids: referenceImages.filter(item => !selectedPaths.has(path.resolve(String(item)))).map(item => path.basename(item)),
+      };
+    })(),
     prompt: { text: prompt, sha256: createHash("sha256").update(prompt, "utf8").digest("hex"), template_version: null },
     rule_ids: [],
     result: {
@@ -355,6 +370,11 @@ async function closeIngredientsPicker(page, selectors) {
 
 async function clearPromptContentsVerified(prompt, selectors, timeout = 2500) {
   const page = prompt.page();
+  const initialHandle = await prompt.elementHandle();
+  if (!initialHandle) throw new Error("Prompt textbox disappeared before empty-state verification.");
+  const initialValue = await initialHandle.evaluate(element => ("value" in element) ? element.value : (element.innerText || element.textContent || ""));
+  const initialChipCount = await page.locator(selectors.ingredient_reference_items).count().catch(() => -1);
+  if (String(initialValue).trim() === "" && initialChipCount === 0) return;
   const clearButton = await exactVisibleLocator(page, selectors.clear_prompt, "Clear prompt button");
   await clearButton.click({ timeout: 2500 });
   const handle = await prompt.elementHandle();
@@ -666,15 +686,19 @@ async function loadInputs(args) {
   if (typeof scene.scene_id !== "string" || !scene.scene_id.trim()) throw new Error("Scene JSON must contain a non-empty scene_id.");
   if (typeof scene.prompt !== "string" || !scene.prompt.trim()) throw new Error("Scene JSON must contain a non-empty prompt.");
   const faceDescriptionMode = scene.face_description_mode ?? "include";
-  if (!["include", "reference_only"].includes(faceDescriptionMode)) {
-    throw new Error("face_description_mode must be 'include' or 'reference_only'.");
+  if (!["include", "hybrid", "reference_only"].includes(faceDescriptionMode)) {
+    throw new Error("face_description_mode must be 'include', 'hybrid', or 'reference_only'.");
   }
   if (typeof scene.character_description !== "string") {
-    throw new Error("Scene JSON must contain character_description as a string (it may be empty when face_description_mode is reference_only).");
+    throw new Error("Scene JSON must contain character_description as a string (it may be empty when face_description_mode is 'reference_only').");
   }
-  if (faceDescriptionMode === "include" && !scene.character_description.trim()) {
+  if (faceDescriptionMode !== "reference_only" && !scene.character_description.trim()) {
     throw new Error("Scene JSON must contain a non-empty character_description in ASCII English unless face_description_mode is 'reference_only'.");
   }
+  if (scene.expression !== undefined && (typeof scene.expression !== "string" || !scene.expression.trim())) {
+    throw new Error("expression must be a non-empty ASCII English string when provided.");
+  }
+  if (scene.expression && !/^[\x00-\x7F]+$/.test(scene.expression)) throw new Error("Expression must be ASCII/English only; non-ASCII characters are blocked before touching Flow.");
   if (!/^[\x00-\x7F]+$/.test(scene.prompt)) throw new Error("Prompt must be ASCII/English only; non-ASCII characters are blocked before touching Flow.");
   if (scene.character_description && !/^[\x00-\x7F]+$/.test(scene.character_description)) throw new Error("Character description must be ASCII/English only; non-ASCII characters are blocked before touching Flow.");
   if (!Array.isArray(scene.reference_images) || scene.reference_images.length < 1 || scene.reference_images.length > 3) {
@@ -741,8 +765,13 @@ async function loadInputs(args) {
     : "The first attached reference image is the primary face identity anchor. Match its facial structure, eye shape and spacing, nose, lips, cheeks, jawline, and overall likeness as closely as possible.";
   const characterDescriptionSection = faceDescriptionMode === "reference_only" || !scene.character_description
     ? "Use the attached reference images for all appearance details; do not invent or reinterpret facial features."
-    : `CHARACTER DESCRIPTION (supporting traits only; do not override the face reference): ${scene.character_description}`;
-  scene.prompt = `PRIMARY FACE REFERENCE: ${faceAnchorInstructions} Keep the same person throughout the clip.\n\n${characterDescriptionSection}\n\nSCENE: ${scene.prompt.trim()}\n\nUse remaining attached images only as supporting references for clothing, body, or context. Preserve the selected face identity, hair, and skin tone. Do not substitute a different person.`;
+    : faceDescriptionMode === "hybrid"
+      ? \`HYBRID FACE DESCRIPTION (brief matching traits only; reference images remain authoritative): \${scene.character_description}. Match the reference images and do not add conflicting traits.\`
+      : \`CHARACTER DESCRIPTION (supporting traits only; do not override the face reference): \${scene.character_description}\`;
+  const expressionSection = scene.expression
+    ? \`\\n\\nEXPRESSION AND EYE STATE (follow throughout the entire shot): \${scene.expression}. Keep this expression and eye state consistent from the first frame to the last; this instruction takes priority over breathing or other subtle motion.\`
+    : "";
+  scene.prompt = \`PRIMARY FACE REFERENCE: \${faceAnchorInstructions} Keep the same person throughout the clip.\\n\\n\${characterDescriptionSection}\\n\\nSCENE: \${scene.prompt.trim()}\${expressionSection}\\n\\nUse remaining attached images only as supporting references for clothing, body, or context. Preserve the selected face identity, hair, and skin tone. Do not substitute a different person.\`;
   if (!/^[\x00-\x7F]+$/.test(scene.prompt)) throw new Error("Composed prompt must contain ASCII characters only.");
   if (scene.model !== "Omni 1.1 Flash" || scene.resolution !== "360p") {
     throw new Error("Phase 3 pilot is restricted to model='Omni 1.1 Flash' and resolution='360p'.");
