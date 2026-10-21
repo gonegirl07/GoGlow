@@ -131,20 +131,35 @@ async function waitForCreateEnabled(page, create, timeout = 5000) {
   }
 }
 
-async function clearPromptVerified(prompt, timeout = 2000) {
-  await prompt.fill("", { timeout });
+async function closeIngredientsPicker(page, selectors) {
+  const backdropSelector = selectors.ingredient_picker_backdrop || ".cdk-overlay-backdrop-showing";
+  const backdrop = page.locator(backdropSelector);
+  const count = await backdrop.count().catch(() => 0);
+  if (count > 0 && await backdrop.last().isVisible().catch(() => false)) {
+    await backdrop.last().click({ timeout: 1500, force: true }).catch(() => {});
+    await page.waitForTimeout(150).catch(() => {});
+  }
+}
+
+async function clearPromptVerified(prompt, selectors, timeout = 2500) {
+  const page = prompt.page();
+  await closeIngredientsPicker(page, selectors);
+  const clearButton = await exactVisibleLocator(page, selectors.clear_prompt, "Clear prompt button");
+  await clearButton.click({ timeout: 2500 });
   const handle = await prompt.elementHandle();
   if (!handle) throw new Error("Prompt textbox disappeared before empty-state verification.");
   try {
-    await prompt.page().waitForFunction(element => {
+    await page.waitForFunction(element => {
       const value = ("value" in element) ? element.value : (element.innerText || element.textContent || "");
       return String(value).trim() === "";
     }, handle, { timeout });
   } catch {
-    throw new Error("Prompt clear was attempted but textbox did not become empty within the verification timeout.");
+    throw new Error("Clear prompt was clicked but textbox did not become empty within the verification timeout.");
   }
-  const remaining = await handle.evaluate(element => ("value" in element) ? element.value : (element.innerText || element.textContent || ""));
-  if (String(remaining).trim() !== "") throw new Error("Prompt clear verification failed; textbox still contains text.");
+  const remaining = await handle.evaluate(element => ("value" in element) ? element.value : (element.innerText || element.textContent || "");
+  if (String(remaining).trim() !== "") throw new Error("Clear prompt verification failed; textbox still contains text.");
+  const chipCount = await page.locator(selectors.ingredient_reference_items).count().catch(() => -1);
+  if (chipCount !== 0) throw new Error(`Clear prompt removed text but left ${chipCount} Ingredients chip(s).`);
 }
 
 async function listPages(browser) {
@@ -225,36 +240,92 @@ async function chooseModel(page, selectors, model) {
 }
 
 
-async function uploadSceneReferences(page, selectors, referenceImages) {
-  const beforeCount = await page.locator(selectors.ingredient_reference_items).count().catch(() => -1);
-  if (beforeCount !== 0) throw new Error(`Ingredients already contains ${beforeCount} reference item(s); clear the panel manually and rerun so this run can prove which images it attached.`);
-  const addButton = await exactVisibleLocator(page, selectors.ingredient_add_button, "add reference button");
+function assetUuidFromUrl(value) {
+  const match = String(value || "").match(/[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}/i);
+  return match?.[0]?.toLowerCase() || null;
+}
+
+async function openIngredientsPicker(page, selectors) {
+  const addButton = await exactVisibleLocator(page, selectors.ingredient_add_button, "add ingredients button");
   await addButton.click({ timeout: 2500 });
-  const fileInput = page.locator(selectors.ingredient_file_input);
-  const inputCount = await fileInput.count().catch(() => 0);
-  if (inputCount !== 1) throw new Error(`Ingredient file-input selector matched ${inputCount} elements; expected exactly one. No reference upload attempted.`);
-  const inputType = await fileInput.getAttribute("type").catch(() => null);
-  if (inputType !== "file") throw new Error("ingredient_file_input must select exactly one input[type=file].");
-  await fileInput.setInputFiles(referenceImages, { timeout: 5000 });
-  const selectedFiles = await fileInput.evaluate(element => Array.from(element.files || []).map(file => file.name));
-  if (selectedFiles.length !== referenceImages.length) {
-    throw new Error(`Browser file input accepted ${selectedFiles.length} reference files; expected ${referenceImages.length}.`);
+  await page.locator(selectors.ingredient_library_item).first().waitFor({ state: "visible", timeout: 5000 }).catch(() => {});
+}
+
+async function uploadSceneReferences(page, selectors, referenceImages) {
+  const chips = page.locator(selectors.ingredient_reference_items);
+  const beforeCount = await chips.count().catch(() => -1);
+  if (beforeCount !== 0) throw new Error(`Ingredients already contains ${beforeCount} reference chip(s); clear the prompt manually and rerun so this run can prove which images it attached.`);
+
+  for (const imagePath of referenceImages) {
+    const filename = path.basename(imagePath);
+    await openIngredientsPicker(page, selectors);
+    const uploadButton = await exactVisibleLocator(page, selectors.ingredient_upload_button, "Upload media button");
+    const chooserPromise = page.waitForEvent("filechooser", { timeout: 5000 });
+    await uploadButton.click({ timeout: 2500 });
+    const chooser = await chooserPromise;
+    await chooser.setFiles(imagePath);
+    const picker = page.locator(selectors.ingredient_library_item);
+    const matchingAssets = picker.filter({ hasText: filename });
+    try {
+      await matchingAssets.first().waitFor({ state: "visible", timeout: 15000 });
+    } catch {
+      await closeIngredientsPicker(page, selectors);
+      throw new Error(`Uploaded asset ${filename} did not appear in the project library within 15000ms. Stopping before prompt fill/Create.`);
+    }
+    const matches = await matchingAssets.count();
+    if (matches !== 1) {
+      await closeIngredientsPicker(page, selectors);
+      throw new Error(`Project library contains ${matches} visible asset entries matching ${filename}; expected exactly one. Rename/deduplicate the asset and rerun.`);
+    }
+    const asset = matchingAssets.first();
+    const assetImg = asset.locator("img").first();
+    const assetSrc = await assetImg.getAttribute("src").catch(() => null);
+    const assetUuid = assetUuidFromUrl(assetSrc);
+    if (!assetUuid) {
+      await closeIngredientsPicker(page, selectors);
+      throw new Error(`Could not extract a UUID from the library thumbnail for ${filename}; refusing to attach an unverified asset.`);
+    }
+
+    await asset.click({ timeout: 2500 });
+    let attached = false;
+    const chipsAfterClick = await chips.count().catch(() => -1);
+    for (let i = 0; i < chipsAfterClick; i += 1) {
+      const src = await chips.nth(i).locator("img.chip-image").getAttribute("src").catch(() => null);
+      if (assetUuidFromUrl(src) === assetUuid) attached = true;
+    }
+    if (!attached) {
+      const addToPrompt = await exactVisibleLocator(page, selectors.ingredient_add_to_prompt, "Add to prompt button");
+      await addToPrompt.click({ timeout: 2500 });
+      try {
+        await page.waitForFunction(({ selector, uuid }) => Array.from(document.querySelectorAll(selector)).some(chip => {
+          const src = chip.querySelector("img.chip-image")?.getAttribute("src") || "";
+          return src.toLowerCase().includes(uuid);
+        }), { selector: selectors.ingredient_reference_items, uuid: assetUuid }, { timeout: 5000 });
+      } catch {
+        await closeIngredientsPicker(page, selectors);
+        throw new Error(`Asset ${filename} was selected but its UUID ${assetUuid} never appeared in an attached prompt chip. Stopping before prompt fill/Create.`);
+      }
+    }
+    await closeIngredientsPicker(page, selectors);
+    const attachedUuids = [];
+    const finalChipCount = await chips.count();
+    for (let i = 0; i < finalChipCount; i += 1) {
+      const src = await chips.nth(i).locator("img.chip-image").getAttribute("src").catch(() => null);
+      attachedUuids.push(assetUuidFromUrl(src));
+    }
+    if (attachedUuids.some(uuid => !uuid)) throw new Error(`One or more prompt chips lack a verifiable asset UUID after attaching ${filename}.`);
+    if (new Set(attachedUuids).size !== attachedUuids.length) throw new Error("Duplicate Ingredients chip UUID detected; refusing to continue.");
+    if (!attachedUuids.includes(assetUuid)) throw new Error(`Attached chip identity mismatch for ${filename}: expected asset UUID ${assetUuid}, observed ${attachedUuids.join(", ")}.`);
+    console.log(`Verified Ingredients asset ${filename} -> UUID ${assetUuid}`);
   }
-  const expectedCount = referenceImages.length;
-  try {
-    await page.waitForFunction(({ selector, expected }) => document.querySelectorAll(selector).length === expected,
-      { selector: selectors.ingredient_reference_items, expected: expectedCount }, { timeout: 8000 });
-  } catch {
-    const observed = await page.locator(selectors.ingredient_reference_items).count().catch(() => -1);
-    throw new Error(`Reference upload could not be verified in the Flow Ingredients UI: expected exactly ${expectedCount} attached reference items, observed ${observed}. Stopping before prompt fill/Create.`);
-  }
-  const observed = await page.locator(selectors.ingredient_reference_items).count();
-  if (observed !== expectedCount) throw new Error(`Ingredients reference count mismatch: expected ${expectedCount}, observed ${observed}.`);
-  console.log(`Verified ${observed} scene reference image(s) attached in Ingredients: ${selectedFiles.join(", ")}`);
+
+  const finalCount = await chips.count();
+  if (finalCount !== referenceImages.length) throw new Error(`Ingredients chip count mismatch: expected ${referenceImages.length}, observed ${finalCount}. Stopping before prompt fill/Create.`);
+  console.log(`Verified exact asset identity for ${finalCount} reference chip(s).`);
 }
 
 function requiredSelectorConfig(selectors) {
-  const required = ["prompt", "settings_trigger", "model", "model_option", "resolution", "ingredients_mode", "ingredient_add_button", "ingredient_file_input", "ingredient_reference_items", "aspect_9_16", "duration", "create"];
+  const required = ["prompt", "settings_trigger", "model", "model_option", "resolution", "ingredients_mode", "ingredient_add_button", "ingredient_upload_button", "ingredient_library_item", "ingredient_add_to_prompt", "ingredient_reference_items", "clear_prompt", "aspect_9_16", "duration", "create"];
   for (const key of required) {
     if (typeof selectors[key] !== "string" || !selectors[key].trim()) {
       throw new Error(`Selector config must provide a non-empty CSS selector for '${key}'.`);
@@ -429,7 +500,7 @@ async function prepare(args, browser, rl) {
   } catch (error) {
     let cleanupStatus;
     try {
-      await clearPromptVerified(prompt, 2500);
+      await clearPromptVerified(prompt, selectors, 2500);
       cleanupStatus = "Prompt was cleared and verified empty.";
     } catch (cleanupError) {
       cleanupStatus = `CRITICAL: prompt could not be verified empty (${cleanupError.message}). Inspect Flow and clear it manually before continuing.`;
