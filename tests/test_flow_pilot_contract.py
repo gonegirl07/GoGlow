@@ -28,9 +28,28 @@ class FlowPilotContractTests(unittest.TestCase):
 
     def test_verifies_dom_email_not_just_operator_label(self):
         self.assertIn("--expected-email", self.script)
-        self.assertIn('button[aria-label^="Google Account:"]', self.script)
+        self.assertIn('[role="button"][aria-label^="Google Account:"]', self.script)
         self.assertIn("Google account mismatch", self.script)
         self.assertIn("account_email_verified", self.script)
+
+    def test_model_option_comparison_strips_icon_line_but_remains_exact(self):
+        self.assertIn("rawText.split(/\\\\r?\\\\n/)", self.script)
+        self.assertIn("if (text !== model)", self.script)
+
+    def test_settings_failures_attempt_overlay_cleanup(self):
+        self.assertIn("Settings preparation failed; attempted to close Flow overlays", self.script)
+        self.assertIn('keyboard.press("Escape")', self.script)
+        self.assertIn('settings_trigger).click({ timeout: 1500 })', self.script)
+
+    def test_dry_run_clears_prompt_by_default(self):
+        self.assertIn("clearAfterDryRun: true", self.script)
+        self.assertIn("if (args.clearAfterDryRun)", self.script)
+        self.assertIn("Dry-run prompt cleared.", self.script)
+        self.assertIn("--keep-prompt-after-dry-run", self.script)
+
+    def test_credit_cost_is_read_after_settings_are_applied(self):
+        self.assertIn("creditCost = await readCreditCost(chosen.page)", self.script)
+        self.assertGreater(self.script.index('await checkedRadio(chosen.page, selectors.duration'), self.script.index("creditCost = await readCreditCost(chosen.page)"))
 
     def test_non_ascii_prompt_is_rejected_before_browser_mutation(self):
         self.assertIn(r"/^[\x00-\x7F]+$/", self.script)
