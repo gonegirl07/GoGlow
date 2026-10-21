@@ -100,6 +100,37 @@ class FlowPilotContractTests(unittest.TestCase):
         self.assertIn('await closeAccountMenuIfOpen(chosen.page, selectors, args.expectedEmail);', self.script)
         self.assertIn('Google account button for menu cleanup', self.script)
 
+    def test_wait_mode_requires_execute_and_bounded_timeout(self):
+        self.assertIn('if (args.waitForResult && !args.execute)', self.script)
+        self.assertIn('--wait-timeout-ms must be an integer from 30000 to 1800000', self.script)
+        self.assertIn('--wait requires a non-empty', self.script)
+        self.assertIn('["credit_balance", "generated_video_items", "download_media_button", "download_360p_original_button"]', self.script)
+
+    def test_wait_tracks_new_tile_by_stable_identity_and_never_retries(self):
+        self.assertIn('generatedItemKeys(page, selectors.generated_video_items)', self.script)
+        self.assertIn('newIndexes.length === 1', self.script)
+        self.assertIn('refusing to guess which clip to download', self.script)
+        self.assertIn('status: "unknown_do_not_retry"', self.script)
+        self.assertIn('Do NOT retry automatically', self.script)
+
+    def test_wait_downloads_original_360p_and_hashes_saved_file(self):
+        self.assertIn('page.waitForEvent("download", { timeout: 30000 })', self.script)
+        self.assertIn('selectors.download_360p_original_button', self.script)
+        self.assertIn('await download.saveAs(target)', self.script)
+        self.assertIn('createHash("sha256").update(fs.readFileSync(downloadedFile))', self.script)
+        self.assertIn('if (!stat.size) throw new Error("Downloaded media file is empty.")', self.script)
+
+    def test_wait_appends_schema_compatible_credit_ledger(self):
+        self.assertIn('function appendGenerationLedger(pathname, record)', self.script)
+        self.assertIn('attempt_id: attemptId', self.script)
+        self.assertIn('actual_amount: actualAmount', self.script)
+        self.assertIn('before_balance: beforeBalance', self.script)
+        self.assertIn('after_balance: afterBalance', self.script)
+        self.assertIn('evidence_source: beforeBalance !== null || afterBalance !== null ? "user_observation" : "unknown"', self.script)
+        self.assertIn('event: "generation_ledger_recorded"', self.script)
+        self.assertIn('status: "unknown_do_not_retry"', self.script)
+        self.assertIn('resultStatus, mediaUri, downloadedFile, downloadError, timeoutError, attemptNumber', self.script)
+
     def test_confirmation_reader_buffers_piped_stdin(self):
         self.assertIn("function createConfirmationReader()", self.script)
         self.assertIn("const queued = [];", self.script)
