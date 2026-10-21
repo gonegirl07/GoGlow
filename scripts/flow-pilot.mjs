@@ -298,30 +298,24 @@ async function uploadSceneReferencesUnsafe(page, selectors, referenceImages) {
     await chooser.setFiles(imagePath);
     try {
       await page.waitForFunction(({ selector, filename, oldUuids }) => {
-        return Array.from(document.querySelectorAll(selector)).some(asset => {
-          const text = (asset.innerText || asset.textContent || "").trim();
-          const src = asset.querySelector("img")?.getAttribute("src") || "";
-          const match = src.match(/[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}/i);
-          return text.includes(filename) && match && !oldUuids.includes(match[0].toLowerCase());
-        });
+        // Flow inserts the newest upload at the top. Wait for the first same-name entry's
+        // thumbnail UUID rather than accepting a slower-loading old duplicate lower in the list.
+        const newestMatch = Array.from(document.querySelectorAll(selector)).find(asset =>
+          (asset.innerText || asset.textContent || "").includes(filename));
+        if (!newestMatch) return false;
+        const src = newestMatch.querySelector("img")?.getAttribute("src") || "";
+        const match = src.match(/[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}/i);
+        return Boolean(match && !oldUuids.includes(match[0].toLowerCase()));
       }, { selector: selectors.ingredient_library_item, filename, oldUuids: Array.from(existingUuids) }, { timeout: ASSET_READY_TIMEOUT_MS });
     } catch {
-      throw new Error(`New upload ${filename} did not appear with a new asset UUID within ${ASSET_READY_TIMEOUT_MS}ms. The asset may still be processing; stopping before prompt fill/Create.`);
+      throw new Error("Newest upload " + filename + " did not expose a new asset UUID within " + ASSET_READY_TIMEOUT_MS + "ms. The asset may still be processing; stopping before prompt fill/Create.");
     }
-    const newMatches = [];
-    const totalMatches = await matchingAssets.count();
-    for (let i = 0; i < totalMatches; i += 1) {
-      const candidate = matchingAssets.nth(i);
-      const src = await candidate.locator("img").first().getAttribute("src").catch(() => null);
-      const uuid = assetUuidFromUrl(src);
-      if (uuid && !existingUuids.has(uuid)) newMatches.push({ candidate, uuid });
+    const asset = matchingAssets.first();
+    const assetSrc = await asset.locator("img").first().getAttribute("src").catch(() => null);
+    const assetUuid = assetUuidFromUrl(assetSrc);
+    if (!assetUuid || existingUuids.has(assetUuid)) {
+      throw new Error("Newest library entry for " + filename + " did not have a verifiable new UUID after waiting; refusing to select an older duplicate.");
     }
-    if (newMatches.length !== 1) {
-      await closeIngredientsPicker(page, selectors);
-      throw new Error(`Expected exactly one newly uploaded library asset named ${filename}, found ${newMatches.length}. Stopping before prompt fill/Create.`);
-    }
-    const asset = newMatches[0].candidate;
-    const assetUuid = newMatches[0].uuid;
 
     await asset.click({ timeout: 2500 });
     let attached = false;
