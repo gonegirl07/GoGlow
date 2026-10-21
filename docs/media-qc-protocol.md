@@ -83,11 +83,28 @@ A QC report for one scene uses:
 
 | QC report result | Project workflow action |
 |---|---|
-| `PASS`, no unresolved P0/P1 defects (Section 6) | Eligible for human sign-off to `APPROVED`. QC PASS alone is not approval to publish. |
+| `PASS`, no unresolved BLOCKER/MAJOR defects (Section 6) | Eligible for human sign-off to `APPROVED`. QC PASS alone is not approval to publish. |
 | `REVIEW` | Stay in `QC_REVIEW`. Resolve the open checks before deciding. |
-| `FAIL` with a P1 defect | Move to `NEEDS_REVISION`, write a narrow revision prompt, regenerate that scene only. |
-| `FAIL` with a P0 defect | Reject that clip. Do not assemble it. Regenerate or re-plan; do not patch the report to pass. |
+| `FAIL` with a MAJOR defect | Move to `NEEDS_REVISION`, write a narrow revision prompt, regenerate that scene only. |
+| `FAIL` with a BLOCKER defect | Reject that clip. Do not assemble it. Regenerate or re-plan; do not patch the report to pass. |
 | `NOT_REVIEWED` | Stay in `GENERATED` / `QC_REVIEW` with no decision. Do not assemble, do not approve. |
+
+**Canonical mapping note:** this Section 2.3 is the canonical mapping
+from QC report results to project workflow states for media review.
+`docs/workflow.md` links to this section rather than restating the
+mapping, so the two documents cannot drift apart. If the mapping
+changes, change it here first and update the link target in
+`docs/workflow.md` if the section number moves.
+
+**Severity naming note (GPT review, 2026-10-21):** media defect
+levels in this document are `BLOCKER` / `MAJOR` / `MINOR` / `NOTE`.
+They are deliberately different from the QA severity scale in
+`docs/qa-acceptance.md`, which uses different labels for
+software/product risks (for example, a QA finding about a false
+generation/QC claim). Do not compare a media `BLOCKER` with a QA
+severity label, and do not force one meaning across the two domains.
+Earlier drafts of this protocol used P-style labels for media defects;
+those labels were renamed after GPT review to remove the collision.
 
 **Wardrobe note for the integration lead:** the QC schema has no
 `wardrobe` category. In this protocol, wardrobe checks are recorded as
@@ -98,9 +115,34 @@ that is a schema decision for the integration lead.
 
 ## 3. Before you press play: review preparation
 
-For each scene, gather these items **before** watching. If any required
-item is missing, mark the review `BLOCKED` in the tracker and
-`NOT_REVIEWED` in the report, and list what is missing.
+For each scene, gather these items **before** watching. Missing items
+do not all have the same consequence — distinguish the two cases below
+(GPT review clarification, 2026-10-21). Do not treat every missing
+metadata field as proof that the clip itself is unreviewable.
+
+### 3.0 Two different kinds of missing item
+
+- **(a) Clip access missing — review is blocked.** If you cannot open,
+  play, or otherwise access the clip itself (no `media_uri`, a link you
+  cannot open, a corrupt or truncated file, or an account/format
+  barrier), mark the review `BLOCKED` in the tracker and
+  `NOT_REVIEWED` in the report, name the blocker, and stop. No other
+  category can be judged without the clip.
+- **(b) Evidence for a specific check missing — that check is open,
+  the clip is not automatically unreviewable.** If the clip plays but,
+  for example, the exact prompt used, a reference role, or the model
+  label as displayed is not recorded, you can still judge identity,
+  anatomy, action, and other observable categories from the clip.
+  Record the affected check as `NOT_CHECKED`, the overall report as
+  `REVIEW` (not `NOT_REVIEWED`, and not `PASS` — see Section 6, rule 3),
+  and list exactly which evidence is missing and which check it blocks.
+  Only if the missing evidence makes every critical category
+  unjudgeable does the report stay without a decision, and even then
+  the reason must be written per category, not assumed from one
+  missing field.
+
+Gather the items below before watching, and record any gap using
+case (a) or case (b) above.
 
 1. **Scene plan:** `scene_id`, planned duration, start state, one primary
    action, end state, motion direction / speed / timing, body mechanics,
@@ -171,7 +213,7 @@ and a `media_uri` is not a usable defect report.
 ### Step 5 — Decide, using Section 6 only
 
 Do not upgrade a decision because a clip “mostly works” or because
-regeneration is expensive. If a P0 or P1 defect is present, the decision
+regeneration is expensive. If a BLOCKER or MAJOR defect is present, the decision
 follows the defect, not the effort already spent.
 
 ### Step 6 — Write a narrow revision prompt, if revising
@@ -196,7 +238,7 @@ Watch the approved or candidate clips in order, back to back:
 
 A sequence can only be marked ready for assembly when every scene in
 it has a `PASS` report (or a documented, human-signed exception for a
-P2-only note) and the sequence check above is recorded.
+MINOR-only note) and the sequence check above is recorded.
 
 ## 5. Per-clip checklist
 
@@ -361,27 +403,32 @@ and call it complete.
 
 | Level | Meaning | Examples |
 |---|---|---|
-| P0 — Blocking | The clip cannot be used in this sequence. | Wrong person, major anatomy break, travel in the wrong direction, clip truncated or corrupt. |
-| P1 — Must revise | The clip is recognisably the scene, but a planned, observable requirement fails. | Hand leaves handlebar for a sustained period, wardrobe changes mid-clip, continuity break with the previous scene, actual duration far from planned duration. |
-| P2 — Minor | A small, local defect that does not break identity, action, or continuity. | Brief background warp away from the subject, minor lighting flicker that does not change the scene, a small prop detail that is off but not persistent. |
-| P3 — Note only | Cosmetic, or a suggestion for a future take. It does not block this take. | Slightly different background detail that still matches the plan, a framing preference for the next project. |
+| BLOCKER — Blocking | The clip cannot be used in this sequence. | Wrong person, major anatomy break, travel in the wrong direction, clip truncated or corrupt. |
+| MAJOR — Must revise | The clip is recognisably the scene, but a planned, observable requirement fails. | Hand leaves handlebar for a sustained period, wardrobe changes mid-clip, continuity break with the previous scene, actual duration far from planned duration. |
+| MINOR — Minor | A small, local defect that does not break identity, action, or continuity. | Brief background warp away from the subject, minor lighting flicker that does not change the scene, a small prop detail that is off but not persistent. |
+| NOTE — Note only | Cosmetic, or a suggestion for a future take. It does not block this take. | Slightly different background detail that still matches the plan, a framing preference for the next project. |
 
 Severity is about impact on this sequence, not about how hard the
 defect was to notice. When in doubt, choose the higher severity and
 say why.
 
+These levels describe a media defect only. They are not the QA
+severity scale in `docs/qa-acceptance.md`, which describes
+software/product risks. A media `BLOCKER` and a QA severity label
+must not be compared, averaged, or treated as the same priority.
+
 ### 6.2 Decision rules — apply in order
 
-1. **Any P0 defect → `FAIL`, reject the clip.** Do not assemble it.
+1. **Any BLOCKER defect → `FAIL`, reject the clip.** Do not assemble it.
    Record the defect, then re-plan or regenerate.
-2. **Any unresolved P1 defect → `FAIL`, revise.** Write a narrow
+2. **Any unresolved MAJOR defect → `FAIL`, revise.** Write a narrow
    revision prompt (Section 4, Step 6) and regenerate that scene only.
 3. **Any critical category `NOT_CHECKED` → `REVIEW`, not `PASS`.**
    Critical categories are identity, anatomy, action, and continuity
    for the scene's primary action. You cannot pass what you did not check.
-4. **Only P2 defects, all critical categories checked → `PASS` with
-   notes.** List the P2 notes in the report so the assembler sees them.
-5. **Only P3 notes → `PASS` with notes.**
+4. **Only MINOR defects, all critical categories checked → `PASS` with
+   notes.** List the MINOR notes in the report so the assembler sees them.
+5. **Only NOTE notes → `PASS` with notes.**
 6. **No media, no access, or no report → `NOT_REVIEWED`.** No decision,
    no assembly, no approval.
 7. **A revised clip is a new review.** The new `media_uri` gets a new
@@ -429,7 +476,7 @@ Every defect record needs:
 - `observed` — what was seen, in plain language, with no inferred cause;
 - `expected` — what the plan / prompt required at that moment;
 - `category` — one of the QC schema categories;
-- `severity` — P0 / P1 / P2 / P3, with a one-line reason;
+- `severity` — BLOCKER / MAJOR / MINOR / NOTE, with a one-line reason;
 - `evidence` — file name, frame description, or screenshot reference,
   if available; write `none supplied` if there is none, do not invent one;
 - `decision` — `REJECT`, `REVISE`, or `NOTE`;
@@ -454,7 +501,7 @@ do not bundle unrelated defects into one revision prompt.
 - Observed: <what was seen>
 - Expected: <what the plan required>
 - Category: <identity | anatomy | action | physics | continuity | camera | artifacts | duration | format | other>
-- Severity: <P0 | P1 | P2 | P3> — <one-line reason>
+- Severity: <BLOCKER | MAJOR | MINOR | NOTE> — <one-line reason>
 - Decision: <REJECT | REVISE | NOTE>
 - Revision prompt (if REVISE): <narrow prompt, preserving what passed>
 - Reviewed by: <name>
@@ -529,23 +576,40 @@ for this document.
 
 ## 9. For the integration lead (GPT review notes)
 
-This document is intentionally limited to its assigned scope:
+This document is intentionally limited to its assigned scope, with
+one minimal exception requested by GPT review (see below):
 
-- **Changed:** only `docs/media-qc-protocol.md` is proposed in this
-  contribution. No application code, no shared schema, and no other
-  document was edited by the media-QC contributor.
+- **Changed in the original contribution:** only
+  `docs/media-qc-protocol.md`. No application code and no shared
+  schema were edited.
+- **Changed in the GPT-review revision:** the same protocol file,
+  plus a minimal pointer in `docs/workflow.md` that designates
+  Section 2.3 of this protocol as the canonical QC-to-workflow
+  mapping and links to it. That pointer does not change the workflow
+  state machine itself. It is included only because GPT review
+  required a workflow source of truth, and the integrator may revert
+  that pointer and own the workflow edit instead if preferred.
+  No other file was edited.
 - **Not tested as code:** there is no code change to test, and no clip
   was reviewed, so no test command is claimed for this document.
   A reviewer can check it by reading it against `AGENTS.md`,
   `README.md`, `docs/architecture.md`, `docs/workflow.md`,
   `specs/qc-report.schema.json`, and `docs/multi-agent-work-plan.md`.
-- **Open questions for the integrator, not decisions made here:**
-  - Should the QC schema gain a dedicated `wardrobe` category, or
-    keep the `identity` / `other` mapping in Section 2.3?
-  - Should the `PASS` → `APPROVED` mapping in Section 2.3 be recorded
-    in `docs/workflow.md` as well, or stay only in this protocol?
-  - Is the P0–P3 severity scale acceptable alongside Grok's
-    QA severity scale, or should the project adopt one shared scale?
+- **GPT review items, and how they were reconciled (2026-10-21):**
+  - *Severity collision with Grok QA:* resolved by renaming media
+    levels from P-style labels to `BLOCKER` / `MAJOR` / `MINOR` /
+    `NOTE` throughout this document, including the template and
+    example, and stating explicitly that they are not comparable
+    to the QA severity scale in `docs/qa-acceptance.md`.
+  - *Workflow source of truth:* resolved by designating Section 2.3
+    as canonical (above) and adding the link in `docs/workflow.md`.
+  - *Missing evidence vs clip access:* resolved in Section 3.0 —
+    missing clip access gives `NOT_REVIEWED` / `BLOCKED`, while
+    missing evidence for a specific check gives `NOT_CHECKED` /
+    `REVIEW` for that check, not an automatic `NOT_REVIEWED`.
+  - *Wardrobe category:* GPT review recommended keeping the schema
+    unchanged for M1, so the `identity` / `other` mapping with a
+    `wardrobe:` note prefix in Section 2.3 is kept.
 - **Manual steps that remain:** generation in the Flow UI, human
   clip review using this protocol, sequence review, and human
   sign-off before assembly or publishing.
