@@ -110,18 +110,42 @@ function appendEvent(logPath, event) {
 
 function waitForSelectors(selectors, args) {
   if (!args.waitForResult) return;
-  for (const key of ["credit_balance", "generated_video_items", "download_media_button", "download_360p_original_button"]) {
+  for (const key of ["credit_balance", "generated_video_items", "download_media_button", "download_360p_original_button", "account_panel_open", "account_panel_close"]) {
     if (typeof selectors[key] !== "string" || !selectors[key].trim()) {
       throw new Error(`--wait requires a non-empty '${key}' selector in the selector config.`);
     }
   }
 }
 
-async function readCreditBalance(page, selector) {
-  const locator = await exactVisibleLocator(page, selector, "credit balance");
-  const text = (await locator.innerText({ timeout: 2500 }).catch(() => "")).replace(/,/g, "");
-  const match = text.match(/(?:^|\D)(\d+)(?:\D|$)/);
-  return match ? Number(match[1]) : null;
+async function readCreditBalance(page, selectors) {
+  const selector = typeof selectors === "string" ? selectors : selectors.credit_balance;
+  const readVisible = async () => {
+    try {
+      const locator = await exactVisibleLocator(page, selector, "credit balance");
+      const text = (await locator.innerText({ timeout: 2500 }).catch(() => "")).replace(/,/g, "");
+      const match = text.match(/(?:^|\D)(\d+)(?:\D|$)/);
+      return match ? Number(match[1]) : null;
+    } catch { return null; }
+  };
+  let balance = await readVisible();
+  if (balance !== null || typeof selectors === "string") return balance;
+  if (!selectors.account_panel_open || !selectors.account_panel_close) return null;
+  const opener = await exactVisibleLocator(page, selectors.account_panel_open, "account panel open button").catch(() => null);
+  if (!opener) return null;
+  await opener.click({ timeout: 2500 }).catch(() => {});
+  try {
+    const locator = await exactVisibleLocator(page, selector, "credit balance after opening account panel", 3000);
+    const text = (await locator.innerText({ timeout: 2500 }).catch(() => "")).replace(/,/g, "");
+    const match = text.match(/(?:^|\D)(\d+)(?:\D|$)/);
+    balance = match ? Number(match[1]) : null;
+  } finally {
+    const closer = await exactVisibleLocator(page, selectors.account_panel_close, "account panel close button").catch(() => null);
+    if (closer) {
+      await closer.click({ timeout: 2500 }).catch(() => {});
+      await page.locator(selectors.account_panel_close).waitFor({ state: "hidden", timeout: 2500 }).catch(() => {});
+    }
+  }
+  return balance;
 }
 
 async function generatedItemKeys(page, selector) {
@@ -157,13 +181,13 @@ function nextLedgerAttemptNumber(pathname, sceneId) {
   return max + 1;
 }
 
-function makeGenerationLedgerRecord({ scene, projectId, ledgerProjectId, prompt, estimatedCost, beforeBalance, afterBalance, resultStatus, mediaUri, downloadedFile, downloadError, timeoutError, attemptNumber, startedOn }) {
+function makeGenerationLedgerRecord({ scene, projectId, ledgerProjectId, prompt, estimatedCost, beforeBalance, afterBalance, resultStatus, mediaUri, downloadedFile, downloadError, timeoutError, attemptNumber, attemptId, startedOn }) {
   const observedDelta = beforeBalance !== null && afterBalance !== null && beforeBalance >= afterBalance
     ? beforeBalance - afterBalance : null;
   const actualAmount = observedDelta !== null && observedDelta > 0 ? observedDelta : null;
   const chargeStatus = actualAmount !== null ? "charged" : "unknown";
   const timestamp = new Date().toISOString();
-  const attemptId = "attempt-" + randomUUID();
+  attemptId = attemptId || ("attempt-" + randomUUID());
   return {
     schema_version: "1.0",
     attempt_id: attemptId,
@@ -212,33 +236,23 @@ function makeGenerationLedgerRecord({ scene, projectId, ledgerProjectId, prompt,
   };
 }
 
-async function waitForGenerationAndDownload(page, selectors, { beforeKeys, beforeCount, timeoutMs, downloadDir }) {
+async function waitForGenerationAndDownload(page, selectors, { beforeKeys, timeoutMs, downloadDir, sceneId, attemptId }) {
   const itemLocator = page.locator(selectors.generated_video_items);
   const deadline = Date.now() + timeoutMs;
   let newItem = null;
   while (Date.now() < deadline) {
-    const count = await itemLocator.count().catch(() => 0);
-    if (count > beforeCount) {
-      const keys = await generatedItemKeys(page, selectors.generated_video_items).catch(() => []);
-      const newIndexes = keys.map((key, index) => ({ key, index })).filter(item => item.key && !beforeKeys.includes(item.key));
-      if (newIndexes.length === 1) {
-        newItem = itemLocator.nth(newIndexes[0].index);
-        break;
-      }
-      if (newIndexes.length > 1) throw new Error(`More than one new Flow video tile appeared (${newIndexes.length}); refusing to guess which clip to download.`);
-    }
+    const keys = await generatedItemKeys(page, selectors.generated_video_items).catch(() => []);
+    const newIndexes = keys.map((key, index) => ({ key, index })).filter(item => item.key && !beforeKeys.includes(item.key));
+    if (newIndexes.length === 1) { newItem = itemLocator.nth(newIndexes[0].index); break; }
+    if (newIndexes.length > 1) throw new Error(`More than one new Flow video tile appeared (${newIndexes.length}); refusing to guess which clip to download.`);
     await page.waitForTimeout(1000);
   }
   if (!newItem) throw new Error(`No uniquely identifiable new video tile appeared within ${timeoutMs}ms. Submission may still be processing; do not retry.`);
-
   await newItem.click({ timeout: 5000 });
   const remainingMs = Math.max(1000, deadline - Date.now());
   const downloadButtonLocator = page.locator(selectors.download_media_button);
-  try {
-    await downloadButtonLocator.waitFor({ state: "visible", timeout: remainingMs });
-  } catch {
-    throw new Error("A new video tile appeared, but Download media did not become visible before the wait deadline; completion remains unverified.");
-  }
+  try { await downloadButtonLocator.waitFor({ state: "visible", timeout: remainingMs }); }
+  catch { throw new Error("A new video tile appeared, but Download media did not become visible before the wait deadline; completion remains unverified."); }
   const downloadButton = await exactVisibleLocator(page, selectors.download_media_button, "Download media button");
   const mediaUri = page.url();
   try {
@@ -250,18 +264,18 @@ async function waitForGenerationAndDownload(page, selectors, { beforeKeys, befor
     await quality.click({ timeout: 5000 });
     const download = await downloadPromise;
     const suggested = download.suggestedFilename() || "flow-clip-360p.mp4";
-    const safeName = suggested.replace(/[^a-zA-Z0-9._-]/g, "_");
+    const rawExtension = path.extname(suggested).toLowerCase();
+    const extension = /^\.[a-z0-9]{1,8}$/.test(rawExtension) ? rawExtension : ".mp4";
+    const safeScene = String(sceneId || "scene").replace(/[^a-zA-Z0-9_-]/g, "_");
+    const safeAttempt = String(attemptId || "attempt").replace(/[^a-zA-Z0-9_-]/g, "_");
     const targetDir = path.resolve(downloadDir);
     fs.mkdirSync(targetDir, { recursive: true });
-    let target = path.join(targetDir, safeName);
-    if (fs.existsSync(target)) target = path.join(targetDir, `${Date.now()}-${safeName}`);
+    const target = path.join(targetDir, `${safeScene}__${safeAttempt}${extension}`);
+    if (fs.existsSync(target)) throw new Error(`Refusing to overwrite an existing scene/attempt download: ${target}`);
     await download.saveAs(target);
-    const stat = fs.statSync(target);
-    if (!stat.size) throw new Error("Downloaded media file is empty.");
+    if (!fs.statSync(target).size) throw new Error("Downloaded media file is empty.");
     return { downloadedFile: target, mediaUri, downloadError: null };
   } catch (error) {
-    // The clip is ready if the download control is available; keep success separate from
-    // the download outcome so a download failure does not mislabel generation as unknown.
     return { downloadedFile: null, mediaUri, downloadError: String(error.message || error) };
   }
 }
@@ -834,7 +848,7 @@ async function prepare(args, browser, rl) {
   const attachedReferenceUuids = await uploadSceneReferences(chosen.page, selectors, referenceImages, prompt);
   if (args.waitForResult) {
     try {
-      const initialBalance = await readCreditBalance(chosen.page, selectors.credit_balance);
+      const initialBalance = await readCreditBalance(chosen.page, selectors);
       if (initialBalance === null) throw new Error("Could not read an integer credit balance.");
       const initialItems = await generatedItemKeys(chosen.page, selectors.generated_video_items);
       if (initialItems.some(key => !key) || new Set(initialItems).size !== initialItems.length) {
@@ -931,7 +945,7 @@ async function prepare(args, browser, rl) {
     const finalButton = await exactVisibleLocator(chosen.page, selectors.create, "Create button");
     if (!(await finalButton.isEnabled())) throw new Error("Create button became disabled; refusing to click.");
     if (args.waitForResult) {
-      const currentBalance = await readCreditBalance(chosen.page, selectors.credit_balance);
+      const currentBalance = await readCreditBalance(chosen.page, selectors);
       if (currentBalance === null) throw new Error("Credit balance could not be re-read immediately before Create; refusing to click.");
       args._waitInitialBalance = currentBalance;
       args._waitInitialItemKeys = await generatedItemKeys(chosen.page, selectors.generated_video_items);
@@ -950,6 +964,7 @@ async function prepare(args, browser, rl) {
       let timeoutError = null;
       let afterBalance = null;
       let attemptNumber = 1;
+      args._waitAttemptId = "attempt-" + randomUUID();
       try {
         attemptNumber = nextLedgerAttemptNumber(args.ledgerOutput, scene.scene_id);
         const result = await waitForGenerationAndDownload(chosen.page, selectors, {
@@ -957,6 +972,8 @@ async function prepare(args, browser, rl) {
           beforeCount: args._waitInitialItemCount,
           timeoutMs: args.waitTimeoutMs,
           downloadDir: args.downloadDir,
+          sceneId: scene.scene_id,
+          attemptId: args._waitAttemptId,
         });
         downloadedFile = result.downloadedFile;
         mediaUri = result.mediaUri || chosen.page.url();
@@ -969,15 +986,19 @@ async function prepare(args, browser, rl) {
         console.error(`WAIT STOPPED SAFELY: ${timeoutError}`);
       }
       const balanceDeadline = Date.now() + 30000;
+      // Detail pages do not expose credits; return to the original project before polling.
+      if (chosen.page.url() !== originalUrl) {
+        await chosen.page.goBack({ waitUntil: "domcontentloaded", timeout: 15000 }).catch(() => {});
+      }
       do {
-        try { afterBalance = await readCreditBalance(chosen.page, selectors.credit_balance); } catch {}
+        try { afterBalance = await readCreditBalance(chosen.page, selectors); } catch {}
         if (afterBalance !== null && args._waitInitialBalance !== null && afterBalance !== args._waitInitialBalance) break;
         await chosen.page.waitForTimeout(1000);
       } while (Date.now() < balanceDeadline);
       const ledgerRecord = makeGenerationLedgerRecord({
         scene, projectId: chosen.projectId, ledgerProjectId: args.ledgerProjectId, prompt: scene.prompt, estimatedCost: creditCost,
         beforeBalance: args._waitInitialBalance ?? null, afterBalance,
-        resultStatus, mediaUri, downloadedFile, downloadError, timeoutError, attemptNumber, startedOn: args._waitStartedOn,
+        resultStatus, mediaUri, downloadedFile, downloadError, timeoutError, attemptNumber, attemptId: args._waitAttemptId, startedOn: args._waitStartedOn,
       });
       try {
         const ledgerPath = appendGenerationLedger(args.ledgerOutput, ledgerRecord);
@@ -1008,6 +1029,9 @@ async function prepare(args, browser, rl) {
   }
   } catch (error) {
     await closeAccountMenuIfOpen(chosen.page, selectors, args.expectedEmail);
+    if (args.waitForResult && chosen.page.url() !== originalUrl) {
+      await chosen.page.goBack({ waitUntil: "domcontentloaded", timeout: 10000 }).catch(() => {});
+    }
     throw error;
   }
 }
