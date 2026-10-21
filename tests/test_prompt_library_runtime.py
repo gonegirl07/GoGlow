@@ -99,7 +99,7 @@ class PromptLibraryRuntimeTests(unittest.TestCase):
     def test_prompt_output_must_be_english_and_blocks_apply_export_and_copy(self):
         import re
 
-        validator = re.compile(r"[^\\x09\\x0a\\x0d\\x20-\\x7e]")
+        validator = re.compile(r"[^\x09\x0a\x0d\x20-\x7e]")
         self.assertIsNone(validator.search("Mai holds Warrior II with gentle breathing."))
         self.assertIsNotNone(validator.search("Mai dung yen trong tu the Chien binh II"))
         self.assertIsNotNone(validator.search("Ｍａｉ"))
@@ -107,13 +107,13 @@ class PromptLibraryRuntimeTests(unittest.TestCase):
         self.assertIsNotNone(validator.search("Mai 🙂"))
         self.assertIsNotNone(validator.search("Đứng yên trong tư thế."))
         self.assertIsNotNone(validator.search("a\u0301"))
-        self.assertIn("function validateEnglishPrompt(text)", self.runtime)
-        self.assertIn(r"const re = /[^\\x09\\x0A\\x0D\\x20-\\x7E]/g", self.runtime)
+        self.assertIn("function validateEnglishPrompt(text, fieldLabel)", self.runtime)
+        self.assertIn(r"const re = /[^\x09\x0A\x0D\x20-\x7E]/g", self.runtime)
         self.assertIn("validateEnglishPrompt", self.runtime)
         self.assertIn('"Project brief: " + String(project.brief).trim()', self.runtime)
         self.assertIn('activityNames={cycling:"cycling",yoga:"yoga",dance:"dance",fashion:"fashion",other:"general action"}', self.html)
         self.assertIn("previewCheck.valid", self.html)
-        self.assertIn("const applyCheck=window.GoGlowPromptLibrary.validateEnglishPrompt(s.prompt_preview)", self.html)
+        self.assertIn('validateEnglishPrompt(s.prompt_preview,"Scene "+(i+1)+" preview prompt")', self.html)
         self.assertIn("const promptCheck=window.GoGlowPromptLibrary.validateEnglishPrompt(s.prompt||\"\")", self.html)
         self.assertIn("const briefCheck=window.GoGlowPromptLibrary.validateEnglishPrompt(p.brief||\"\")", self.html)
         self.assertIn("const copyCheck=window.GoGlowPromptLibrary.validateEnglishPrompt(s.prompt||\"\")", self.html)
