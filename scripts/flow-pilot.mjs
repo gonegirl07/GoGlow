@@ -156,7 +156,7 @@ async function clearPromptVerified(prompt, selectors, timeout = 2500) {
   } catch {
     throw new Error("Clear prompt was clicked but textbox did not become empty within the verification timeout.");
   }
-  const remaining = await handle.evaluate(element => ("value" in element) ? element.value : (element.innerText || element.textContent || "");
+  const remaining = await handle.evaluate(element => ("value" in element) ? element.value : (element.innerText || element.textContent || ""));
   if (String(remaining).trim() !== "") throw new Error("Clear prompt verification failed; textbox still contains text.");
   const chipCount = await page.locator(selectors.ingredient_reference_items).count().catch(() => -1);
   if (chipCount !== 0) throw new Error(`Clear prompt removed text but left ${chipCount} Ingredients chip(s).`);
