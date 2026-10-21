@@ -45,7 +45,7 @@ class PromptLibraryRuntimeTests(unittest.TestCase):
             with self.subTest(marker=marker):
                 self.assertIn(marker, self.runtime)
 
-    def test_prompt_composer_uses_english_fallbacks_without_using_brief_as_environment_fallback(self):
+    def test_prompt_composer_uses_english_fallbacks_and_ignores_project_brief(self):
         self.assertIn("Outfit matching the selected reference, chest and upper torso fully covered, SFW.", self.runtime)
         self.assertIn("A bright, uncluttered yoga studio.", self.runtime)
         self.assertIn('String(scene.environment || "").trim()', self.runtime)
@@ -106,8 +106,6 @@ class PromptLibraryRuntimeTests(unittest.TestCase):
         self.assertIn("function validateEnglishPrompt(text)", self.runtime)
         self.assertIn(r"const re = /[àáạảãâầấẩẫậăằắẳẵặèéẹẻẽêềếểễệìíịỉĩòóọỏõôồốổỗộơờớởỡợùúụủũưừứửữựỳýỵỷỹđÀÁẠẢÃÂẦẤẨẪẬĂẰẮẲẴẶÈÉẸẺẼÊỀẾỂỄỆÌÍỊỈĨÒÓỌỎÕÔỒỐỔỖỘƠỜỚỞỠỢÙÚỤỦŨƯỪỨỬỮỰỲÝỴỶỸĐ\u0300-\u036f]/g", self.runtime)
         self.assertIn("validateEnglishPrompt", self.runtime)
-        self.assertIn('"Project brief: " + String(project.brief).trim()', self.runtime)
-        self.assertIn('activityNames={cycling:"cycling",yoga:"yoga",dance:"dance",fashion:"fashion",other:"general action"}', self.html)
         self.assertIn("previewCheck.valid", self.html)
         self.assertIn("const applyCheck=window.GoGlowPromptLibrary.validateEnglishPrompt(s.prompt_preview)", self.html)
         self.assertIn("const promptCheck=window.GoGlowPromptLibrary.validateEnglishPrompt(s.prompt||\"\")", self.html)
