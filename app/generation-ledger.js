@@ -15,7 +15,21 @@
     const isFailure = status === "failed";
     const qc = scene.qc_report || null;
     const timestamp = now || new Date().toISOString();
-    const attemptId = "attempt-" + timestamp.replace(/[^0-9]/g, "").slice(0, 14) + "-" + attemptNumber;
+    const existingIds = new Set([
+      ...((project && Array.isArray(project.generation_attempts)) ? project.generation_attempts : []).map(item => item && item.attempt_id),
+      ...attempts.map(item => item && item.attempt_id)
+    ].filter(Boolean));
+    function createCandidateId() {
+      if (typeof crypto !== "undefined" && typeof crypto.randomUUID === "function") {
+        return "attempt-" + crypto.randomUUID();
+      }
+      const randomPart = typeof crypto !== "undefined" && typeof crypto.getRandomValues === "function"
+        ? Array.from(crypto.getRandomValues(new Uint8Array(16)), byte => byte.toString(16).padStart(2, "0")).join("")
+        : Math.random().toString(36).slice(2) + Math.random().toString(36).slice(2);
+      return "attempt-" + timestamp.replace(/[^0-9]/g, "").slice(0, 14) + "-" + randomPart;
+    }
+    let attemptId = createCandidateId();
+    while (existingIds.has(attemptId)) attemptId = createCandidateId();
     return {
       schema_version: VERSION,
       attempt_id: attemptId,
