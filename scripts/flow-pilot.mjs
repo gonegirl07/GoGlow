@@ -987,7 +987,7 @@ async function loadInputs(args) {
   const seatedShot = /\b(?:seated|sitting|sit|sits|kneeling|kneel|kneels)\b/i.test(scene.scene_id + " " + scene.prompt);
   scene.framing_helper_applied = scene.framing_helper === false ? false : (scene.framing_helper === true || seatedShot);
   if (scene.framing_helper_applied) {
-    const framingSentence = "Camera pulled back, with a wide margin on both sides of the knees; keep both knees comfortably inside the frame.";
+    const framingSentence = "Locked-off tripod shot from the first frame: the camera does not move, pan, tilt, dolly, or zoom at any time. Camera pulled back, with a wide margin on both sides of the knees; keep both knees comfortably inside the frame.";
     if (!scene.prompt.includes(framingSentence)) scene.prompt = scene.prompt.trim() + " " + framingSentence;
   }
   if (scene.character_description && !/^[\x00-\x7F]+$/.test(scene.character_description)) throw new Error("Character description must be ASCII/English only; non-ASCII characters are blocked before touching Flow.");
