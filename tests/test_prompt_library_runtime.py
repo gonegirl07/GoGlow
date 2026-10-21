@@ -99,7 +99,7 @@ class PromptLibraryRuntimeTests(unittest.TestCase):
     def test_prompt_output_must_be_english_and_blocks_apply_export_and_copy(self):
         import re
 
-        validator = re.compile(r"[àáạảãâầấẩẫậăằắẳẵặèéẹẻẽêềếểễệìíịỉĩòóọỏõôồốổỗộơờớởỡợùúụủũưừứửữựỳýỵỷỹđÀÁẠẢÃÂẦẤẨẪẬĂẰẮẲẴẶÈÉẸẺẼÊỀẾỂỄỆÌÍỊỈĨÒÓỌỎÕÔỒỐỔỖỘƠỜỚỞỠỢÙÚỤỦŨƯỪỨỬỮỰỲÝỴỶỸĐ\\u0300-\\u036f]")
+        validator = re.compile(r"[àáạảãâầấẩẫậăằắẳẵặèéẹẻẽêềếểễệìíịỉĩòóọỏõôồốổỗộơờớởỡợùúụủũưừứửữựỳýỵỷỹđÀÁẠẢÃÂẦẤẨẪẬĂẰẮẲẴẶÈÉẸẺẼÊỀẾỂỄỆÌÍỊỈĨÒÓỌỎÕÔỒỐỔỖỘƠỜỚỞỠỢÙÚỤỦŨƯỪỨỬỮỰỲÝỴỶỸĐ\u0300-\u036f]")
         self.assertIsNone(validator.search("Mai holds Warrior II with gentle breathing."))
         self.assertIsNotNone(validator.search("Đứng yên trong tư thế."))
         self.assertIsNotNone(validator.search("a\u0301"))
@@ -114,7 +114,8 @@ class PromptLibraryRuntimeTests(unittest.TestCase):
         self.assertIn("Chặn Apply: prompt phải hoàn toàn bằng tiếng Anh.", self.html)
         self.assertIn("Brief dự án phải bằng tiếng Anh vì được đưa vào prompt Flow.", self.html)
         self.assertIn('value="A quiet park path in the morning, natural light, realistic movement."', self.html)
-        beats = self.html[self.html.index("const beats"):self.html.index("};function settings")]
+        beats_start = self.html.index("const beats")
+        beats = self.html[beats_start:self.html.index("function settings()", beats_start)]
         self.assertIsNone(validator.search(beats), "All default action/start/end/body-mechanics strings must be English.")
 
 
