@@ -1,0 +1,43 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/gonegirl07/GoGlow/blob/main/specs/prompt-library.schema.json",
+  "title": "GoGlow Prompt Library",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "provider",
+    "model_label",
+    "prompt_template",
+    "rules",
+    "motions",
+    "warnings",
+    "generation_log"
+  ],
+  "properties": {
+    "schema_version": {
+      "const": "1.0"
+    },
+    "provider": {
+      "const": "google_flow"
+    },
+    "model_label": {
+      "type": "string"
+    },
+    "prompt_template": {
+      "type": "object"
+    },
+    "rules": {
+      "type": "array"
+    },
+    "motions": {
+      "type": "array"
+    },
+    "warnings": {
+      "type": "object"
+    },
+    "generation_log": {
+      "type": "array"
+    }
+  }
+}
