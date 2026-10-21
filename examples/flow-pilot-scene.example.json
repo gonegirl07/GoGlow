@@ -9,11 +9,11 @@
     "/workspace/mai-fitness/refs/REPLACE_WITH_FRONT_FACE_IMAGE.png",
     "/workspace/mai-fitness/refs/REPLACE_WITH_THREE_QUARTER_FACE_IMAGE.png"
   ],
-  "face_description_mode": "reference_only",
-  "character_description": "",
-
+  "face_description_mode": "hybrid",
+  "character_description": "Round soft face, full cheeks, big bright eyes, and a wide warm smile showing teeth.",
   "model": "Omni 1.1 Flash",
   "resolution": "360p",
   "duration": "8s",
-  "prompt": "An adult woman performs one controlled yoga flow in a quiet studio. Full body visible, stable camera, natural motion, realistic anatomy, soft daylight. One continuous shot, no cuts, no text, no logos. Keep the chest fully covered with a high, closed neckline and no cleavage."
+  "prompt": "An adult woman performs one controlled yoga flow in a quiet studio. Full body visible, stable camera, natural motion, realistic anatomy, soft daylight. One continuous shot, no cuts, no text, no logos. Keep the chest fully covered with a high, closed neckline and no cleavage.",
+  "expression": "Gentle warm smile, eyes open and looking naturally toward the camera throughout the entire shot."
 }
