@@ -135,6 +135,8 @@ async function checkedRadio(page, selector, value, label) {
   const locator = await exactVisibleLocator(page, selector, label);
   const role = await locator.getAttribute("role");
   if (role !== "radio") throw new Error(`The ${label} selector must match a role=radio element.`);
+  const labelText = (await locator.innerText()).replace(/\\s+/g, " ").trim();
+  if (!labelText.includes(value)) throw new Error(`The ${label} selector text ${JSON.stringify(labelText)} does not match expected value ${JSON.stringify(value)}.`);
   const checked = await locator.getAttribute("aria-checked");
   if (checked !== "true") {
     await locator.click({ timeout: 2500 });
@@ -229,8 +231,24 @@ async function prepare(args, browser, rl) {
   const create = await exactVisibleLocator(chosen.page, selectors.create, "Create button");
   const settings = await exactVisibleLocator(chosen.page, selectors.settings_trigger, "settings trigger");
 
-  // Open settings first; the model/radio controls are rendered only while this panel is open.
-  await settings.click({ timeout: 2500 });
+  // Normalize the settings overlay state. If its controls are already visible, toggle it
+  // closed first. A separate account-menu overlay is not dismissed blindly; stop safely.
+  const modelAlreadyVisible = await chosen.page.locator(selectors.model).count() === 1
+    && await chosen.page.locator(selectors.model).isVisible().catch(() => false);
+  if (modelAlreadyVisible) {
+    await settings.click({ timeout: 2500 }).catch(() => {
+      throw new Error("Settings overlay could not be closed. Close the Flow overlay manually and rerun; prompt remains untouched.");
+    });
+  } else {
+    const backdrop = chosen.page.locator(".cdk-overlay-backdrop:visible");
+    if (await backdrop.count().catch(() => 0) > 0) {
+      throw new Error("A Flow/account overlay is already open and blocks the settings control. Close the overlay manually and rerun; prompt remains untouched.");
+    }
+  }
+  // Open settings; the model/radio controls are rendered only while this panel is open.
+  await settings.click({ timeout: 2500 }).catch(() => {
+    throw new Error("Could not open Flow settings (possibly blocked by an account overlay). Close any overlay manually and rerun; prompt remains untouched.");
+  });
   const model = await exactVisibleLocator(chosen.page, selectors.model, "model selector");
   const resolution = await exactVisibleLocator(chosen.page, selectors.resolution, "resolution radio");
   const ingredients = await exactVisibleLocator(chosen.page, selectors.ingredients_mode, "Ingredients mode radio");
@@ -257,20 +275,18 @@ async function prepare(args, browser, rl) {
   }
 
   // Only now modify the prompt. If fill fails, attempt to clear it before returning an error.
-  try { await prompt.fill(scene.prompt, { timeout: 2500 }); }
-  catch (error) {
-    await prompt.fill("", { timeout: 1000 }).catch(() => {});
-    throw new Error(`Could not fill prompt; attempted to leave it empty: ${error.message}`);
+  const screenshot = path.resolve(args.screenshot || `flow-pilot-${scene.scene_id.replace(/[^a-zA-Z0-9_-]/g, "_")}-${args.execute ? "execute" : "dry-run"}.png`);
+  try {
+    await prompt.fill(scene.prompt, { timeout: 2500 });
+    const createEnabled = await create.isEnabled().catch(() => false);
+    if (!createEnabled) throw new Error("Create button is disabled after filling prompt.");
+    fs.mkdirSync(path.dirname(screenshot), { recursive: true });
+    await chosen.page.screenshot({ path: screenshot, fullPage: false, timeout: 4000 });
+  } catch (error) {
+    await prompt.fill("", { timeout: 1500 }).catch(() => {});
+    throw new Error(`Dry-run preparation failed after prompt fill; attempted to clear prompt: ${error.message}`);
   }
   const createEnabled = await create.isEnabled().catch(() => false);
-  if (!createEnabled) {
-    await prompt.fill("", { timeout: 1500 }).catch(() => {});
-    throw new Error("Create button is disabled after filling prompt; prompt was cleared where possible.");
-  }
-
-  const screenshot = path.resolve(args.screenshot || `flow-pilot-${scene.scene_id.replace(/[^a-zA-Z0-9_-]/g, "_")}-${args.execute ? "execute" : "dry-run"}.png`);
-  fs.mkdirSync(path.dirname(screenshot), { recursive: true });
-  await chosen.page.screenshot({ path: screenshot, fullPage: false, timeout: 4000 });
   console.log("\nREADY-TO-CREATE CHECK");
   console.log(JSON.stringify({
     mode: args.execute ? "execute-awaiting-final-confirmation" : "dry-run",
