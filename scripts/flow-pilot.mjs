@@ -228,6 +228,8 @@ async function chooseModel(page, selectors, model) {
 
 
 async function uploadCharacterReferences(page, selectors, character) {
+  const addButton = await exactVisibleLocator(page, selectors.ingredient_add_button, "add character reference button");
+  await addButton.click({ timeout: 2500 });
   const fileInput = page.locator(selectors.ingredient_file_input);
   const inputCount = await fileInput.count().catch(() => 0);
   if (inputCount !== 1) throw new Error(`Ingredient file-input selector matched ${inputCount} elements; expected exactly one. No reference upload attempted.`);
@@ -252,7 +254,7 @@ async function uploadCharacterReferences(page, selectors, character) {
 }
 
 function requiredSelectorConfig(selectors) {
-  const required = ["prompt", "settings_trigger", "model", "model_option", "resolution", "ingredients_mode", "ingredient_file_input", "ingredient_reference_items", "aspect_9_16", "duration", "create"];
+  const required = ["prompt", "settings_trigger", "model", "model_option", "resolution", "ingredients_mode", "ingredient_add_button", "ingredient_file_input", "ingredient_reference_items", "aspect_9_16", "duration", "create"];
   for (const key of required) {
     if (typeof selectors[key] !== "string" || !selectors[key].trim()) {
       throw new Error(`Selector config must provide a non-empty CSS selector for '${key}'.`);
@@ -371,7 +373,6 @@ async function prepare(args, browser, rl) {
     await chooseModel(chosen.page, selectors, scene.model);
     await checkedRadio(chosen.page, selectors.resolution, scene.resolution, "resolution");
     await checkedRadio(chosen.page, selectors.ingredients_mode, "Ingredients", "Ingredients mode");
-    await uploadCharacterReferences(chosen.page, selectors, character);
     await checkedRadio(chosen.page, selectors.aspect_9_16, "9:16", "aspect ratio");
     await checkedRadio(chosen.page, selectors.duration, scene.duration || "8s", "duration");
 
@@ -396,6 +397,11 @@ async function prepare(args, browser, rl) {
     throw new Error("Flow tab URL changed unexpectedly while preparing. Stopping before Create.");
   }
 
+  // Attach and verify the exact character references only after closing Settings.
+  // If Flow does not expose a unique add button, file input, and visible reference-item selector,
+  // stop before filling the prompt or enabling a possible Create action.
+  await uploadCharacterReferences(chosen.page, selectors, character);
+
   // Only now modify the prompt. If fill fails, attempt to clear it before returning an error.
   const screenshot = path.resolve(args.screenshot || `flow-pilot-${scene.scene_id.replace(/[^a-zA-Z0-9_-]/g, "_")}-${args.execute ? "execute" : "dry-run"}.png`);
   try {
@@ -414,7 +420,7 @@ async function prepare(args, browser, rl) {
     throw new Error(`Dry-run preparation failed after prompt fill: ${error.message}. ${cleanupStatus}`);
   }
   const createEnabled = await create.isEnabled().catch(() => false);
-  console.log("\nREADY-TO-CREATE CHECK");
+  console.log("\nREADY-TO-CREATE CHECK (reference images were attached and verified before this check)");
   console.log(JSON.stringify({
     mode: args.execute ? "execute-awaiting-final-confirmation" : "dry-run",
     account_email_verified: account.observedEmail,
@@ -424,6 +430,10 @@ async function prepare(args, browser, rl) {
     project_id: chosen.projectId,
     url: chosen.page.url(),
     scene_id: scene.scene_id,
+    character_id: character.id,
+    character_name: character.name,
+    reference_image_count: character.reference_images.length,
+    reference_image_names: character.reference_images.map(file => path.basename(file)),
     model: scene.model,
     resolution: scene.resolution,
     ingredients_mode: "Ingredients",
