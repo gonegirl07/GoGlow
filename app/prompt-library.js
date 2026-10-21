@@ -17,6 +17,27 @@
     { id: "explicit-real-time", status: "candidate", label: "Đề xuất tốc độ real-time", match: /slow motion|real[- ]time/i, warning: "Rule candidate về tốc độ: chỉ thêm cụm từ sau khi người dùng xem preview và chủ động duyệt." }
   ];
 
+  // Strict prompt-output guard: reject Vietnamese precomposed letters and decomposed diacritic marks.
+  // UI strings may remain Vietnamese; callers pass only prompt text intended for Flow.
+  function validateEnglishPrompt(text, fieldLabel) {
+    const source = String(text == null ? "" : text);
+    const matches = [];
+    const re = /[^\x09\x0A\x0D\x20-\x7E]/g;
+    let match;
+    while ((match = re.exec(source)) !== null) {
+      matches.push({ character: match[0], index: match.index });
+    }
+    return {
+      valid: matches.length === 0,
+      matches,
+      message: matches.length
+        ? (fieldLabel ? String(fieldLabel) + ": " : "") + "Flow prompt must contain ASCII characters only; non-ASCII character(s) detected at position(s): " +
+          matches.slice(0, 8).map(item => (item.index + 1)).join(", ") +
+          (matches.length > 8 ? " ..." : "")
+        : ""
+    };
+  }
+
   function uniqueSentences(parts) {
     const seen = new Set();
     const segments = parts.map(v => String(v || "").trim()).filter(Boolean)
@@ -73,6 +94,7 @@
       String(project.character_name || "").trim().toLocaleLowerCase() === "mai" ?
         "Mai keeping exactly her face, hair, body." :
         "Keep exactly the selected character's face, hair, and body.",
+      String(project.brief || "").trim() ? "Project brief: " + String(project.brief).trim() : "",
       outfit,
       room,
       camera,
@@ -112,6 +134,7 @@
     version: VERSION,
     rules: RULES.map(rule => Object.freeze({ id: rule.id, status: rule.status, label: rule.label })),
     analyze,
-    compose
+    compose,
+    validateEnglishPrompt
   });
 })(window);
