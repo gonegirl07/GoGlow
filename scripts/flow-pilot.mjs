@@ -440,7 +440,7 @@ async function waitForGenerationAndDownload(page, selectors, { beforeKeys, befor
       && scan.items.length > beforeKeys.length);
     const candidateItems = firstTileIsNew ? [firstTile] : newItems;
     const failedTile = newItems.find(item =>
-      /\\bfailed\\b/i.test(`${item.state} ${item.text}`)
+      /\bfailed\b/i.test(`${item.state} ${item.text}`)
       || isGenerationFailureText(`${item.state} ${item.text}`));
     if (failedTile) {
       throw new Error(`FLOW_GENERATION_FAILED: new Flow tile ${failedTile.key} reports failure: ${failedTile.text || failedTile.state}`);
