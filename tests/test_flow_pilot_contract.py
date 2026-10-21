@@ -251,7 +251,9 @@ class FlowPilotContractTests(unittest.TestCase):
     def test_dry_run_reports_selected_face_reference_and_order(self):
         self.assertIn("face_reference_id: scene.face_reference_id", self.script)
         self.assertIn("face_reference_image: path.basename(faceReferenceImage)", self.script)
-        self.assertIn('reference_order: "primary face reference first, supporting references after"', self.script)
+        self.assertIn('reference_order: "selected face references first in configured order, supporting references after"', self.script)
+        self.assertIn("face_reference_ids: scene.face_reference_ids", self.script)
+        self.assertIn("face_reference_images: faceReferenceImages.map(file => path.basename(file))", self.script)
 
     def test_face_reference_defaults_to_first_image_for_older_jobs(self):
         self.assertIn("? referenceImages[0]", self.script)
