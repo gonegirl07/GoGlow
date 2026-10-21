@@ -122,7 +122,7 @@ class PromptLibraryRuntimeTests(unittest.TestCase):
         self.assertIn('validateEnglishPrompt(p.brief||"","Project brief (Ý tưởng / bối cảnh)")', self.html)
         self.assertIn('validateEnglishPrompt(s.prompt_preview,"Scene "+(i+1)+" preview prompt")', self.html)
         self.assertIn("A clean, well-lit setting appropriate to the activity, with natural light and realistic movement.", self.html)
-        self.assertIn('<textarea id="brief">A quiet park path in the morning, natural light, realistic movement.</textarea>', self.html)
+        self.assertIn('<textarea id="brief">A clean, well-lit setting appropriate to the activity, with natural light and realistic movement.</textarea>', self.html)
         beats_start = self.html.index("const beats")
         beats = self.html[beats_start:self.html.index("function settings()", beats_start)]
         self.assertIsNone(validator.search(beats), "All default action/start/end/body-mechanics strings must be English.")
