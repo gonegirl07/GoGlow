@@ -314,6 +314,17 @@ function nextLedgerAttemptNumber(pathname, sceneId) {
   return max + 1;
 }
 
+function rawProviderMessage(value) {
+  const message = String(value || "");
+  const tileMarker = " reports failure: ";
+  const tileIndex = message.indexOf(tileMarker);
+  if (tileIndex >= 0) return message.slice(tileIndex + tileMarker.length).trim();
+  const pageMarker = "Flow displayed a generation/policy failure: ";
+  const pageIndex = message.indexOf(pageMarker);
+  if (pageIndex >= 0) return message.slice(pageIndex + pageMarker.length).trim();
+  return message || null;
+}
+
 function makeGenerationLedgerRecord({ scene, projectId, ledgerProjectId, prompt, estimatedCost, beforeBalance, afterBalance, resultStatus, mediaUri, downloadedFile, downloadError, timeoutError, attemptNumber, attemptId, startedOn, variantIndex = 1, variantCount = 1 }) {
   const observedDelta = beforeBalance !== null && afterBalance !== null && beforeBalance >= afterBalance
     ? beforeBalance - afterBalance : null;
@@ -360,7 +371,7 @@ function makeGenerationLedgerRecord({ scene, projectId, ledgerProjectId, prompt,
     rule_ids: [],
     result: {
       status: resultStatus,
-      provider_message: timeoutError || null,
+      provider_message: resultStatus === "failed" ? rawProviderMessage(timeoutError) : (timeoutError || null),
       failure: resultStatus === "failed" ? { category: "browser_automation", message: timeoutError || downloadError || "Flow result was not verified.", provider_error_code: null, retryable: false, suggested_prompt_revision: null, revision_rationale: null } : null,
     },
     credits: {
@@ -398,7 +409,7 @@ async function waitForGenerationAndDownload(page, selectors, { beforeKeys, befor
     if (!/\/(?:edit|video)\//i.test(page.url())) return;
     const bodyText = await page.locator("body").innerText({ timeout: 2000 }).catch(() => "");
     if (isGenerationFailureText(bodyText)) {
-      throw new Error(`FLOW_GENERATION_FAILED: Flow displayed a generation/policy failure: ${bodyText.replace(/\s+/g, " ").trim().slice(-700)}`);
+      throw new Error(`FLOW_GENERATION_FAILED: Flow displayed a generation/policy failure: ${bodyText.replace(/\s+/g, " ").trim()}`);
     }
   };
   const captureTimeout = async () => {
