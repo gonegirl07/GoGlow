@@ -5,6 +5,7 @@ import json
 import sys
 from pathlib import Path
 from typing import Any
+from .assembly import AssemblyError, assemble_reel
 from .exporter import to_markdown
 from .planner import SUPPORTED_ACTIVITIES, create_project
 from .validator import validate_project
@@ -22,7 +23,7 @@ def _write_text(path: Path, content: str) -> None:
     path.write_text(content, encoding="utf-8")
 
 def build_parser() -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser(prog="goglow", description="Plan and validate AI character video scenes; no model calls are made.")
+    parser = argparse.ArgumentParser(prog="goglow", description="Plan, validate, and assemble AI character video scenes.")
     sub = parser.add_subparsers(dest="command", required=True)
     init = sub.add_parser("init", help="create an editable starter scene plan")
     init.add_argument("--activity", required=True, choices=SUPPORTED_ACTIVITIES)
@@ -37,6 +38,14 @@ def build_parser() -> argparse.ArgumentParser:
     export.add_argument("project", type=Path)
     export.add_argument("--out", type=Path, required=True)
     export.add_argument("--format", choices=("markdown",), default="markdown")
+    assemble = sub.add_parser("assemble", help="assemble explicitly approved QC-PASS clips with local FFmpeg")
+    assemble.add_argument("manifest", type=Path, help="JSON manifest listing approved clips in final order")
+    assemble.add_argument("--out", type=Path, required=True, help="new .mp4 output path")
+    assemble.add_argument("--width", type=int, default=1080)
+    assemble.add_argument("--height", type=int, default=1920)
+    assemble.add_argument("--fps", type=int, default=30)
+    assemble.add_argument("--min-duration", type=float, default=30.0, help="minimum output duration in seconds")
+    assemble.add_argument("--force", action="store_true", help="replace existing output explicitly")
     return parser
 
 def main(argv: list[str] | None = None) -> int:
@@ -75,7 +84,16 @@ def main(argv: list[str] | None = None) -> int:
             _write_text(args.out, to_markdown(project))
             print(f"Exported Markdown: {args.out}")
             return 0
-    except ValueError as exc:
+        if args.command == "assemble":
+            result = assemble_reel(
+                args.manifest, args.out, width=args.width, height=args.height,
+                fps=args.fps, min_duration_seconds=args.min_duration, force=args.force,
+            )
+            print(f"Created Reel: {result['output']}")
+            print(f"Duration: {result['duration_seconds']:.3f}s; clips: {len(result['clips'])}")
+            print(f"Assembly manifest: {Path(result['output']).with_suffix('.manifest.json')}")
+            return 0
+    except (ValueError, AssemblyError) as exc:
         print(str(exc), file=sys.stderr)
         return 2
     return 2
