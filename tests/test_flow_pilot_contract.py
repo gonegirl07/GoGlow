@@ -50,9 +50,9 @@ class FlowPilotContractTests(unittest.TestCase):
         self.assertIn("Create button did not become enabled within", self.script)
 
     def test_prompt_cleanup_is_verified_after_failure_and_dry_run(self):
-        self.assertIn("async function clearPromptVerified(prompt", self.script)
+        self.assertIn("async function clearPromptVerified(prompt, selectors", self.script)
         self.assertIn("Prompt was cleared and verified empty.", self.script)
-        self.assertIn("textbox did not become empty within the verification timeout", self.script)
+        self.assertIn("Clear prompt was clicked but textbox did not become empty within the verification timeout", self.script)
         self.assertIn("CRITICAL: prompt could not be verified empty", self.script)
 
     def test_confirmation_reader_buffers_piped_stdin(self):
