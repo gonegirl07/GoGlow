@@ -9,5 +9,8 @@
   "ingredients_mode": "button[role=\"radio\"]:has-text(\"Ingredients\")",
   "aspect_9_16": "button[role=\"radio\"]:has-text(\"9:16\")",
   "duration": "button[role=\"radio\"]:has-text(\"8s\")",
-  "create": "button[aria-label=\"Start generation\"]"
+  "create": "button[aria-label=\"Start generation\"]",
+  "ingredient_add_button": "REPLACE_WITH_EXACT_VISIBLE_ADD_REFERENCE_BUTTON_SELECTOR",
+  "ingredient_file_input": "REPLACE_WITH_EXACT_INPUT_FILE_SELECTOR",
+  "ingredient_reference_items": "REPLACE_WITH_EXACT_ATTACHED_REFERENCE_THUMBNAIL_SELECTOR"
 }
