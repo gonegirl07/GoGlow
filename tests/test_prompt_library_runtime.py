@@ -127,7 +127,10 @@ class PromptLibraryRuntimeTests(unittest.TestCase):
         beats = self.html[beats_start:self.html.index("function settings()", beats_start)]
         self.assertIsNone(validator.search(beats), "All default action/start/end/body-mechanics strings must be English.")
 
-
+    def test_apply_and_export_report_non_ascii_source_field_names(self):
+        self.assertIn("function scenePromptFieldErrors(s,i)", self.html)
+        self.assertIn("errors.push(...scenePromptFieldErrors(s,i))", self.html)
+        self.assertIn("const sourceFieldErrors=scenePromptFieldErrors(s,i)", self.html)
 
 if __name__ == "__main__":
     unittest.main()
