@@ -223,7 +223,7 @@ class FlowPilotContractTests(unittest.TestCase):
         self.assertIn('scene.reference_images', self.script)
         self.assertIn('reference_images as an array of 1 to 3 local file paths', self.script)
         self.assertIn('Character description must be ASCII/English only', self.script)
-        self.assertIn('Scene JSON must contain a non-empty character_description', self.script)
+        self.assertIn('Scene JSON must contain a non-empty character_description unless face_description_mode is', self.script)
         self.assertIn('uploadSceneReferences(chosen.page, selectors, referenceImages, prompt)', self.script)
         self.assertLess(self.script.index('await uploadSceneReferences(chosen.page, selectors, referenceImages, prompt)'), self.script.index('await prompt.fill(scene.prompt'))
         self.assertIn('reference_image_count: referenceImages.length', self.script)
@@ -256,6 +256,20 @@ class FlowPilotContractTests(unittest.TestCase):
         self.assertIn("faceReferenceImage = referenceImages[0];", self.script)
         self.assertIn("scene.face_reference_id = scene.reference_images[0];", self.script)
 
+
+    def test_multiple_face_references_are_validated_and_ordered_before_supporting_images(self):
+        self.assertIn("scene.face_reference_ids", self.script)
+        self.assertIn("face_reference_ids must be an array of 1 to 3 paths from reference_images.", self.script)
+        self.assertIn("face_reference_ids must contain distinct paths.", self.script)
+        self.assertIn("...faceReferenceImages,", self.script)
+        self.assertIn("...referenceImages.filter(imagePath => !faceReferenceImages.includes(imagePath))", self.script)
+        self.assertIn("The next attached face-reference image(s) show the same person from additional angles.", self.script)
+
+    def test_reference_only_face_mode_can_omit_conflicting_textual_face_description(self):
+        self.assertIn('["include", "reference_only"].includes(faceDescriptionMode)', self.script)
+        self.assertIn("face_description_mode is 'reference_only'", self.script)
+        self.assertIn("Use the selected face reference image(s) as the source of truth for facial appearance.", self.script)
+        self.assertIn("Do not invent or reinterpret face shape, cheeks, chin, eyes, eyebrows, or smile from a text description.", self.script)
 
     def test_prepare_destructures_face_reference_image_from_load_inputs(self):
         prepare = self.script.split("async function prepare(args, browser, rl) {", 1)[1].split(
