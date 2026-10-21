@@ -2,8 +2,8 @@
 
 - Every prompt composed for Google Flow must be English-only, including the project brief when included, activity/start/action/end/body-mechanics defaults, wardrobe/location/environment, and reference instructions.
 - The UI may remain Vietnamese. The validator applies to prompt text, not UI labels or explanatory messages.
-- The prompt runtime enforces ASCII-only Flow prompt payloads (ASCII tabs and line breaks are permitted); it rejects unaccented Vietnamese, all non-ASCII accented letters, combining marks, fullwidth characters, and emoji. Apply, copy-to-Flow, Markdown export, and JSON export are blocked when a prompt/preview contains those characters. Export also validates the project brief because it is injected into composed prompts.
-- Do not silently translate or delete user content. Show the offending field and character positions and ask the user to rewrite the source field in English.
+- The prompt runtime enforces ASCII-only Flow prompt payloads (ASCII tabs and line breaks are permitted); it rejects accented letters, combining marks, fullwidth characters, and emoji. ASCII-only validation cannot identify Vietnamese words written without diacritics, so source fields still require human review. Apply, copy-to-Flow, Markdown export, and JSON export are blocked when a prompt/preview contains those characters. Export also validates the project brief because it is injected into composed prompts.
+- Do not silently translate or delete user content. Show the offending source field and character positions and ask the user to rewrite the source field in English.
 - All built-in action templates and the default project brief/environment must be English.
 
 # Phase 1–2 data model: prompt rules and generation ledger
