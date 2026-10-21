@@ -441,6 +441,12 @@ class FlowPilotContractTests(unittest.TestCase):
         self.assertIn(r"if (!/\/(?:edit|video)\//i.test(page.url())) return;", wait_fn)
         self.assertIn("failedTile.text || failedTile.state", wait_fn)
 
+    def test_failure_ledger_preserves_provider_message_without_automation_prefix(self):
+        self.assertIn("function rawProviderMessage(value)", self.script)
+        self.assertIn('const tileMarker = " reports failure: "', self.script)
+        self.assertIn('provider_message: resultStatus === "failed" ? rawProviderMessage(timeoutError)', self.script)
+        self.assertNotIn('.slice(-700)', self.script)
+
     def test_failed_variant_stops_batch_and_records_refund_pending_when_provider_says_refund(self):
         self.assertIn("refundPending", self.script)
         self.assertIn('"refunded_pending"', self.script)
