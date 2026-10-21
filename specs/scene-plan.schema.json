@@ -371,6 +371,10 @@
       "type": "integer",
       "minimum": 1,
       "maximum": 20
+    },
+    "auto_advance": {
+      "type": "boolean",
+      "description": "Browser preference: automatically advance after manual evidence gates pass."
     }
   }
 }
