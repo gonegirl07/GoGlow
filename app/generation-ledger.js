@@ -22,7 +22,7 @@
       project_id: String(project.project_id || project.project_name || "goglow-project"),
       scene_id: String(scene.id || "unknown-scene"),
       attempt_number: attemptNumber,
-      retry_of: previous ? previous.attempt_id : null,
+      retry_of: previous && form.retry_mode === "retry_previous" ? previous.attempt_id : null,
       provider: form.provider || "google_flow",
       started_on: form.started_on || null,
       finished_on: form.finished_on || null,
