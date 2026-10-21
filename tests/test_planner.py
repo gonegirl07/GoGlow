@@ -75,6 +75,16 @@ class PlannerTests(unittest.TestCase):
         scene["qc_report"] = valid_qc_report(scene["id"], scene["media_uri"])
         self.assertEqual(validate_project(project), [])
 
+    def test_approved_state_requires_qc_report_for_same_media(self):
+        project = create_project("cycling")
+        scene = project["scenes"][0]
+        scene["status"] = "APPROVED"
+        scene["status_history"] = ["PLANNED", "PROMPT_READY", "WAITING_FOR_GENERATION", "GENERATED", "QC_REVIEW", "APPROVED"]
+        scene["media_uri"] = "file:///clips/scene-01.mp4"
+        report = valid_qc_report(scene["id"], "file:///clips/other.mp4")
+        scene["qc_report"] = report
+        self.assertTrue(any("must match the scene media_uri" in e for e in validate_project(project)))
+
     def test_approved_state_rejects_qc_report_not_passed(self):
         project = create_project("cycling")
         scene = project["scenes"][0]
