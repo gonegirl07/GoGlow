@@ -47,7 +47,7 @@ The planner and browser prototype supply strong activity-specific starter text f
 
 ### 2. Status machine allows unsafe transitions and false generation/QC claims
 
-- **Severity:** P1
+- **Severity:** P0
 - **Type:** Observed (code)
 - **Affected:** `src/goglow/validator.py` (`VALID_STATUSES` and media_uri check), `app/index.html` (status `<select>`), `docs/workflow.md` state machine
 - **Minimal reproduction (static):**
@@ -62,6 +62,7 @@ The planner and browser prototype supply strong activity-specific starter text f
   - Project with status `APPROVED` and a non-empty `media_uri` but no prior `GENERATED`/`QC_REVIEW` evidence → currently passes (document as gap).
   - Browser does not offer generation/QC statuses without an explicit media attachment step.
 - **Suggested fix:** Add a transition table in the validator (or a separate `check_status_transitions` function). Require a non-empty `media_uri` *and* a `media_reviewed: true` flag (or equivalent) before `QC_REVIEW`/`APPROVED`. Remove or disable generation/QC options in the browser until a media attachment UI exists. Align the browser select with the full `VALID_STATUSES` set (or document the subset).
+- **Note on severity:** Raised to P0 after integration review. A fabricated non-empty `media_uri` lets the validator accept `GENERATED`/`QC_REVIEW`/`APPROVED`. This matches the P0 definition (false claim of generation/QC that can mislead a human operator). The current code cannot prove the URI points to accessible video or that visual review occurred.
 
 ### 3. Duration sum is validated only after export; browser allows silent mismatch
 
@@ -92,7 +93,7 @@ The planner and browser prototype supply strong activity-specific starter text f
   - Dance: assert "foot", "rhythm", or "facing".
   - Fashion: assert "outfit", "accessory", or "wardrobe".
   - Negative: a project that has had those phrases deleted still validates (document the gap).
-- **Suggested fix:** Keep the current starter approach. Add optional "constraint presence" warnings (not hard errors) in the validator or a separate lint step. In the browser, offer a "restore activity constraints" button that re-applies the relevant beat text.
+- **Suggested fix:** Keep the current starter approach. Add optional "constraint presence" warnings (not hard errors) in the validator or a separate lint step. In the browser, offer a "restore activity constraints" button that re-applies the relevant beat text. (Keyword checks cannot verify physical correctness; treat as lint/warning only.)
 
 ### 5. Missing negative tests for malformed JSON, non-finite target duration, and empty required strings
 
@@ -166,13 +167,15 @@ These are the concrete checks the assignment asked for. The current starter text
 
 ## Recommended next tests (priority order)
 
-1. Status + media_uri negative cases (P1).
+1. Status + media evidence gate (P0) — block fabricated `media_uri` from satisfying `GENERATED`/`QC_REVIEW`/`APPROVED`.
 2. Aspect-ratio consistency between browser export and validator (P2).
 3. Duration-sum UI feedback or export guard (P2).
-4. Activity-constraint presence assertions on fresh plans (P2).
+4. Activity-constraint presence assertions on fresh plans as warnings/lint only (P2).
 5. Additional malformed-JSON cases (P2).
 6. Manual browser privacy and persistence smoke test (P3).
 
 ## Notes on execution
 
 This review did not run `python -m pytest`, did not open `app/index.html` in a browser, and did not generate or inspect any media. All statements about runtime behavior are inferred from the source. The integration lead should execute the existing test suite and a manual browser pass before treating any item as closed.
+
+Severity of Finding 2 was raised to P0 after integration review to match the stated scale.
