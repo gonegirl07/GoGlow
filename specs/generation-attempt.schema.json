@@ -1,0 +1,400 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/gonegirl07/GoGlow/blob/main/specs/generation-attempt.schema.json",
+  "title": "GoGlow Generation Attempt",
+  "description": "Append-only record for one manual or automated media-generation attempt. Unknown costs and provider states must remain unknown rather than be inferred.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "attempt_id",
+    "project_id",
+    "scene_id",
+    "attempt_number",
+    "provider",
+    "started_on",
+    "configuration",
+    "prompt",
+    "rule_ids",
+    "result",
+    "credits",
+    "created_by"
+  ],
+  "properties": {
+    "schema_version": {
+      "const": "1.0"
+    },
+    "attempt_id": {
+      "type": "string"
+    },
+    "project_id": {
+      "type": "string"
+    },
+    "scene_id": {
+      "type": "string"
+    },
+    "attempt_number": {
+      "type": "integer",
+      "minimum": 1
+    },
+    "retry_of": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "provider": {
+      "enum": [
+        "google_flow",
+        "gemini_api",
+        "other",
+        "unknown"
+      ]
+    },
+    "started_on": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "finished_on": {
+      "type": [
+        "string",
+        "null"
+      ],
+      "format": "date-time"
+    },
+    "configuration": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "model_label",
+        "resolution",
+        "duration_seconds",
+        "aspect_ratio"
+      ],
+      "properties": {
+        "model_label": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "resolution": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "duration_seconds": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "minimum": 1
+        },
+        "aspect_ratio": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "pose_reference_id": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "face_reference_id": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "other_reference_ids": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        }
+      }
+    },
+    "prompt": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "text",
+        "sha256"
+      ],
+      "properties": {
+        "text": {
+          "type": "string",
+          "minLength": 1
+        },
+        "sha256": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "pattern": "^[a-fA-F0-9]{64}$"
+        },
+        "template_version": {
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      }
+    },
+    "rule_ids": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      },
+      "uniqueItems": true
+    },
+    "result": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "status",
+        "failure"
+      ],
+      "properties": {
+        "status": {
+          "enum": [
+            "queued",
+            "started",
+            "succeeded",
+            "failed",
+            "unknown",
+            "cancelled"
+          ]
+        },
+        "provider_message": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "failure": {
+          "type": [
+            "object",
+            "null"
+          ],
+          "additionalProperties": false,
+          "required": [
+            "category",
+            "message",
+            "retryable"
+          ],
+          "properties": {
+            "category": {
+              "enum": [
+                "policy_or_content",
+                "service",
+                "quota_or_credits",
+                "rate_limit",
+                "configuration",
+                "browser_automation",
+                "timeout",
+                "unknown"
+              ]
+            },
+            "message": {
+              "type": "string"
+            },
+            "provider_error_code": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "retryable": {
+              "type": "boolean"
+            },
+            "suggested_prompt_revision": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "revision_rationale": {
+              "type": [
+                "string",
+                "null"
+              ]
+            }
+          }
+        }
+      }
+    },
+    "credits": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "estimated_amount",
+        "actual_amount",
+        "currency_or_unit",
+        "charge_status",
+        "evidence_source"
+      ],
+      "properties": {
+        "estimated_amount": {
+          "type": [
+            "number",
+            "null"
+          ],
+          "minimum": 0
+        },
+        "actual_amount": {
+          "type": [
+            "number",
+            "null"
+          ],
+          "minimum": 0
+        },
+        "currency_or_unit": {
+          "type": "string"
+        },
+        "charge_status": {
+          "enum": [
+            "charged",
+            "not_charged",
+            "refunded",
+            "unknown",
+            "not_applicable"
+          ]
+        },
+        "before_balance": {
+          "type": [
+            "number",
+            "null"
+          ],
+          "minimum": 0
+        },
+        "after_balance": {
+          "type": [
+            "number",
+            "null"
+          ],
+          "minimum": 0
+        },
+        "evidence_source": {
+          "enum": [
+            "provider_display",
+            "user_observation",
+            "provider_receipt",
+            "estimate_only",
+            "unknown"
+          ]
+        },
+        "notes": {
+          "type": "string"
+        }
+      }
+    },
+    "media": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "uri",
+        "downloaded_file",
+        "integrity_status"
+      ],
+      "properties": {
+        "uri": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "downloaded_file": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "sha256": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "pattern": "^[a-fA-F0-9]{64}$"
+        },
+        "integrity_status": {
+          "enum": [
+            "verified",
+            "not_checked",
+            "missing",
+            "failed"
+          ]
+        }
+      }
+    },
+    "qc": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "status",
+        "observed_defects",
+        "reviewed_by"
+      ],
+      "properties": {
+        "status": {
+          "enum": [
+            "not_reviewed",
+            "pass",
+            "fail",
+            "needs_review"
+          ]
+        },
+        "observed_defects": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "checks_passed": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "minimum": 0
+        },
+        "checks_total": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "minimum": 0
+        },
+        "reviewed_by": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "reviewed_on": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "format": "date-time"
+        },
+        "notes": {
+          "type": "string"
+        }
+      }
+    },
+    "created_by": {
+      "enum": [
+        "user",
+        "tester",
+        "browser_automation",
+        "system"
+      ]
+    },
+    "notes": {
+      "type": "string"
+    }
+  }
+}
