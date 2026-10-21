@@ -149,12 +149,18 @@ async function checkedRadio(page, selector, value, label) {
 async function chooseModel(page, selectors, model) {
   const trigger = await exactVisibleLocator(page, selectors.model, "model selector");
   await trigger.click({ timeout: 2500 });
-  const option = await exactVisibleLocator(page, selectors.model_option, "model option");
-  const rawText = (await option.innerText()).trim();
+  const option = page.locator(selectors.model_option);
+  try {
+    await option.waitFor({ state: "visible", timeout: 5000 });
+  } catch {
+    throw new Error("Model option did not become visible within 5000ms after opening the model menu.");
+  }
+  const verifiedOption = await exactVisibleLocator(page, selectors.model_option, "model option");
+  const rawText = (await verifiedOption.innerText()).trim();
   // Flow prepends a material icon ligature (e.g. volume_up); compare the final visible text line exactly.
   const text = rawText.split(/\r?\n/).map(line => line.trim()).filter(Boolean).at(-1) || "";
   if (text !== model) throw new Error(`Model option text mismatch: expected ${JSON.stringify(model)}, got ${JSON.stringify(text)}.`);
-  await option.click({ timeout: 2500 });
+  await verifiedOption.click({ timeout: 2500 });
   const selected = await exactVisibleLocator(page, selectors.model, "model selector after selection");
   const selectedText = (await selected.innerText()).trim();
   if (!selectedText.includes(model)) throw new Error(`Model selection did not persist; current label is ${JSON.stringify(selectedText)}.`);
