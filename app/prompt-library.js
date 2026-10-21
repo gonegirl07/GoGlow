@@ -63,8 +63,10 @@
     const analysis = analyze(scene, project);
     const outfit = String(scene.wardrobe || "").trim() ||
       "Outfit matching the selected reference, chest and upper torso fully covered, SFW.";
-    const room = String(scene.environment || scene.location || project.brief || "").trim() ||
-      "A bright, uncluttered yoga studio.";
+    // Project briefs may be Vietnamese planning notes; never inject them into the English video prompt.
+    // Only an explicit environment field is used. Otherwise choose a neutral English fallback.
+    const room = String(scene.environment || "").trim() ||
+      (project.activity === "yoga" ? "A bright, uncluttered yoga studio." : "A clean, well-lit environment appropriate to the activity.");
     const camera = String(scene.camera || "").trim() ||
       "Eye-level static camera, front view, wide full-body framing, both hands and feet inside the frame, no zoom.";
     const parts = [
@@ -81,18 +83,29 @@
       "Ending state: " + (scene.end_state || "Reach the described ending state and hold still until the end."),
       "Movement direction and speed: " + (scene.motion_direction || "Use clear, physically plausible movement."),
       "Avoid: " + (Array.isArray(scene.negative_constraints) ? scene.negative_constraints.join("; ") : (scene.negative_constraints || "No morphing, fused fingers, sliding, or unrequested actions.")),
-      // Preserve any user-authored prompt text not already represented by the structured fields.
-      scene.prompt ? "Existing prompt details: " + scene.prompt : ""
+      // Keep user-authored source text, but never wrap an app-generated or previously composed prompt.
+      (scene.prompt_library_base_prompt !== undefined ? scene.prompt_library_base_prompt :
+        (scene.prompt_origin === "app-generated" || scene.prompt_origin === "library-composed" ? "" : scene.prompt)) ?
+        "Existing prompt details: " + (scene.prompt_library_base_prompt !== undefined ? scene.prompt_library_base_prompt :
+          (scene.prompt_origin === "app-generated" || scene.prompt_origin === "library-composed" ? "" : scene.prompt)) : ""
     ];
+    const appliedRuleIds = [];
     if (analysis.in_warrior_scope && options && options.include_confirmed_stable_hold) {
       parts.push(RULES[0].append);
+      appliedRuleIds.push("start-already-in-pose");
     }
     // Candidate rules, including explicit-real-time, are warnings only here.
     // They are never appended by default; the caller must opt in via preview.
     if (options && options.include_candidate_realtime === true) {
       parts.push("real-time speed, never slow motion.");
+      appliedRuleIds.push("explicit-real-time");
     }
-    return { text: uniqueSentences(parts).join("\n"), analysis };
+    return {
+      text: uniqueSentences(parts).join("\n"),
+      analysis,
+      applied_rule_ids: Array.from(new Set(appliedRuleIds)),
+      warning_rule_ids: Array.from(new Set(analysis.warnings.map(w => w.rule_id)))
+    };
   }
 
   root.GoGlowPromptLibrary = Object.freeze({
