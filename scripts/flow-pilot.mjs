@@ -252,6 +252,7 @@ async function prepare(args, browser, rl) {
   await settings.click({ timeout: 2500 }).catch(() => {
     throw new Error("Could not open Flow settings (possibly blocked by an account overlay). Close any overlay manually and rerun; prompt remains untouched.");
   });
+
   // Any failure after opening settings, including selector preflight, must clean up overlays.
   let creditCost = null;
   try {
@@ -261,11 +262,10 @@ async function prepare(args, browser, rl) {
     const aspect = await exactVisibleLocator(chosen.page, selectors.aspect_9_16, "9:16 aspect radio");
     const duration = await exactVisibleLocator(chosen.page, selectors.duration, "8s duration radio");
     const radioChecks = await Promise.all([resolution, ingredients, aspect, duration].map(locator => locator.getAttribute("role")));
-    if (radioChecks.some(role => role !== "radio")) throw new Error("Resolution, Ingredients, 9:16 and duration selectors must all match role=radio controls.");
-  
-    try {
-    // Set and verify each setting while the settings panel is open. Never fill the prompt until
-    // all settings and the Create/prompt controls have been successfully located.
+    if (radioChecks.some(role => role !== "radio")) {
+      throw new Error("Resolution, Ingredients, 9:16 and duration selectors must all match role=radio controls.");
+    }
+
     await chooseModel(chosen.page, selectors, scene.model);
     await checkedRadio(chosen.page, selectors.resolution, scene.resolution, "resolution");
     await checkedRadio(chosen.page, selectors.ingredients_mode, "Ingredients", "Ingredients mode");
