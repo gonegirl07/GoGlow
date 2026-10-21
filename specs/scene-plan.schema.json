@@ -15,11 +15,11 @@
       "type": "string"
     },
     "aspect_ratio": {
-      "const": "9:16"
+      "enum": ["9:16", "16:9", "1:1"]
     },
     "target_duration_seconds": {
       "type": "integer",
-      "minimum": 31
+      "minimum": 30
     },
     "activity": {
       "enum": [
@@ -371,6 +371,10 @@
       "type": "integer",
       "minimum": 1,
       "maximum": 20
+    },
+    "auto_advance": {
+      "type": "boolean",
+      "description": "Browser preference: automatically advance after manual evidence gates pass."
     }
   }
 }

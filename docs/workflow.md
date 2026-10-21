@@ -20,7 +20,7 @@
 
 ## State machine
 PLANNED → PROMPT_READY → WAITING_FOR_GENERATION → GENERATED → QC_REVIEW → APPROVED.
-Failures may transition to NEEDS_REVISION → PROMPT_REVISED → WAITING_FOR_GENERATION. Use BLOCKED when a required asset, capability, or decision is missing.
+Failures may transition to NEEDS_REVISION → PROMPT_REVISED → WAITING_FOR_GENERATION. Use BLOCKED when a required asset, capability, or decision is missing. Leaving BLOCKED is restricted to PLANNED or PROMPT_READY and invalidates all previous media/QC evidence. Deleting a media URI from GENERATED or QC_REVIEW returns the scene to WAITING_FOR_GENERATION. Target duration must be at least 30 seconds; unsupported values are rejected, not silently clamped.
 
 A copied prompt is not a generated result. A checklist is not a QC pass.
 
