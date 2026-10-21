@@ -758,6 +758,10 @@ async function loadInputs(args) {
     ...faceReferenceImages,
     ...referenceImages.filter(imagePath => !faceReferenceImages.includes(imagePath)),
   ];
+  // Canonicalize paths so the ledger can reliably distinguish face refs from supporting refs.
+  scene.reference_images = referenceImages;
+  scene.face_reference_ids = faceReferenceImages;
+  scene.face_reference_id = faceReferenceImages[0];
   scene.character_description = scene.character_description.trim();
   scene.scene_prompt = scene.prompt;
   const faceAnchorInstructions = faceReferenceImages.length > 1
