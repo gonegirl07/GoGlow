@@ -1,0 +1,28 @@
+# Production workflow
+
+## Default preset
+- Aspect ratio: 9:16
+- Planned runtime: 36 seconds
+- Activities: dance, cycling, yoga, fashion; extensible
+- Model labels: record exact labels visible in the current UI
+- Output: scene plan, prompts, reference briefs, continuity ledger, QC checklist, assembly plan
+
+## Steps
+1. Set up the character and identity anchors using user-provided references.
+2. Set activity, environment, wardrobe, mood, target runtime, and aspect ratio.
+3. Break runtime into coherent scenes. Each scene needs one dominant action, start pose, direction/timing, camera plan, and end pose.
+4. Build a prompt per scene and image briefs only where useful.
+5. Label reference roles: identity, wardrobe, pose, first frame, last frame, scene, or prop.
+6. Generate through the current Flow UI manually unless a supported integration has been implemented and tested.
+7. Review actual output for identity, anatomy, action, physics, continuity, camera, artifacts, format, and duration.
+8. Write a narrow revision prompt for observed defects.
+9. Assemble approved clips and verify total runtime, trims, gaps, overlaps, and transitions.
+
+## State machine
+PLANNED → PROMPT_READY → WAITING_FOR_GENERATION → GENERATED → QC_REVIEW → APPROVED.
+Failures may transition to NEEDS_REVISION → PROMPT_REVISED → WAITING_FOR_GENERATION. Use BLOCKED when a required asset, capability, or decision is missing.
+
+A copied prompt is not a generated result. A checklist is not a QC pass.
+
+## Duration
+Scene durations must sum to the target runtime. This is a planning constraint, not a guarantee that one model request supports the full runtime.
