@@ -101,7 +101,7 @@ class PromptLibraryRuntimeTests(unittest.TestCase):
 
         validator = re.compile(r"[^\x09\x0a\x0d\x20-\x7e]")
         self.assertIsNone(validator.search("Mai holds Warrior II with gentle breathing."))
-        self.assertIsNotNone(validator.search("Mai dung yen trong tu the Chien binh II"))
+        self.assertIsNone(validator.search("Mai dung yen trong tu the Chien binh II"), "ASCII-only validation cannot infer language from unaccented words.")
         self.assertIsNotNone(validator.search("Ｍａｉ"))
         self.assertIsNotNone(validator.search("café"))
         self.assertIsNotNone(validator.search("Mai 🙂"))
