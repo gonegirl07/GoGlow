@@ -46,9 +46,9 @@
           "Do not deepen the knee bend or add unrequested movement.",
           "Do not move or slide either foot.",
           "Do not crop hands or fingertips; do not pan or zoom."
-        ]
+        ],
+        "exact_prompt_fragment": "Mai, the woman in the reference image, same face, hair, sage-green high-neck longline sports top and dark grey yoga leggings, bright yoga studio. The shot starts already in the exact Warrior II pose of the reference image with the same wide full-body framing, empty space on both sides, both hands inside the frame. Static locked-off camera. She holds the pose calmly: only gentle breathing in the chest and shoulders and a soft blink. Feet, legs, hips and arms stay still. Natural hands. Single continuous shot, real-time. No text."
       },
-      "instructions_exact_prompt": "Mai, the woman in the reference image, same face, hair, sage-green high-neck longline sports top and dark grey yoga leggings, bright yoga studio. The shot starts already in the exact Warrior II pose of the reference image with the same wide full-body framing, empty space on both sides, both hands inside the frame. Static locked-off camera. She holds the pose calmly: only gentle breathing in the chest and shoulders and a soft blink. Feet, legs, hips and arms stay still. Natural hands. Single continuous shot, real-time. No text.",
       "rationale": "Observed QC evidence favors starting already in a stable pose and limiting motion to gentle breathing and a soft blink instead of asking the model to enter or deepen the pose.",
       "provenance": {
         "source_type": "owner_observation",
