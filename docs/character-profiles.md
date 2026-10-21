@@ -13,7 +13,7 @@ The current Flow UI's reference upload DOM has not yet been validated. Before us
 - `ingredient_file_input`: unique `input[type=file]` used for Ingredients
 - `ingredient_reference_items`: CSS selector matching each attached reference thumbnail/item, and only those items
 
-The dry-run must report the expected number of attached references before it fills the final prompt and shows READY-TO-CREATE. If selectors are ambiguous or the visible item count differs, the runner stops before Create. Do not guess these selectors or run `--execute` until a dry-run proves upload works on the real Flow UI.
+The reference panel must be empty before the run starts; if it already contains items, clear it manually. The dry-run must then report the expected number of newly attached references before it fills the final prompt and shows READY-TO-CREATE. If selectors are ambiguous or the visible item count differs, the runner stops before Create. Do not guess these selectors or run `--execute` until a dry-run proves upload works on the real Flow UI.
 
 ## Example setup
 
