@@ -106,7 +106,7 @@ class FlowPilotContractTests(unittest.TestCase):
         self.assertIn('WAIT SELECTOR PREFLIGHT (read-only; no Create click)', self.script)
         self.assertIn('--wait-timeout-ms must be an integer from 30000 to 1800000', self.script)
         self.assertIn('--wait requires a non-empty', self.script)
-        self.assertIn('["credit_balance", "account_panel_open", "account_panel_close", "generated_video_items", "download_media_button", "download_360p_original_button"]', self.script)
+        self.assertIn('["credit_balance", "generated_video_items", "download_media_button", "download_360p_original_button", "account_panel_open", "account_panel_close"]', self.script)
 
     def test_wait_tracks_new_tile_by_stable_identity_and_never_retries(self):
         self.assertIn('generatedItemKeys(page, selectors.generated_video_items)', self.script)
