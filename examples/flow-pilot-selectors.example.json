@@ -18,8 +18,10 @@
   "clear_prompt": "button[aria-label=\"Clear prompt\"]",
   "ingredient_picker_backdrop": ".cdk-overlay-backdrop-showing",
   "_wait_comment": "The following selectors are required only for --wait; inspect the live Flow DOM and replace these examples before use.",
-  "credit_balance": "[data-testid=\"credit-balance\"]",
+  "credit_balance": "span.credits-count",
   "generated_video_items": "a[href*=\"/edit/\"]",
   "download_media_button": "button:has-text(\"Download media\")",
-  "download_360p_original_button": "button:has-text(\"360p Original size\")"
+  "download_360p_original_button": "button:has-text(\"360p Original size\")",
+  "account_panel_open": "div[role=\"button\"][aria-label=\"Account details\"]",
+  "account_panel_close": "button[aria-label=\"Close account panel\"]"
 }
