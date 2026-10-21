@@ -237,10 +237,11 @@ class FlowPilotContractTests(unittest.TestCase):
         self.assertIn("const requestedFaceReference = scene.face_reference_id;", self.script)
         self.assertIn("face_reference_id", self.script)
         self.assertIn("must match one of the image paths in this job's reference_images.", self.script)
-        self.assertIn("face_reference_id must identify one path from reference_images.", self.script)
+        self.assertIn("face_reference_ids must be an array of 1 to 3 paths from reference_images.", self.script)
         self.assertIn("const orderedReferenceImages = [", self.script)
-        self.assertIn("faceReferenceImage,\n    ...referenceImages.filter(imagePath => imagePath !== faceReferenceImage)", self.script)
-        self.assertIn('referenceImages: orderedReferenceImages, faceReferenceImage', self.script)
+        self.assertIn("...faceReferenceImages,", self.script)
+        self.assertIn("...referenceImages.filter(imagePath => !faceReferenceImages.includes(imagePath))", self.script)
+        self.assertIn("referenceImages: orderedReferenceImages, faceReferenceImage: primaryFaceReferenceImage, faceReferenceImages", self.script)
 
     def test_primary_face_anchor_is_explicit_in_ascii_composed_prompt(self):
         self.assertIn("PRIMARY FACE REFERENCE: The first attached image is the primary face identity anchor.", self.script)
