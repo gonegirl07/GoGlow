@@ -238,7 +238,12 @@
                         "artifacts",
                         "duration",
                         "format",
-                        "other"
+                        "other",
+                        "yoga_framing",
+                        "yoga_foot_sliding",
+                        "yoga_joint_alignment",
+                        "yoga_left_right",
+                        "yoga_wardrobe_coverage"
                       ]
                     },
                     "status": {
