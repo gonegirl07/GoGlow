@@ -55,6 +55,10 @@ class FlowPilotContractTests(unittest.TestCase):
         self.assertIn("Clear prompt was clicked but textbox did not become empty within the verification timeout", self.script)
         self.assertIn("CRITICAL: prompt could not be verified empty", self.script)
 
+    def test_every_prompt_cleanup_call_receives_selector_config(self):
+        self.assertNotIn('clearPromptVerified(prompt, 2500)', self.script)
+        self.assertIn('clearPromptVerified(prompt, selectors, 2500)', self.script)
+
     def test_asset_upload_wait_is_configurable_and_defaults_to_90_seconds(self):
         self.assertIn('process.env.FLOW_ASSET_READY_TIMEOUT_MS || 90000', self.script)
         self.assertIn('FLOW_ASSET_READY_TIMEOUT_MS must be an integer from 15000 to 180000', self.script)
