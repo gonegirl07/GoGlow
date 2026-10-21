@@ -9,12 +9,12 @@ GoGlow helps plan, prompt, track, and quality-review short-form AI character vid
 Open app/index.html in a modern browser. You can also download that file from GitHub and open it locally. It does not require Python, Node.js, an API key, or a server.
 
 The prototype can:
-- Set the character name, activity, target duration, aspect ratio, and project brief.
+- Set the character name, activity, target duration, supported aspect ratio (9:16), and project brief.
 - Preview character reference images locally in the current browser session.
 - Generate editable starter prompts and scene cards for cycling, yoga, dance, fashion, and other activities.
 - Save project data in browser local storage and export JSON or Markdown.
 
-**Prototype limitations:** no Google Flow integration, no image/video generation, no automated visual QC, and no image data included in exports. Reference images are only previewed locally; prompts still need human review. Browser-local saving is not a substitute for exporting backups.
+**Prototype limitations:** no Google Flow integration, no image/video generation, no automated visual QC, and no image data included in exports. Reference images are only previewed locally; prompts still need human review. The browser prototype blocks export when required fields or duration totals are invalid. It intentionally stops at pre-generation workflow states: media declaration and structured human-QC entry are not implemented in the browser UI, so it does not let users mark clips generated, QC-reviewed, or approved. Browser-local saving is not a substitute for exporting backups.
 
 ## Status
 
