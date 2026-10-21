@@ -4,14 +4,14 @@
 
 - **Authoring role:** Gemini (UI/UX Designer), assigned in `docs/multi-agent-work-plan.md`.
 - **Review target:** ChatGPT (Integration Lead & Architect) and Grok (Independent Adversarial QA).
-- **Scope boundary:** This document is a **design specification and acceptance standard only**. In strict accordance with the multi-agent work plan, no application code (`app/index.html`, `src/goglow/*`) or shared schemas (`specs/*`) were modified in this phase.
+- **Scope boundary:** This document is a **design specification and acceptance standard only**. In strict accordance with the multi-agent work plan, no application code (`app/index.html`, `src/goglow/*`), shared schemas (`specs/*`), or companion agent documents (`docs/qa-acceptance.md`, `docs/media-qc-protocol.md`) were modified in this phase.
 - **Verification status in this session:** No live browser execution or automated test runner was invoked. All UI flows, screen states, component behaviors, and acceptance criteria are derived analytically from static analysis of `README.md`, `AGENTS.md`, `docs/architecture.md`, `docs/workflow.md`, `app/index.html`, `specs/scene-plan.schema.json`, `specs/character-profile.schema.json`, `docs/qa-acceptance.md` (PR #1), and `docs/media-qc-protocol.md` (PR #2).
 - **Reconciliation updates (post-ChatGPT Tech Lead review, 2026-10-21):**
   1. Reconciled severity scales: adopted `BLOCKER` / `MAJOR` / `MINOR` / `NOTE` for media review defects (aligned with `docs/media-qc-protocol.md`), keeping software QA defects strictly labeled `P0`–`P3` (aligned with `docs/qa-acceptance.md`).
   2. Designated `docs/media-qc-protocol.md` Section 2.3 as the canonical source of truth for mapping QC outcomes to project workflow states.
-  3. Added explicit UI handling for missing clip access (`BLOCKED` / `NOT_REVIEWED`) vs missing evidence on individual checks (`REVIEW` / `NOT_CHECKED`).
-  4. Clarified activity constraints and Continuity Bridge as human-director lint helpers, not claims of automated physics/vision verification.
-  5. Detailed the duration auto-balance confirmation flow and pre-export guard.
+  3. Clarified manual user declaration vs automated app verification: M1 does not verify media files; entering `media_uri` and ticking confirmation is a manual user declaration, not automated file verification or QC approval.
+  4. Unified duration export rules with `docs/workflow.md`: export is strictly blocked when scene duration sum does not equal target duration, with no bypass button; scene durations are never auto-adjusted without explicit user action.
+  5. Clarified activity constraints and Continuity Bridge as human-director lint helpers, not claims of automated physics/vision verification.
 - **Non-negotiable honesty rule:** No automated Google Flow interface, direct model API calls, or automatic vision QC are invented or claimed. All integrations remain classified as future work.
 
 ---
@@ -26,12 +26,14 @@ GoGlow is a local-first, privacy-preserving production planning and quality-cont
    - Creative assets (character reference images, project briefs, scene prompts) belong on the user's local machine.
    - Reference images are loaded via temporary in-memory Object URLs (`URL.createObjectURL()`) for in-session preview only.
    - Raw image binary data or base64 strings **must never** be stored in `localStorage`, sent to external servers, or bundled into project JSON/Markdown exports.
-2. **Truthful State Machine (No Illusory Completion):**
+2. **Truthful State Machine (No Illusory Completion & No Verification Overclaims):**
    - A planned prompt is not an attempted generation. A generated clip is not a passed QC check.
-   - Addressing Grok QA Finding #2 (P0) & ChatGPT review: The UI strictly blocks transitioning any scene to `GENERATED`, `QC_REVIEW`, or `APPROVED` unless actual media reference metadata (`media_uri`) has been explicitly attached and verified playable by the operator.
+   - Addressing Grok QA Finding #2 (P0) & ChatGPT review: GoGlow M1 has no automated file-system scanner, video decoder, or media inspection engine; it cannot independently prove that a video file exists, is accessible, or is playable.
+   - Therefore, entering a `media_uri` and ticking a confirmation box is strictly a **manual user declaration** (`khai báo thủ công của người dùng`) to track workflow state, not automated verification.
+   - Having a `media_uri` does **not** mean the clip has passed QC or is approved. Transitioning to `APPROVED` remains strictly gated behind human visual QC per `docs/media-qc-protocol.md`. The UI enforces this manual declaration gate to prevent accidental status jumps, without claiming false status defects are completely eliminated by code alone.
 3. **Strict Validation & Real-Time Production Guardrails:**
    - Addressing Grok QA Finding #1 (P2): The UI enforces `9:16` as the only verified aspect ratio for M1, preventing validator rejections down the pipeline.
-   - Addressing Grok QA Finding #3 (P2): The UI provides an always-visible "Duration Budget Meter" calculating real-time difference between target duration and individual scene duration sum, blocking invalid exports.
+   - Addressing Grok QA Finding #3 (P2) & `docs/workflow.md`: The UI calculates and displays the duration discrepancy between target duration and total scene durations in real time. If the sum does not equal `target_duration_seconds`, export actions are strictly **blocked** with no bypass option. Scene durations are never altered automatically without explicit user confirmation.
 4. **Frictionless Handoff for Manual Generation:**
    - Since no direct Google Flow API exists, the UI is optimized for fast, accurate manual generation: one-click prompt copying, clear parameter readouts (model label, camera, seed, duration), and a structured checklist for human QC.
 5. **Accessible & Responsive:**
@@ -46,7 +48,7 @@ The GoGlow application uses a 3-tier layout:
 2. **Main Production Canvas (Center Split):**
    - **Left Panel (340px fixed on desktop, collapsible on mobile):** Project metadata, character profile & identity anchors, reference image gallery, and target parameters.
    - **Right Panel (Fluid flex):** Scene sequence timeline overview, scene cards list, continuity connectors, and quick-action bar.
-3. **Auxiliary Modals / Drawers:** Project Manager Modal, Media Attachment & QC Review Dialog, Duration Auto-Balance Modal, Export / Import Modal.
+3. **Auxiliary Modals / Drawers:** Project Manager Modal, Media Declaration & QC Review Dialog, Duration Redistribution Modal, Export / Import Modal.
 
 ```
 +-----------------------------------------------------------------------------------------------------+
@@ -153,19 +155,19 @@ The GoGlow application uses a 3-tier layout:
     - Purple: `GENERATED`
     - Yellow: `QC_REVIEW` / `NEEDS_REVISION`
     - Green: `APPROVED`
-    - Red: `BLOCKED`
+    - Red: `BLOCKED` / `REJECTED`
   - Real-time Duration Budget Indicator:
     - Display format: `Tổng thời lượng cảnh: X / Y giây [Chênh lệch: Z giây]`.
-    - If `X == Y`: Green badge `[Đủ thời lượng]`.
-    - If `X != Y`: Amber warning badge `[Lệch Z giây - Cần cân đối trước khi xuất]`.
-    - Action button alongside: `[Cân đối lại thời lượng]` (opens preview modal before reallocating).
+    - If `X == Y`: Green badge `[Đủ thời lượng: Khớp mục tiêu]`. Export buttons are enabled.
+    - If `X != Y`: Amber/Red error badge `[Sai lệch Z giây — Chặn xuất]`. Export buttons are disabled.
+    - Optional helper button: `[Cân đối lại thời lượng]` (opens preview modal for explicit user confirmation; never applies automatically).
 - **Scene Card Architecture:**
   Each scene renders as a structured card containing:
   1. **Header Row:**
      - Drag handle (for reordering).
      - Scene Index & ID: `Cảnh 01 (scene-01)`.
      - Duration Input: `Thời lượng (giây)` (positive number).
-     - Status Selector (Guarded, see Journey 6).
+     - Status Selector (Guarded by manual declaration, see Journey 6).
      - Quick Action Menu: `[Sao chép cảnh]`, `[Xóa cảnh]`.
   2. **Core Motion & Beat Grid (2 columns):**
      - `Trạng thái bắt đầu (start_state)`: Character pose, position, camera framing at t=0.
@@ -177,7 +179,7 @@ The GoGlow application uses a 3-tier layout:
      - `Trang phục cảnh (wardrobe)`: Outfit worn in this scene (defaults to character preset).
      - `Địa điểm / Bối cảnh (location)`: Specific background landmarks.
      - `Điều cần tránh (negative_constraints)`: Tags/Text (e.g., *"Không đảo hướng, không biến dạng tay lái, không đổi trang phục"*).
-     - `QC Checklist`: Activity-specific quality checklist items derived from `docs/media-qc-protocol.md`.
+     - `QC Checklist`: Activity-specific quality checklist items derived from `docs/media-qc-protocol.md` with defect severity options: `BLOCKER`, `MAJOR`, `MINOR`, `NOTE`.
   3. **Deterministic Prompt Studio:**
      - Formatted Prompt Box (monospaced textarea).
      - Action Buttons:
@@ -201,23 +203,23 @@ The GoGlow application uses a 3-tier layout:
 
 ### Journey 6: Generation & Production Status Workflow (Honest State Machine)
 
-To enforce rule #2 and align with `docs/media-qc-protocol.md` Section 2.3 (canonical source) and Grok QA Finding #2, scene status transitions follow strict guardrails in the UI:
+To enforce rule #2, align with `docs/media-qc-protocol.md` Section 2.3 (canonical source), and address Grok QA Finding #2 without overclaiming automated verification:
 
 ```mermaid
 stateDiagram-v2
     [*] --> PLANNED
     PLANNED --> PROMPT_READY : Operator finalizes prompt & settings
     PROMPT_READY --> WAITING_FOR_GENERATION : Prompt copied to clipboard for Flow
-    WAITING_FOR_GENERATION --> GENERATED : Attach playable media_uri & confirm
+    WAITING_FOR_GENERATION --> GENERATED : Operator manually declares media_uri
     GENERATED --> QC_REVIEW : Open for human review checklist
-    QC_REVIEW --> APPROVED : PASS (no unresolved BLOCKER or MAJOR defects)
-    QC_REVIEW --> NEEDS_REVISION : FAIL (MAJOR defect found; narrow revision needed)
-    QC_REVIEW --> REJECTED : FAIL (BLOCKER defect found; clip unusable)
+    QC_REVIEW --> APPROVED : PASS (human QC: no unresolved BLOCKER or MAJOR defects)
+    QC_REVIEW --> NEEDS_REVISION : FAIL (human QC: MAJOR defect found; narrow revision needed)
+    QC_REVIEW --> REJECTED : FAIL (human QC: BLOCKER defect found; clip unusable)
     NEEDS_REVISION --> PROMPT_REVISED : Prompt updated with revision notes
     PROMPT_REVISED --> WAITING_FOR_GENERATION : Ready for regeneration
     PLANNED --> BLOCKED : Missing asset or reference
     PROMPT_READY --> BLOCKED : Missing required parameter
-    GENERATED --> BLOCKED : Clip inaccessible or unplayable
+    GENERATED --> BLOCKED : Operator reports clip inaccessible/unplayable
 ```
 
 #### Canonical Mapping from QC Report to UI Workflow
@@ -232,50 +234,58 @@ Per `docs/media-qc-protocol.md`, Section 2.3:
 | `NOT_REVIEWED` (clip inaccessible or uninspected) | Remains in `GENERATED` / `QC_REVIEW` with no decision. Cannot be assembled or approved. |
 
 #### Severity Scale Separation (Crucial Architectural Rule)
-- **Media Defect Severity (Clips & Video):** Evaluated as `BLOCKER` / `MAJOR` / `MINOR` / `NOTE`.
-- **Software QA Severity (Code & Product):** Evaluated as `P0` / `P1` / `P2` / `P3`.
-- The two vocabularies are kept strictly distinct across the UI and documentation.
+- **Media Defect Severity (Clips & Video):** Evaluated strictly as `BLOCKER` / `MAJOR` / `MINOR` / `NOTE` per `docs/media-qc-protocol.md`.
+- **Software QA Severity (Code & Product):** Evaluated strictly as `P0` / `P1` / `P2` / `P3` per `docs/qa-acceptance.md`.
+- The two vocabularies are kept strictly distinct across the UI and documentation. `P0`–`P3` is never used to describe clip defects.
 
-#### Guarded Status Enforcement Rules in UI:
-1. Default initial state is `PLANNED`.
-2. Clicking `[Sao chép prompt]` automatically offers to advance status from `PLANNED` to `PROMPT_READY` or `WAITING_FOR_GENERATION`.
-3. **Media Evidence Gate:** If user attempts to select `GENERATED`, `QC_REVIEW`, or `APPROVED` without an attached media URI:
-   - The transition is intercepted.
-   - The **"Xác nhận kết quả tạo video" (Attach Media)** modal opens, requiring:
-     - Media URI (Local file path, e.g., `file:///D:/clips/scene-01.mp4`, or cloud link).
-     - Actual model label as displayed in Flow UI.
-     - Optional generation seed or prompt version.
-     - Mandatory verification checkbox: `[x] Tôi xác nhận clip video này đã thực sự được tạo và có thể phát được.`
-   - Only upon submission does the scene transition to `GENERATED`.
-4. **Missing Clip Access vs Missing Specific Evidence:**
-   - **Clip access missing:** If `media_uri` is invalid, corrupt, or inaccessible, the QC modal is disabled and status is set to `BLOCKED` (tracker) / `NOT_REVIEWED` (report).
-   - **Evidence for a specific check missing:** If the clip is playable, but a specific check cannot be confirmed (e.g., foot pedal contact hidden by shadow), the operator selects `NOT_CHECKED` or `REVIEW` for that individual check. This puts the scene into `REVIEW` status, without falsely treating the entire clip as unreviewable.
-5. **Wardrobe Category Serialization:**
-   - Wardrobe defects affecting identity are recorded under `identity`.
+#### Manual Declaration vs Automated Verification in UI:
+1. **Initial State:** Default initial state is `PLANNED`.
+2. **Advancing to Generation:** Clicking `[Sao chép prompt]` offers to advance status to `PROMPT_READY` or `WAITING_FOR_GENERATION`.
+3. **Manual Declaration Gate for Media:**
+   - Because GoGlow M1 has no automated video ingestion or file inspection engine, the UI relies strictly on **manual user declarations** (`xác nhận thủ công của người dùng`).
+   - If user attempts to select `GENERATED`, `QC_REVIEW`, or `APPROVED` without a declared `media_uri`:
+     - The transition is intercepted.
+     - The **"Khai báo tệp media tạo ngoài (Manual User Declaration)"** modal opens, requiring:
+       - Media URI input: local path (e.g., `file:///D:/clips/scene-01.mp4`) or storage URI entered by the user.
+       - Actual model label as displayed in Flow UI.
+       - Optional generation seed or prompt version.
+       - Manual declaration checkbox: `[x] Xác nhận thủ công: Tôi đã tự tạo và kiểm tra clip này ngoài ứng dụng, khai báo URI để theo dõi.`
+       - Explicit UI disclaimer:
+         > *"Lưu ý: GoGlow M1 không tự động quét hay kiểm tra tệp video. Việc khai báo URI không chứng minh file tồn tại hoặc phát được, không đồng nghĩa clip đã đạt QC hay được duyệt."*
+     - Only after this declaration does the scene transition to `GENERATED`.
+4. **Transition to `APPROVED` Requires Human QC:**
+   - Having a `media_uri` does **not** equal QC approval.
+   - A scene can only transition to `APPROVED` after a human operator opens the Mini QC Modal, completes the checklist, confirms `PASS` with zero unresolved `BLOCKER` or `MAJOR` defects, and signs off with reviewer name and date.
+5. **Handling Missing Clip Access vs Missing Specific Evidence (Operator Decision):**
+   - **Clip access missing:** If the operator reports that the video file cannot be opened, played, or accessed, the operator marks the review as `BLOCKED` in the tracker and `NOT_REVIEWED` in the QC report. The checklist is disabled until a playable file is provided.
+   - **Evidence for a specific check missing:** If the clip is playable, but a specific check cannot be confirmed (e.g., foot pedal contact hidden by deep shadow), the operator selects `NOT_CHECKED` or `REVIEW` for that individual check. This puts the scene into `REVIEW` status, without falsely treating the entire clip as unreviewable (`NOT_REVIEWED`).
+6. **Wardrobe Category Serialization:**
+   - Wardrobe defects affecting character identity are recorded under `identity`.
    - Outfit/accessory defects that do not alter character identity are recorded under `other`, and the UI automatically prepends `wardrobe:` to the notes field, adhering to schema constraints without data loss.
 
 ---
 
 ### Journey 7: Export & Backup
 
-- **Export Triggers:** Header buttons `[Xuất JSON]` and `[Xuất Markdown]`.
-- **Pre-Export Validation Check:**
-  - Before triggering download, GoGlow runs client-side validation:
-    1. Does `sum(scene.duration_seconds) == target_duration_seconds`?
-    2. Are all required fields non-empty (`id`, `start_state`, `primary_action`, `end_state`, `prompt`)?
-    3. Are scene IDs unique?
-    4. Are there any false generation statuses without verified `media_uri`?
-- **Validation Failure Treatment:**
-  - If validation fails, the export is blocked and a **Validation Drawer** displays exact errors with jump-links:
-    - ❌ *Cảnh báo: Tổng thời lượng cảnh là 34s, mục tiêu là 36s (chênh lệch 2s).*
-    - ❌ *Cảnh 03: Chưa có mô tả 'Hành động chính'.*
-  - The drawer provides an optional helper button: `[Cân đối lại thời lượng]` (Auto-balance).
-    - Clicking it opens a preview modal showing the recalculated distribution (`divmod(target, count)`).
-    - Changes are applied **only after explicit operator confirmation**, preventing accidental overwrite of intentional custom timings.
-- **Validation Success Treatment:**
-  - Generates downloadable `goglow-project.json` (100% compliant with `specs/scene-plan.schema.json`).
-  - Generates downloadable `goglow-plan.md` production packet.
-  - Status bar displays: *"Đã xuất thành công tệp goglow-project.json lúc HH:MM:SS"*.
+- **Export Actions:** Header buttons `[Xuất JSON]` and `[Xuất Markdown]`.
+- **Strict Export Block Rule on Duration Mismatch (No Bypass):**
+  - Aligned with `docs/workflow.md` (which mandates that scene durations must sum to target duration) and `src/goglow/validator.py`:
+  - The UI continuously calculates:
+    $$\Delta = \sum \text{scene.duration\_seconds} - \text{target\_duration\_seconds}$$
+  - **If $\Delta \neq 0$:**
+    - Both Export buttons (`[Xuất JSON]` and `[Xuất Markdown]`) are **strictly disabled/blocked** with a lock badge and visual warning state.
+    - If user hovers or clicks, a blocking banner displays:
+      > *"Không thể xuất: Tổng thời lượng các cảnh (X giây) không bằng thời lượng mục tiêu (Y giây). Chênh lệch: Z giây. Vui lòng điều chỉnh thời lượng các cảnh bằng nhau trước khi xuất."*
+    - **No bypass option:** There is no confirmation dialog, override button, or "proceed anyway" option to bypass this constraint.
+    - **No silent/automatic duration modification:** GoGlow never automatically alters scene durations without an explicit user action.
+    - **Redistribution Helper:** The user may manually edit individual scene duration inputs, or click the optional helper button `[Cân đối lại thời lượng]`.
+      - Clicking the helper opens a preview modal displaying the proposed even redistribution (`divmod(target, count)`).
+      - Changes are applied **only after the user explicitly clicks `[Xác nhận áp dụng]`**, preventing unintended overwriting of custom timings.
+  - **If $\Delta == 0$ and all required fields are valid:**
+    - Export buttons are active and enabled.
+    - Generates downloadable `goglow-project.json` (100% compliant with `specs/scene-plan.schema.json`).
+    - Generates downloadable `goglow-plan.md` production packet.
+    - Status bar displays: *"Đã xuất thành công tệp goglow-project.json lúc HH:MM:SS"*.
 
 ---
 
@@ -286,7 +296,7 @@ Per `docs/media-qc-protocol.md`, Section 2.3:
 | **Empty State** | Scene Workspace | When project has 0 scenes, displays friendly illustration and text: *"Chưa có cảnh nào trong kế hoạch. Hãy thiết lập thông số bên trái và bấm 'Tạo kế hoạch cảnh' hoặc bấm '+ Thêm cảnh'."* |
 | **Empty State** | Reference Box | When no reference images are chosen: *"Kéo thả hoặc chọn ảnh chân dung, toàn thân, trang phục để đối chiếu. Ảnh được bảo vệ an toàn trong phiên."* |
 | **Loading State** | Project Import | Spinner overlay with text: *"Đang phân tích cấu trúc dự án và kiểm tra tính hợp lệ..."* |
-| **Validation Error** | Duration Discrepancy | Timeline bar turns yellow/orange; duration counter pulses: *"32s / 36s (-4s)"*; tooltip explains exact discrepancy. |
+| **Validation Error** | Duration Discrepancy | Timeline bar turns amber/red; duration counter pulses: *"32s / 36s (-4s)"*; Export buttons are strictly disabled; tooltip explains exact discrepancy; no bypass button provided. |
 | **Validation Error** | Duplicate Scene ID | Input field highlights in red with tooltip: *"Mã cảnh đã tồn tại, vui lòng đổi tên khác."* |
 | **Unsaved Changes** | App Header | Shows an amber dot and label: `● Có thay đổi chưa lưu`. Triggering page reload/close fires browser `beforeunload` dialog: *"Bạn có thay đổi chưa lưu trong dự án GoGlow."* |
 | **Storage Error** | `localStorage` full | If browser storage quota is exceeded, shows error banner: *"Bộ nhớ trình duyệt đã đầy. Vui lòng sử dụng nút 'Xuất JSON' để lưu dự án về máy tính."* |
@@ -319,10 +329,10 @@ Per `docs/media-qc-protocol.md`, Section 2.3:
    - Uses `<header>`, `<main>`, `<aside>`, `<section>`, `<article>`, `<nav>`.
    - Form fields have associated `<label>` tags with matching `for` attributes.
 3. **Screen Reader Announcements (`aria-live`):**
-   - Live region (`aria-live="polite"`) for status notices: *"Đã sao chép prompt"*, *"Đã lưu dự án"*, *"Lỗi xác thực: tổng thời lượng chưa khớp"*.
+   - Live region (`aria-live="polite"`) for status notices: *"Đã sao chép prompt"*, *"Đã lưu dự án"*, *"Lỗi xác thực: tổng thời lượng chưa khớp, xuất bị chặn"*.
 4. **Keyboard Shortcuts:**
    - `Ctrl + S` / `Cmd + S`: Trigger project save to `localStorage`.
-   - `Ctrl + Shift + E` / `Cmd + Shift + E`: Trigger JSON export.
+   - `Ctrl + Shift + E` / `Cmd + Shift + E`: Trigger JSON export (only active when duration sum matches).
    - `Alt + N`: Add new scene to sequence.
    - `Escape`: Close any open modal dialog.
 
@@ -330,27 +340,35 @@ Per `docs/media-qc-protocol.md`, Section 2.3:
 
 ## 7. Concrete Acceptance Criteria (Gherkin Format)
 
-### AC-1: Project Duration Sum Enforcement & Auto-Balance
+### AC-1: Strict Export Blocking on Duration Sum Mismatch
 ```gherkin
-Scenario: User alters scene duration causing total mismatch
+Scenario: User alters scene duration causing total mismatch and attempts export
   Given the project target duration is set to 36 seconds
   And Scene 1 is 9s, Scene 2 is 9s, Scene 3 is 9s, Scene 4 is 9s (total 36s)
-  When the user edits Scene 1 duration from 9s to 12s
-  Then the duration budget meter immediately updates to display "39s / 36s (+3s)" with a warning style
-  And attempting to export displays a blocking validation drawer: "Tổng thời lượng các cảnh (39s) không khớp mục tiêu (36s)."
+  When the user edits Scene 1 duration from 9s to 12s (total 39s)
+  Then the duration budget meter immediately updates in real time to display "39s / 36s (+3s)" in error state
+  And both the "Xuất JSON" and "Xuất Markdown" export actions are strictly disabled and blocked
+  And no bypass or "export anyway" confirmation button is provided to the user
   When the user clicks "[Cân đối lại thời lượng]"
-  Then a preview dialog shows the proposed even redistribution (9s, 9s, 9s, 9s)
-  And when confirmed, scene durations update and the duration meter returns to "36s / 36s (Đủ thời lượng)"
+  Then a preview modal appears displaying the proposed redistribution (9s, 9s, 9s, 9s) without modifying the scene cards yet
+  When the user clicks "[Xác nhận áp dụng]" in the modal
+  Then scene durations update to match the target duration (36s total)
+  And the duration meter updates to "36s / 36s (Đủ thời lượng: Khớp mục tiêu)"
+  And the Export JSON and Export Markdown buttons become enabled
 ```
 
-### AC-2: Guarded Status Transition without Verified Media
+### AC-2: Manual Declaration Gate and Human QC Requirement for Approval
 ```gherkin
-Scenario: User attempts to mark an ungenerated scene as APPROVED
-  Given Scene 1 has status "PLANNED" and no "media_uri"
-  When the user opens the status selector and clicks "APPROVED"
-  Then the status is NOT set to "APPROVED" immediately
-  And a dialog opens requiring a valid media file URI and operator playback confirmation
-  And if dismissed without entering verified media URI, status remains "PLANNED"
+Scenario: User attempts to advance scene without declared media and human QC
+  Given Scene 1 has status "PLANNED" and no declared "media_uri"
+  When the user attempts to change status directly to "APPROVED"
+  Then the transition is blocked by the UI
+  And a notice informs the user that a declared media_uri and a completed human QC review (PASS) are required
+  When the user declares a media_uri and ticks the manual confirmation checkbox
+  Then the scene transitions to "GENERATED" (not "APPROVED")
+  And the UI explicitly notes that declaring a media_uri does not verify file validity or constitute QC approval
+  When human QC is subsequently recorded with status "PASS" and zero BLOCKER or MAJOR defects
+  Then the operator can transition the scene to "APPROVED"
 ```
 
 ### AC-3: Privacy Preservation for Reference Images
@@ -397,9 +415,9 @@ Scenario: Updating scene motion fields updates generated prompt
 ### AC-7: Missing Clip Access vs Missing Specific Evidence
 ```gherkin
 Scenario: Distinguishing unplayable clips from unverified checklist items
-  Given Scene 1 has a playable media_uri attached
-  When the operator performs QC and cannot confirm foot pedal contact due to deep shadow
-  Then the operator marks "physics" as "REVIEW" and leaves other passing checks as "PASS"
+  Given Scene 1 has a declared media_uri attached
+  When the operator inspects the clip and cannot confirm foot pedal contact due to deep shadow
+  Then the operator marks "physics" check as "REVIEW" and leaves passing checks as "PASS"
   And the scene status updates to "REVIEW" (not "NOT_REVIEWED" or "BLOCKED")
 ```
 
@@ -412,17 +430,20 @@ This specification incorporates and reconciles all architectural directives from
 1. **Severity Nomenclature Reconciliation:**
    - Media defect severity is strictly defined as `BLOCKER` / `MAJOR` / `MINOR` / `NOTE` (aligned with `docs/media-qc-protocol.md`).
    - Software QA severity is strictly defined as `P0` / `P1` / `P2` / `P3` (aligned with `docs/qa-acceptance.md`).
-   - The UI avoids label collisions by never using P-labels in the clip QC workflow.
+   - The UI avoids label collisions by never using P-labels in the clip QC workflow, Mini QC Modal, or acceptance criteria.
 2. **Canonical Workflow Source of Truth:**
    - Formally references Section 2.3 of `docs/media-qc-protocol.md` as the canonical source for mapping QC report outcomes (`PASS`, `REVIEW`, `FAIL`, `NOT_REVIEWED`) to production workflow states.
-3. **Status Machine Evidence Gate (Resolving Grok P0 Finding #2):**
-   - The UI requires explicit `media_uri` entry and an operator confirmation checkbox before advancing to `GENERATED`.
-   - Advancing to `APPROVED` requires a completed QC review record with zero unresolved `BLOCKER` or `MAJOR` defects.
+3. **Status Machine Manual Declaration Gate (Reconciliation with Grok Finding #2 & ChatGPT Guidance):**
+   - The UI introduces a manual user declaration modal requiring `media_uri` entry and user confirmation before moving to `GENERATED`, eliminating accidental one-click status jumps.
+   - The specification strictly avoids claiming that false status defects are completely eliminated by code alone, acknowledging that GoGlow M1 has no automated video verification mechanism; having a `media_uri` is solely a user declaration.
+   - Having a `media_uri` does not imply QC pass or approval; transition to `APPROVED` remains strictly dependent on human visual inspection per `docs/media-qc-protocol.md` Section 2.3.
 4. **Aspect Ratio Alignment (Resolving Grok P2 Finding #1):**
    - Enforces `9:16` as the single verified option in M1, resolving discrepancy with `src/goglow/validator.py`.
-5. **Duration Sum Feedback & Auto-Balance (Resolving Grok P2 Finding #3):**
-   - Real-time duration meter visibly alerts discrepancy; pre-export validation drawer prevents invalid JSON export.
-   - Optional `[Cân đối lại thời lượng]` tool preview modal gives user full control before redistributing seconds.
+5. **Strict Duration Sum Enforcement & Export Blocking (Grok Finding #3 & `docs/workflow.md`):**
+   - Enforces `docs/workflow.md` requirement that scene durations must sum to target duration.
+   - Real-time UI indicator displays exact discrepancy.
+   - Export JSON and Markdown are strictly blocked (disabled) when sum != target; no bypass option is provided.
+   - Scene durations are never silently or automatically altered; redistribution helper requires explicit user invocation, modal diff preview, and confirmation.
 6. **Wardrobe Schema Alignment:**
    - Adheres to ChatGPT's recommendation to keep schema unchanged for M1 by serializing general wardrobe defects under `other` with `wardrobe:` prefix, and character-altering wardrobe defects under `identity`.
 7. **Heuristic Constraints vs Automated Verification:**
