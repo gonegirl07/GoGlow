@@ -25,7 +25,12 @@ Software QA severity (`P0`–`P3`) is not the media defect severity scale. A dec
 
 ### Phase 2 — P2: align browser and Python data contracts
 
-- Lock the browser prototype to the currently supported `9:16` aspect ratio.
+- Accept a 30-second minimum and reject shorter targets without silently changing user input.
+- Restrict recovery from `BLOCKED` to planning states; clear media/QC evidence on recovery.
+- Invalidate QC drafts/reports safely when media changes, and keep draft check objects separate from saved reports.
+- Offer opt-in automatic transitions after media declaration and a complete QC PASS.
+
+- Read the selected aspect ratio from project settings and validate supported ratios consistently.
 - Block JSON and Markdown exports when scene durations do not equal the target; no override.
 - Check required fields, duplicate scene IDs, and QC checklist presence before browser export.
 - Serialize status history and activity-specific QC checklist in browser-generated plans.
