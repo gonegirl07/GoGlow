@@ -33,7 +33,7 @@ class FlowPilotContractTests(unittest.TestCase):
         self.assertIn("account_email_verified", self.script)
 
     def test_model_option_comparison_strips_icon_line_but_remains_exact(self):
-        self.assertIn("rawText.split(/\\\\r?\\\\n/)", self.script)
+        self.assertIn(r"rawText.split(/\r?\n/)", self.script)
         self.assertIn("if (text !== model)", self.script)
 
     def test_settings_failures_attempt_overlay_cleanup(self):
