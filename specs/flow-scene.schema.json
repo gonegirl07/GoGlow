@@ -6,7 +6,6 @@
   "required": [
     "scene_id",
     "reference_images",
-    "character_description",
     "model",
     "resolution",
     "prompt"
@@ -30,7 +29,28 @@
     "character_description": {
       "type": "string",
       "minLength": 1,
-      "description": "ASCII English description of the person in the supplied reference images."
+      "description": "Optional ASCII English description of the person. Omit or set face_description_mode to reference_only when the face references should be the source of truth."
+    },
+    "face_reference_id": {
+      "type": "string",
+      "minLength": 1,
+      "description": "Backward-compatible single primary face reference path; must also occur in reference_images."
+    },
+    "face_reference_ids": {
+      "type": "array",
+      "minItems": 1,
+      "maxItems": 3,
+      "uniqueItems": true,
+      "items": {
+        "type": "string",
+        "minLength": 1
+      },
+      "description": "Optional ordered list of same-person face references from reference_images. The first path is the primary anchor; remaining paths provide additional angles."
+    },
+    "face_description_mode": {
+      "enum": ["include", "reference_only"],
+      "default": "include",
+      "description": "Use reference_only to omit potentially conflicting textual facial-shape descriptions."
     },
     "model": {
       "const": "Omni 1.1 Flash"
