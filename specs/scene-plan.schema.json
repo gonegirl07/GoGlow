@@ -179,7 +179,76 @@
           "qc_report": {
             "$ref": "./qc-report.schema.json"
           }
-        }
+        },
+        "allOf": [
+          {
+            "if": {
+              "properties": {
+                "status": {
+                  "enum": [
+                    "PROMPT_READY",
+                    "WAITING_FOR_GENERATION",
+                    "GENERATED",
+                    "QC_REVIEW",
+                    "NEEDS_REVISION",
+                    "PROMPT_REVISED",
+                    "APPROVED",
+                    "BLOCKED"
+                  ]
+                }
+              },
+              "required": [
+                "status"
+              ]
+            },
+            "then": {
+              "required": [
+                "status_history"
+              ]
+            }
+          },
+          {
+            "if": {
+              "properties": {
+                "status": {
+                  "enum": [
+                    "GENERATED",
+                    "QC_REVIEW",
+                    "APPROVED"
+                  ]
+                }
+              },
+              "required": [
+                "status"
+              ]
+            },
+            "then": {
+              "required": [
+                "media_uri",
+                "status_history"
+              ]
+            }
+          },
+          {
+            "if": {
+              "properties": {
+                "status": {
+                  "const": "APPROVED"
+                }
+              },
+              "required": [
+                "status"
+              ]
+            },
+            "then": {
+              "required": [
+                "qc_report",
+                "media_uri",
+                "status_history"
+              ]
+            }
+          }
+        ]
       }
     },
     "project_name": {
