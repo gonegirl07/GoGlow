@@ -145,7 +145,7 @@ class FlowPilotContractTests(unittest.TestCase):
         self.assertIn('Character description must be ASCII/English only', self.script)
         self.assertIn('Scene JSON must contain a non-empty character_description', self.script)
         self.assertIn('uploadSceneReferences(chosen.page, selectors, referenceImages, prompt)', self.script)
-        self.assertLess(self.script.index('await uploadSceneReferences(chosen.page, selectors, referenceImages)'), self.script.index('await prompt.fill(scene.prompt'))
+        self.assertLess(self.script.index('await uploadSceneReferences(chosen.page, selectors, referenceImages, prompt)'), self.script.index('await prompt.fill(scene.prompt'))
         self.assertIn('reference_image_count: referenceImages.length', self.script)
         self.assertIn('ingredient_reference_items', self.script)
         self.assertIn('Stopping before prompt fill/Create', self.script)
