@@ -242,9 +242,9 @@ class FlowPilotContractTests(unittest.TestCase):
         self.assertIn('referenceImages: orderedReferenceImages, faceReferenceImage', self.script)
 
     def test_primary_face_anchor_is_explicit_in_ascii_composed_prompt(self):
-        self.assertIn("PRIMARY FACE REFERENCE: The first attached reference image is the primary face identity anchor.", self.script)
+        self.assertIn("PRIMARY FACE REFERENCE: The first attached image is the primary face identity anchor.", self.script)
         self.assertIn("Match its facial structure, eye shape and spacing, nose, lips, jawline, and overall likeness as closely as possible.", self.script)
-        self.assertIn("Use the remaining attached reference images only as supporting references", self.script)
+        self.assertIn("Use only the remaining non-face reference images as supporting references", self.script)
         self.assertIn("if (!/^[\\x00-\\x7F]+$/.test(scene.prompt))", self.script)
 
     def test_dry_run_reports_selected_face_reference_and_order(self):
@@ -253,8 +253,8 @@ class FlowPilotContractTests(unittest.TestCase):
         self.assertIn('reference_order: "primary face reference first, supporting references after"', self.script)
 
     def test_face_reference_defaults_to_first_image_for_older_jobs(self):
-        self.assertIn("faceReferenceImage = referenceImages[0];", self.script)
-        self.assertIn("scene.face_reference_id = scene.reference_images[0];", self.script)
+        self.assertIn("? referenceImages[0]", self.script)
+        self.assertIn("scene.face_reference_id = scene.face_reference_ids[0];", self.script)
 
 
     def test_multiple_face_references_are_validated_and_ordered_before_supporting_images(self):
