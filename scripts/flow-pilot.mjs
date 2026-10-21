@@ -311,7 +311,7 @@ function nextLedgerAttemptNumber(pathname, sceneId) {
   return max + 1;
 }
 
-function makeGenerationLedgerRecord({ scene, projectId, ledgerProjectId, prompt, estimatedCost, beforeBalance, afterBalance, resultStatus, mediaUri, downloadedFile, downloadError, timeoutError, attemptNumber, attemptId, startedOn }) {
+function makeGenerationLedgerRecord({ scene, projectId, ledgerProjectId, prompt, estimatedCost, beforeBalance, afterBalance, resultStatus, mediaUri, downloadedFile, downloadError, timeoutError, attemptNumber, attemptId, startedOn, variantIndex = 1, variantCount = 1 }) {
   const observedDelta = beforeBalance !== null && afterBalance !== null && beforeBalance >= afterBalance
     ? beforeBalance - afterBalance : null;
   const actualAmount = observedDelta !== null && observedDelta > 0 ? observedDelta : null;
@@ -324,6 +324,11 @@ function makeGenerationLedgerRecord({ scene, projectId, ledgerProjectId, prompt,
     attempt_id: attemptId,
     project_id: ledgerProjectId || scene.goglow_project_id || projectId || "google-flow-project",
     scene_id: scene.scene_id,
+    job_id: scene.job_id || scene.scene_id,
+    variant_index: variantIndex,
+    variant_count: variantCount,
+    selected_variant: null,
+    variant_selection_reason: null,
     attempt_number: attemptNumber || 1,
     retry_of: null,
     provider: "google_flow",
@@ -369,13 +374,13 @@ function makeGenerationLedgerRecord({ scene, projectId, ledgerProjectId, prompt,
       sha256: downloadedFile && fs.existsSync(downloadedFile) ? createHash("sha256").update(fs.readFileSync(downloadedFile)).digest("hex") : null,
       integrity_status: downloadedFile ? "verified" : (mediaUri ? "not_checked" : "missing"),
     },
-    qc: { status: "not_reviewed", observed_defects: [], checks_passed: null, checks_total: null, reviewed_by: null, reviewed_on: null, notes: "Human QC has not been recorded." },
+    qc: { status: "not_reviewed", observed_defects: [], checks_passed: null, checks_total: null, reviewed_by: null, reviewed_on: null, notes: "Human QC has not been recorded.", watermark_status: scene.watermark_status || "not_reviewed" },
     created_by: "browser_automation",
     notes: [downloadError ? `Download failed: ${downloadError}` : null, timeoutError ? `Wait ended without verified completion: ${timeoutError}` : null].filter(Boolean).join(" "),
   };
 }
 
-async function waitForGenerationAndDownload(page, selectors, { beforeKeys, beforeBalance, timeoutMs, downloadDir, sceneId, attemptId, timeoutScreenshot }) {
+async function waitForGenerationAndDownload(page, selectors, { beforeKeys, beforeBalance, timeoutMs, downloadDir, sceneId, attemptId, timeoutScreenshot, variantIndex = 1, variantCount = 1 }) {
   const itemLocator = page.locator(selectors.generated_video_items);
   let deadline = Date.now() + timeoutMs;
   let chargedExtensionUsed = false;
@@ -517,7 +522,8 @@ async function waitForGenerationAndDownload(page, selectors, { beforeKeys, befor
     const safeAttempt = String(attemptId || "attempt").replace(/[^a-zA-Z0-9_-]/g, "_");
     const targetDir = path.resolve(downloadDir);
     fs.mkdirSync(targetDir, { recursive: true });
-    const target = path.join(targetDir, `${safeScene}__${safeAttempt}${extension}`);
+    const targetName = variantCount > 1 ? `${safeScene}__v${variantIndex}${extension}` : `${safeScene}__${safeAttempt}${extension}`;
+    const target = path.join(targetDir, targetName);
     if (fs.existsSync(target)) throw new Error(`Refusing to overwrite an existing scene/attempt download: ${target}`);
     await download.saveAs(target);
     if (!fs.statSync(target).size) throw new Error("Downloaded media file is empty.");
@@ -955,6 +961,14 @@ async function loadInputs(args) {
   }
   if (scene.expression && !/^[\x00-\x7F]+$/.test(scene.expression)) throw new Error("Expression must be ASCII/English only; non-ASCII characters are blocked before touching Flow.");
   if (!/^[\x00-\x7F]+$/.test(scene.prompt)) throw new Error("Prompt must be ASCII/English only; non-ASCII characters are blocked before touching Flow.");
+  const variants = scene.variants === undefined ? 1 : scene.variants;
+  if (!Number.isInteger(variants) || variants < 1 || variants > 3) throw new Error("variants must be an integer from 1 to 3.");
+  const seatedShot = /\b(?:seated|sitting|sit|kneeling|kneel)\b/i.test(scene.scene_id + " " + scene.prompt);
+  scene.framing_helper_applied = scene.framing_helper === false ? false : (scene.framing_helper === true || seatedShot);
+  if (scene.framing_helper_applied) {
+    const framingSentence = "Camera pulled back, with a wide margin on both sides of the knees; keep both knees comfortably inside the frame.";
+    if (!scene.prompt.includes(framingSentence)) scene.prompt = scene.prompt.trim() + " " + framingSentence;
+  }
   if (scene.character_description && !/^[\x00-\x7F]+$/.test(scene.character_description)) throw new Error("Character description must be ASCII/English only; non-ASCII characters are blocked before touching Flow.");
   if (!Array.isArray(scene.reference_images) || scene.reference_images.length < 1 || scene.reference_images.length > 3) {
     throw new Error("Scene JSON must provide reference_images as an array of 1 to 3 local file paths.");
@@ -1104,6 +1118,10 @@ async function readCreditCost(page) {
 
 async function prepare(args, browser, rl) {
   const { scene, selectors, referenceImages, faceReferenceImage } = await loadInputs(args);
+  const variantIndex = args._variantIndex || 1;
+  const variantCount = args._variantCount || scene.variants || 1;
+  scene.variant_index = variantIndex;
+  scene.variant_count = variantCount;
   waitForSelectors(selectors, args);
   const chosen = await chooseFlowTab(browser, args);
   const originalUrl = chosen.page.url();
@@ -1113,11 +1131,14 @@ async function prepare(args, browser, rl) {
   console.log(`Selected existing tab [${chosen.index}] context=${chosen.contextIndex}\nTitle: ${chosen.title}\nURL: ${chosen.url}\nProject ID: ${chosen.projectId || "legacy Flow route"}`);
   const account = await verifyAccount(chosen.page, selectors, args.expectedEmail);
   console.log(`Verified account email from page DOM: ${account.observedEmail}`);
-  await askExact(
-    rl,
-    `Confirm account ${account.observedEmail} has available credit and this is the intended Flow project. Type CONFIRM ACCOUNT ${args.accountLabel} HAS CREDIT: `,
-    `CONFIRM ACCOUNT ${args.accountLabel} HAS CREDIT`,
-  );
+  if (!args._accountConfirmed) {
+    await askExact(
+      rl,
+      `Confirm account ${account.observedEmail} has available credit and this is the intended Flow project. Type CONFIRM ACCOUNT ${args.accountLabel} HAS CREDIT: `,
+      `CONFIRM ACCOUNT ${args.accountLabel} HAS CREDIT`,
+    );
+    args._accountConfirmed = true;
+  }
 
   const prompt = promptForCleanup = await exactVisibleLocator(chosen.page, selectors.prompt, "prompt field");
   const create = await exactVisibleLocator(chosen.page, selectors.create, "Create button");
@@ -1189,6 +1210,8 @@ async function prepare(args, browser, rl) {
     throw new Error("Flow tab URL changed unexpectedly while preparing. Stopping before Create.");
   }
 
+  // Clear the prior variant's prompt and Ingredients chips before preparing another variant.
+  if (variantIndex > 1) await clearPromptVerified(prompt, selectors, 4000);
   // Attach and verify the exact per-scene reference images only after closing Settings.
   // If Flow does not expose a unique add button, file input, and visible reference-item selector,
   // stop before filling the prompt or enabling a possible Create action.
@@ -1257,6 +1280,11 @@ async function prepare(args, browser, rl) {
     face_reference_ids: (scene.face_reference_ids || [scene.face_reference_id]).map(value => path.basename(value)),
     face_description_mode: scene.face_description_mode || "include",
     reference_order: "primary face reference first, supporting references after",
+    job_id: scene.job_id || scene.scene_id,
+    variant_index: variantIndex,
+    variant_count: variantCount,
+    total_estimated_credit_cost: creditCost === null ? null : creditCost * variantCount,
+    framing_helper_applied: Boolean(scene.framing_helper_applied),
     character_description: scene.character_description,
     model: scene.model,
     resolution: scene.resolution,
@@ -1283,12 +1311,23 @@ async function prepare(args, browser, rl) {
     return;
   }
 
-  await askExact(rl, `This action may consume credit. Type CREATE ONE VIDEO FOR ${scene.scene_id} to submit exactly once: `,
-    `CREATE ONE VIDEO FOR ${scene.scene_id}`);
+  if (variantCount > 1) {
+    if (!args._variantsConfirmed) {
+      if (creditCost === null) throw new Error("Cannot run multiple variants safely because Flow did not expose the per-clip credit estimate; refusing to submit without a total estimate.");
+      const totalEstimate = creditCost * variantCount;
+      await askExact(rl,
+        `This will submit ${variantCount} separate variants for job ${scene.job_id || scene.scene_id}, estimated total ${totalEstimate} credits (${creditCost} each). Type CREATE ${variantCount} VARIANTS FOR ${scene.scene_id}: `,
+        `CREATE ${variantCount} VARIANTS FOR ${scene.scene_id}`);
+      args._variantsConfirmed = true;
+    }
+  } else {
+    await askExact(rl, `This action may consume credit. Type CREATE ONE VIDEO FOR ${scene.scene_id} to submit exactly once: `,
+      `CREATE ONE VIDEO FOR ${scene.scene_id}`);
+  }
   args._waitStartedOn = new Date().toISOString();
   appendEvent(args.log, {
-    event: "submission_intent", scene_id: scene.scene_id, reference_image_count: referenceImages.length, reference_image_names: referenceImages.map(file => path.basename(file)), face_reference_id: scene.face_reference_id, face_reference_image: path.basename(faceReferenceImage), character_description: scene.character_description, model: scene.model, resolution: scene.resolution,
-    prompt: scene.prompt, expression: scene.expression || null, account_email: account.observedEmail, project_id: chosen.projectId,
+    event: "submission_intent", scene_id: scene.scene_id, job_id: scene.job_id || scene.scene_id, variant_index: variantIndex, variant_count: variantCount, reference_image_count: referenceImages.length, reference_image_names: referenceImages.map(file => path.basename(file)), face_reference_id: scene.face_reference_id, face_reference_image: path.basename(faceReferenceImage), character_description: scene.character_description, model: scene.model, resolution: scene.resolution,
+    prompt: scene.prompt, expression: scene.expression || null, framing_helper_applied: Boolean(scene.framing_helper_applied), account_email: account.observedEmail, project_id: chosen.projectId,
     estimated_credit_cost: creditCost, url: chosen.page.url(), status: "submission_in_progress",
   });
   try {
@@ -1338,6 +1377,8 @@ async function prepare(args, browser, rl) {
           sceneId: scene.scene_id,
           attemptId: args._waitAttemptId,
           timeoutScreenshot: `${screenshot}.wait-timeout.png`,
+          variantIndex,
+          variantCount,
         });
         downloadedFile = result.downloadedFile;
         mediaUri = result.mediaUri || chosen.page.url();
@@ -1365,6 +1406,7 @@ async function prepare(args, browser, rl) {
         scene, projectId: chosen.projectId, ledgerProjectId: args.ledgerProjectId, prompt: scene.prompt, estimatedCost: creditCost,
         beforeBalance: args._waitInitialBalance ?? null, afterBalance,
         resultStatus, mediaUri, downloadedFile, downloadError, timeoutError, attemptNumber, attemptId: args._waitAttemptId, startedOn: args._waitStartedOn,
+        variantIndex, variantCount,
       });
       try {
         const ledgerPath = appendGenerationLedger(args.ledgerOutput, ledgerRecord);
@@ -1429,7 +1471,25 @@ async function main() {
   }
   const browser = await chromium.connectOverCDP(CDP_ENDPOINT);
   const rl = createConfirmationReader();
-  try { await prepare(args, browser, rl); }
+  try {
+    let variantCount = 1;
+    if (args.scene) {
+      const inputScene = JSON.parse(fs.readFileSync(path.resolve(args.scene), "utf8"));
+      variantCount = inputScene.variants === undefined ? 1 : inputScene.variants;
+      if (!Number.isInteger(variantCount) || variantCount < 1 || variantCount > 3) throw new Error("variants must be an integer from 1 to 3.");
+    }
+    args._variantCount = variantCount;
+    if (args.execute && variantCount > 1) {
+      for (let index = 1; index <= variantCount; index += 1) {
+        args._variantIndex = index;
+        console.log(`\\nPreparing variant ${index}/${variantCount} for the same job and prompt.`);
+        await prepare(args, browser, rl);
+      }
+    } else {
+      args._variantIndex = 1;
+      await prepare(args, browser, rl);
+    }
+  }
   finally {
     rl.close();
     await browser.close();
