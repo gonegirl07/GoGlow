@@ -151,8 +151,13 @@ def validate_project(project: Any) -> list[str]:
         if status == "APPROVED":
             errors.extend(_validate_qc_report(scene.get("qc_report"), prefix))
             report = scene.get("qc_report")
-            if isinstance(report, dict) and _nonempty_string(media_uri) and report.get("media_uri") and report.get("media_uri") != media_uri:
-                errors.append(f"{prefix}.qc_report.media_uri must match the scene media_uri.")
+            if isinstance(report, dict):
+                if report.get("scene_id") != scene_id:
+                    errors.append(f"{prefix}.qc_report.scene_id must match the scene id.")
+                if not _nonempty_string(report.get("media_uri")):
+                    errors.append(f"{prefix}.qc_report.media_uri must identify the reviewed clip.")
+                elif _nonempty_string(media_uri) and report.get("media_uri") != media_uri:
+                    errors.append(f"{prefix}.qc_report.media_uri must match the scene media_uri.")
         if status == "QC_REVIEW" and not _nonempty_string(media_uri):
             # Keep this explicit even if the general media gate changes later.
             errors.append(f"{prefix} cannot enter QC_REVIEW without declared media.")
