@@ -14,12 +14,12 @@ STATUS_TRANSITIONS = {
     "PLANNED": {"PROMPT_READY", "BLOCKED"},
     "PROMPT_READY": {"WAITING_FOR_GENERATION", "BLOCKED"},
     "WAITING_FOR_GENERATION": {"GENERATED", "BLOCKED"},
-    "GENERATED": {"QC_REVIEW", "BLOCKED"},
-    "QC_REVIEW": {"APPROVED", "NEEDS_REVISION", "BLOCKED"},
+    "GENERATED": {"QC_REVIEW", "WAITING_FOR_GENERATION", "BLOCKED"},
+    "QC_REVIEW": {"APPROVED", "NEEDS_REVISION", "WAITING_FOR_GENERATION", "BLOCKED"},
     "NEEDS_REVISION": {"PROMPT_REVISED", "BLOCKED"},
     "PROMPT_REVISED": {"WAITING_FOR_GENERATION", "BLOCKED"},
     "APPROVED": set(),
-    "BLOCKED": {"PLANNED", "PROMPT_READY", "WAITING_FOR_GENERATION", "GENERATED", "QC_REVIEW", "NEEDS_REVISION"},
+    "BLOCKED": {"PLANNED", "PROMPT_READY"},
 }
 MEDIA_EVIDENCE_STATUSES = {"GENERATED", "QC_REVIEW", "APPROVED"}
 
@@ -79,11 +79,11 @@ def validate_project(project: Any) -> list[str]:
     for field in ("project_id", "aspect_ratio", "target_duration_seconds", "activity", "scenes"):
         if field not in project:
             errors.append(f"Missing required project field: {field}.")
-    if project.get("aspect_ratio") != "9:16":
-        errors.append("aspect_ratio must be '9:16'.")
+    if project.get("aspect_ratio") not in {"9:16", "16:9", "1:1"}:
+        errors.append("aspect_ratio must be one of: 9:16, 16:9, 1:1.")
     target = project.get("target_duration_seconds")
-    if isinstance(target, bool) or not isinstance(target, int) or target < 31:
-        errors.append("target_duration_seconds must be an integer >= 31.")
+    if isinstance(target, bool) or not isinstance(target, int) or target < 30:
+        errors.append("target_duration_seconds must be an integer >= 30.")
     activity = project.get("activity")
     if not isinstance(activity, str) or activity not in SUPPORTED_ACTIVITIES:
         errors.append(f"activity must be one of: {', '.join(sorted(SUPPORTED_ACTIVITIES))}.")
