@@ -13,6 +13,10 @@ const CDP_ENDPOINT = "http://127.0.0.1:9224";
 const LEGACY_FLOW_HOST = "labs.google";
 const FLOW_HOST = "flow.google.com";
 const PROJECT_PATH = /^\/project\/([0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12})\/?$/i;
+const ASSET_READY_TIMEOUT_MS = Number(process.env.FLOW_ASSET_READY_TIMEOUT_MS || 90000);
+if (!Number.isInteger(ASSET_READY_TIMEOUT_MS) || ASSET_READY_TIMEOUT_MS < 15000 || ASSET_READY_TIMEOUT_MS > 180000) {
+  throw new Error("FLOW_ASSET_READY_TIMEOUT_MS must be an integer from 15000 to 180000.");
+}
 
 function argsOf(argv) {
   const args = { inspect: false, execute: false, dryRun: false, clearAfterDryRun: true, tab: null, scene: null, selectors: null,
@@ -135,9 +139,23 @@ async function closeIngredientsPicker(page, selectors) {
   const backdropSelector = selectors.ingredient_picker_backdrop || ".cdk-overlay-backdrop-showing";
   const backdrop = page.locator(backdropSelector);
   const count = await backdrop.count().catch(() => 0);
-  if (count > 0 && await backdrop.last().isVisible().catch(() => false)) {
-    await backdrop.last().click({ timeout: 1500, force: true }).catch(() => {});
-    await page.waitForTimeout(150).catch(() => {});
+  if (count === 0) return;
+  const visible = await backdrop.last().isVisible().catch(() => false);
+  if (!visible) return;
+  const bounds = await backdrop.last().boundingBox().catch(() => null);
+  if (!bounds) throw new Error("Ingredients picker backdrop is visible but has no bounding box; cannot verify picker closure.");
+  await backdrop.last().click({ position: { x: 5, y: 5 }, timeout: 2500, force: true });
+  try {
+    await page.waitForFunction(selector => !Array.from(document.querySelectorAll(selector)).some(node => {
+      const style = window.getComputedStyle(node);
+      return style.visibility !== "hidden" && style.display !== "none" && Number(style.opacity || 1) > 0;
+    }), backdropSelector, { timeout: 2500 });
+  } catch {
+    throw new Error("Clicked the edge of the Ingredients picker backdrop, but the overlay is still open.");
+  }
+  const remaining = await backdrop.count().catch(() => -1);
+  if (remaining > 0 && await backdrop.last().isVisible().catch(() => false)) {
+    throw new Error("Ingredients picker closure verification failed; backdrop remains visible.");
   }
 }
 
@@ -251,7 +269,7 @@ async function openIngredientsPicker(page, selectors) {
   await page.locator(selectors.ingredient_library_item).first().waitFor({ state: "visible", timeout: 5000 }).catch(() => {});
 }
 
-async function uploadSceneReferences(page, selectors, referenceImages) {
+async function uploadSceneReferencesUnsafe(page, selectors, referenceImages) {
   const chips = page.locator(selectors.ingredient_reference_items);
   const beforeCount = await chips.count().catch(() => -1);
   if (beforeCount !== 0) throw new Error(`Ingredients already contains ${beforeCount} reference chip(s); clear the prompt manually and rerun so this run can prove which images it attached.`);
@@ -282,10 +300,9 @@ async function uploadSceneReferences(page, selectors, referenceImages) {
           const match = src.match(/[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}/i);
           return text.includes(filename) && match && !oldUuids.includes(match[0].toLowerCase());
         });
-      }, { selector: selectors.ingredient_library_item, filename, oldUuids: Array.from(existingUuids) }, { timeout: 15000 });
+      }, { selector: selectors.ingredient_library_item, filename, oldUuids: Array.from(existingUuids) }, { timeout: ASSET_READY_TIMEOUT_MS });
     } catch {
-      await closeIngredientsPicker(page, selectors);
-      throw new Error(`New upload ${filename} did not appear with a new asset UUID within 15000ms. Existing same-name assets are not reused without identity proof; stopping before prompt fill/Create.`);
+      throw new Error(`New upload ${filename} did not appear with a new asset UUID within ${ASSET_READY_TIMEOUT_MS}ms. The asset may still be processing; stopping before prompt fill/Create.`);
     }
     const newMatches = [];
     const totalMatches = await matchingAssets.count();
@@ -338,6 +355,32 @@ async function uploadSceneReferences(page, selectors, referenceImages) {
   const finalCount = await chips.count();
   if (finalCount !== referenceImages.length) throw new Error(`Ingredients chip count mismatch: expected ${referenceImages.length}, observed ${finalCount}. Stopping before prompt fill/Create.`);
   console.log(`Verified exact asset identity for ${finalCount} reference chip(s).`);
+}
+
+async function uploadSceneReferences(page, selectors, referenceImages, prompt) {
+  let uploadStarted = false;
+  try {
+    uploadStarted = true;
+    return await uploadSceneReferencesUnsafe(page, selectors, referenceImages);
+  } catch (error) {
+    const cleanup = [];
+    if (uploadStarted) {
+      try {
+        await closeIngredientsPicker(page, selectors);
+        cleanup.push("picker closed and verified");
+      } catch (closeError) {
+        cleanup.push(`picker closure FAILED: ${closeError.message}`);
+      }
+      try {
+        await clearPromptVerified(prompt, selectors, 4000);
+        cleanup.push("prompt and Ingredients chips cleared and verified");
+      } catch (clearError) {
+        cleanup.push(`prompt/chip cleanup FAILED: ${clearError.message}`);
+      }
+      console.error(`Upload failure cleanup: ${cleanup.join("; ")}`);
+    }
+    throw new Error(`Ingredients upload failed: ${error.message}. Cleanup: ${cleanup.join("; ")}`);
+  }
 }
 
 function requiredSelectorConfig(selectors) {
@@ -504,7 +547,7 @@ async function prepare(args, browser, rl) {
   // Attach and verify the exact per-scene reference images only after closing Settings.
   // If Flow does not expose a unique add button, file input, and visible reference-item selector,
   // stop before filling the prompt or enabling a possible Create action.
-  await uploadSceneReferences(chosen.page, selectors, referenceImages);
+  await uploadSceneReferences(chosen.page, selectors, referenceImages, prompt);
 
   // Only now modify the prompt. If fill fails, attempt to clear it before returning an error.
   const screenshot = path.resolve(args.screenshot || `flow-pilot-${scene.scene_id.replace(/[^a-zA-Z0-9_-]/g, "_")}-${args.execute ? "execute" : "dry-run"}.png`);
