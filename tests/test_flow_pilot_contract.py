@@ -80,6 +80,26 @@ class FlowPilotContractTests(unittest.TestCase):
         self.assertIn('await clearPromptContentsVerified(prompt, selectors, 4000)', self.script)
         self.assertIn('chipCount !== 0', self.script)
 
+    def test_deduplicated_upload_can_reuse_a_verifiable_existing_asset(self):
+        self.assertIn('event: reusedExistingUuid ? "asset_upload_reused_existing" : "asset_upload_uuid_timeout"', self.script)
+        self.assertIn('existing_uuids_before_upload: Array.from(existingUuids)', self.script)
+        self.assertIn('matching_uuids_after_timeout: diagnostics', self.script)
+        self.assertIn('selected_existing_uuid: reusedExistingUuid', self.script)
+        self.assertIn('Reusing existing Flow library asset', self.script)
+        self.assertIn('no reusable same-name asset UUID was verifiable', self.script)
+
+    def test_chip_images_are_loaded_and_uuids_rechecked_before_create(self):
+        self.assertIn('async function waitForChipImagesReady(page, selectors, timeout = 15000)', self.script)
+        self.assertIn('image.complete && image.naturalWidth > 0', self.script)
+        self.assertIn('async function verifyAttachedReferenceUuids(page, selectors, expectedUuids', self.script)
+        self.assertIn('await verifyAttachedReferenceUuids(chosen.page, selectors, attachedReferenceUuids);', self.script)
+        self.assertLess(self.script.index('await verifyAttachedReferenceUuids(chosen.page, selectors, attachedReferenceUuids);', self.script.index('This action may consume credit')), self.script.index('await finalButton.click({ timeout: 2500 })'))
+
+    def test_account_panel_cleanup_runs_when_preflight_fails(self):
+        self.assertIn('async function closeAccountMenuIfOpen(page, selectors, expectedEmail)', self.script)
+        self.assertIn('await closeAccountMenuIfOpen(chosen.page, selectors, args.expectedEmail);', self.script)
+        self.assertIn('Google account button for menu cleanup', self.script)
+
     def test_confirmation_reader_buffers_piped_stdin(self):
         self.assertIn("function createConfirmationReader()", self.script)
         self.assertIn("const queued = [];", self.script)
