@@ -16,6 +16,14 @@ The prototype can:
 
 **Prototype limitations:** no Google Flow integration, no image/video generation, no automated visual QC, and no image data included in exports. Reference images are only previewed locally; prompts still need human review. The browser prototype supports manual media URI entry and structured human-QC reports, blocks unsupported workflow transitions, and blocks export when required fields or duration totals are invalid. A media URI is a declaration, not proof that the clip exists or plays; QC is not automatic. Browser-local saving is not a substitute for exporting backups.
 
+## Google Flow pilot: per-job variants
+
+The CDP pilot runner accepts a `variants` field from 1 to 3 in the scene/job JSON (default: `1`). With `variants: 3`, it submits three separate Create actions using the same job ID, prompt, and verified reference images; each result is downloaded as `<scene_id>__v1.mp4`, `<scene_id>__v2.mp4`, and `<scene_id>__v3.mp4`. Each attempt gets its own ledger record with `job_id`, `variant_index`, and `variant_count`. Variant execution requires `--wait`, and the runner refuses multi-variant execution when Flow does not expose a per-clip credit estimate. Before the first Create, it displays the per-clip estimate and total estimated credits and asks for one explicit confirmation for the whole set. It never automatically retries an ambiguous Create.
+
+For a seated/sitting/kneeling shot, the runner appends an English ASCII framing helper by default: keep a wide margin on both sides of the knees. Set `"framing_helper": false` to opt out or `true` to force it for another shot. The helper only adjusts prompt text; visual QC remains a human task.
+
+Example job: [flow-pilot-variants.example.json](examples/flow-pilot-variants.example.json). First run `--dry-run --wait` and inspect the settings, prompt, references, total estimate, and cleanup before any explicitly approved `--execute --wait`. Import the resulting JSONL ledger into the browser prototype's **QC cấp dự án** panel to record each attempt's QC and watermark/sparkle status, then choose the best variant with a written reason. The selection and reason are recorded on all ledger attempts sharing the same `job_id`. This tool does not remove AI watermarks.
+
 ## Status
 
 The **M1 local planner and validator** is implemented in Python, and a **zero-install browser prototype** is available in app/index.html. The Python planner checks scene structure and total duration and exports Markdown. Neither implementation calls image/video models.
