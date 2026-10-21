@@ -375,9 +375,10 @@ function makeGenerationLedgerRecord({ scene, projectId, ledgerProjectId, prompt,
   };
 }
 
-async function waitForGenerationAndDownload(page, selectors, { beforeKeys, timeoutMs, downloadDir, sceneId, attemptId, timeoutScreenshot }) {
+async function waitForGenerationAndDownload(page, selectors, { beforeKeys, beforeBalance, timeoutMs, downloadDir, sceneId, attemptId, timeoutScreenshot }) {
   const itemLocator = page.locator(selectors.generated_video_items);
-  const deadline = Date.now() + timeoutMs;
+  let deadline = Date.now() + timeoutMs;
+  let chargedExtensionUsed = false;
   let newKey = null;
   let newItem = null;
   let attemptedKeys = new Set();
@@ -397,19 +398,43 @@ async function waitForGenerationAndDownload(page, selectors, { beforeKeys, timeo
       console.error(`Could not save wait-timeout screenshot: ${error.message}`);
     }
   };
-  while (Date.now() < deadline) {
+  while (true) {
+    if (Date.now() >= deadline) {
+      // A credit debit is strong evidence that Create was accepted even when Flow's
+      // media grid is stale. Give the newly charged generation one extra five-minute
+      // discovery window; never click Create again.
+      if (!chargedExtensionUsed && beforeBalance !== null) {
+        const currentBalance = await readCreditBalance(page, selectors).catch(() => null);
+        if (currentBalance !== null && currentBalance < beforeBalance) {
+          chargedExtensionUsed = true;
+          deadline = Date.now() + 300000;
+          console.warn(`Flow credit balance decreased (${beforeBalance} -> ${currentBalance}) but the new video is not yet verified; extending result polling by 300000ms without resubmitting.`);
+        } else {
+          break;
+        }
+      } else {
+        break;
+      }
+    }
+    // Flow can switch back to All media after Create. Explicitly re-select Videos
+    // on every grid poll before comparing the new result against the pre-Create inventory.
+    await activateVideosTab(page, selectors).catch(() => "not_found_no_tab_switch");
     await failIfVisible();
     const scan = await collectAllGeneratedItems(page, selectors.generated_video_items).catch(() => ({ items: [] }));
     const newItems = scan.items.filter(item => item.key && !beforeKeys.includes(item.key));
+    const firstTile = scan.items[0] || null;
+    const firstTileIsNew = Boolean(firstTile && firstTile.key && !beforeKeys.includes(firstTile.key)
+      && scan.items.length > beforeKeys.length);
+    const candidateItems = firstTileIsNew ? [firstTile] : newItems;
     const failedTile = newItems.find(item => isGenerationFailureText(`${item.state} ${item.text}`));
     if (failedTile) {
       throw new Error(`FLOW_GENERATION_FAILED: new Flow tile ${failedTile.key} reports failure: ${failedTile.text || failedTile.state}`);
     }
-    if (newItems.length > 1) {
+    if (!firstTileIsNew && newItems.length > 1) {
       throw new Error(`More than one new Flow video tile appeared after a full virtualized-grid sweep (${newItems.length}); refusing to guess which clip to download.`);
     }
-    if (newItems.length === 1 && !attemptedKeys.has(newItems[0].key)) {
-      newKey = newItems[0].key;
+    if (candidateItems.length === 1 && !attemptedKeys.has(candidateItems[0].key)) {
+      newKey = candidateItems[0].key;
       attemptedKeys.add(newKey);
       const located = await collectAllGeneratedItems(page, selectors.generated_video_items, { targetKey: newKey }).catch(() => ({ targetIndex: null }));
       if (located.targetIndex !== null) {
@@ -795,7 +820,30 @@ async function uploadSceneReferencesUnsafe(page, selectors, referenceImages) {
     }
     if (!attached) {
       const addToPrompt = await exactVisibleLocator(page, selectors.ingredient_add_to_prompt, "Add to prompt button");
-      await addToPrompt.click({ timeout: 2500 });
+      let attachedAfterClick = false;
+      let lastClickError = null;
+      // This Flow button occasionally remains visible/enabled/stable while its first
+      // click times out. Retry at most twice, but verify the UUID after every attempt
+      // before clicking again so an accepted first click cannot create a duplicate.
+      for (let clickAttempt = 0; clickAttempt < 3; clickAttempt += 1) {
+        try {
+          await addToPrompt.click({ timeout: 6000 });
+          lastClickError = null;
+        } catch (error) {
+          lastClickError = error;
+        }
+        attachedAfterClick = await page.waitForFunction(({ selector, uuid }) => Array.from(document.querySelectorAll(selector)).some(chip => {
+          const src = chip.querySelector("img.chip-image")?.getAttribute("src") || "";
+          return src.toLowerCase().includes(uuid);
+        }), { selector: selectors.ingredient_reference_items, uuid: assetUuid }, { timeout: 2500 }).then(() => true).catch(() => false);
+        if (attachedAfterClick) break;
+        if (clickAttempt < 2) await page.waitForTimeout(350);
+      }
+      if (!attachedAfterClick) {
+        await closeIngredientsPicker(page, selectors);
+        const detail = lastClickError ? ` Last click error: ${lastClickError.message}` : "";
+        throw new Error(`Add to prompt did not attach asset ${filename} after 3 verified click attempts.${detail}`);
+      }
       try {
         await page.waitForFunction(({ selector, uuid }) => Array.from(document.querySelectorAll(selector)).some(chip => {
           const src = chip.querySelector("img.chip-image")?.getAttribute("src") || "";
@@ -1264,6 +1312,7 @@ async function prepare(args, browser, rl) {
         attemptNumber = nextLedgerAttemptNumber(args.ledgerOutput, scene.scene_id);
         const result = await waitForGenerationAndDownload(chosen.page, selectors, {
           beforeKeys: args._waitInitialItemKeys,
+          beforeBalance: args._waitInitialBalance,
           beforeCount: args._waitInitialItemCount,
           timeoutMs: args.waitTimeoutMs,
           downloadDir: args.downloadDir,
