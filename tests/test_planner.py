@@ -41,6 +41,18 @@ class PlannerTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             create_project("yoga", target_duration_seconds=29)
 
+    def test_accepts_supported_aspect_ratios(self):
+        project = create_project("cycling")
+        project["aspect_ratio"] = "16:9"
+        self.assertEqual(validate_project(project), [])
+        project["aspect_ratio"] = "1:1"
+        self.assertEqual(validate_project(project), [])
+
+    def test_rejects_unsupported_aspect_ratio(self):
+        project = create_project("cycling")
+        project["aspect_ratio"] = "4:3"
+        self.assertTrue(any("aspect_ratio must be one of" in e for e in validate_project(project)))
+
     def test_rejects_unknown_activity(self):
         with self.assertRaises(ValueError):
             create_project("skydiving")
