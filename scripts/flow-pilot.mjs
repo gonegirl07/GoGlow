@@ -683,16 +683,35 @@ async function loadInputs(args) {
     return resolved;
   });
   if (new Set(referenceImages).size !== referenceImages.length) throw new Error("reference_images must contain distinct file paths.");
+  const requestedFaceReference = scene.face_reference_id;
+  let faceReferenceImage;
+  if (requestedFaceReference === undefined || requestedFaceReference === null || requestedFaceReference === "") {
+    faceReferenceImage = referenceImages[0];
+    scene.face_reference_id = scene.reference_images[0];
+  } else {
+    if (typeof requestedFaceReference !== "string" || !requestedFaceReference.trim()) {
+      throw new Error("face_reference_id must identify one path from reference_images.");
+    }
+    faceReferenceImage = path.resolve(path.dirname(scenePath), requestedFaceReference);
+    if (!referenceImages.includes(faceReferenceImage)) {
+      throw new Error("face_reference_id must match one of the image paths in this job's reference_images.");
+    }
+  }
+  // Ingredients are attached in order, so place the selected face anchor first.
+  const orderedReferenceImages = [
+    faceReferenceImage,
+    ...referenceImages.filter(imagePath => imagePath !== faceReferenceImage),
+  ];
   scene.character_description = scene.character_description.trim();
   scene.scene_prompt = scene.prompt;
-  scene.prompt = `CHARACTER DESCRIPTION: ${scene.character_description}\n\nSCENE: ${scene.prompt.trim()}\n\nUse the attached reference images as the visual identity source for the person. Preserve the same facial features, hair, skin tone, and body proportions. Do not substitute a different person.`;
+  scene.prompt = `PRIMARY FACE REFERENCE: The first attached reference image is the primary face identity anchor. Match its facial structure, eye shape and spacing, nose, lips, jawline, and overall likeness as closely as possible. Keep the same person throughout the clip.\n\nCHARACTER DESCRIPTION: ${scene.character_description}\n\nSCENE: ${scene.prompt.trim()}\n\nUse the remaining attached reference images only as supporting references for appearance and context. Do not let them override the primary face reference. Preserve the person's facial features, hair, and skin tone. Do not substitute a different person.`;
   if (!/^[\x00-\x7F]+$/.test(scene.prompt)) throw new Error("Composed prompt must contain ASCII characters only.");
   if (scene.model !== "Omni 1.1 Flash" || scene.resolution !== "360p") {
     throw new Error("Phase 3 pilot is restricted to model='Omni 1.1 Flash' and resolution='360p'.");
   }
   if (scene.duration && scene.duration !== "8s") throw new Error("Phase 3 pilot is restricted to duration='8s'.");
   requiredSelectorConfig(selectors);
-  return { scene, selectors, referenceImages };
+  return { scene, selectors, referenceImages: orderedReferenceImages, faceReferenceImage };
 }
 async function chooseFlowTab(browser, args) {
   const pages = await listPages(browser);
@@ -758,10 +777,12 @@ async function readCreditCost(page) {
 }
 
 async function prepare(args, browser, rl) {
-  const { scene, selectors, referenceImages } = await loadInputs(args);
+  const { scene, selectors, referenceImages, faceReferenceImage } = await loadInputs(args);
   waitForSelectors(selectors, args);
   const chosen = await chooseFlowTab(browser, args);
   const originalUrl = chosen.page.url();
+  let promptForCleanup = null;
+  let createMayHaveBeenClicked = false;
   try {
   console.log(`Selected existing tab [${chosen.index}] context=${chosen.contextIndex}\nTitle: ${chosen.title}\nURL: ${chosen.url}\nProject ID: ${chosen.projectId || "legacy Flow route"}`);
   const account = await verifyAccount(chosen.page, selectors, args.expectedEmail);
@@ -772,7 +793,7 @@ async function prepare(args, browser, rl) {
     `CONFIRM ACCOUNT ${args.accountLabel} HAS CREDIT`,
   );
 
-  const prompt = await exactVisibleLocator(chosen.page, selectors.prompt, "prompt field");
+  const prompt = promptForCleanup = await exactVisibleLocator(chosen.page, selectors.prompt, "prompt field");
   const create = await exactVisibleLocator(chosen.page, selectors.create, "Create button");
   const settings = await exactVisibleLocator(chosen.page, selectors.settings_trigger, "settings trigger");
 
@@ -902,6 +923,9 @@ async function prepare(args, browser, rl) {
     scene_id: scene.scene_id,
     reference_image_count: referenceImages.length,
     reference_image_names: referenceImages.map(file => path.basename(file)),
+    face_reference_id: scene.face_reference_id,
+    face_reference_image: path.basename(faceReferenceImage),
+    reference_order: "primary face reference first, supporting references after",
     character_description: scene.character_description,
     model: scene.model,
     resolution: scene.resolution,
@@ -932,7 +956,7 @@ async function prepare(args, browser, rl) {
     `CREATE ONE VIDEO FOR ${scene.scene_id}`);
   args._waitStartedOn = new Date().toISOString();
   appendEvent(args.log, {
-    event: "submission_intent", scene_id: scene.scene_id, reference_image_count: referenceImages.length, reference_image_names: referenceImages.map(file => path.basename(file)), character_description: scene.character_description, model: scene.model, resolution: scene.resolution,
+    event: "submission_intent", scene_id: scene.scene_id, reference_image_count: referenceImages.length, reference_image_names: referenceImages.map(file => path.basename(file)), face_reference_id: scene.face_reference_id, face_reference_image: path.basename(faceReferenceImage), character_description: scene.character_description, model: scene.model, resolution: scene.resolution,
     prompt: scene.prompt, account_email: account.observedEmail, project_id: chosen.projectId,
     estimated_credit_cost: creditCost, url: chosen.page.url(), status: "submission_in_progress",
   });
@@ -951,6 +975,7 @@ async function prepare(args, browser, rl) {
       args._waitInitialItemKeys = await generatedItemKeys(chosen.page, selectors.generated_video_items);
       args._waitInitialItemCount = args._waitInitialItemKeys.length;
     }
+    createMayHaveBeenClicked = true; // Conservatively preserve state if the click result is ambiguous.
     await finalButton.click({ timeout: 2500 });
     appendEvent(args.log, { event: "create_click_returned", scene_id: scene.scene_id, model: scene.model,
       resolution: scene.resolution, status: "submitted_unverified",
@@ -1029,6 +1054,16 @@ async function prepare(args, browser, rl) {
     throw error;
   }
   } catch (error) {
+    // Any pre-submit failure after locating the prompt must leave Flow clean. In particular,
+    // failures while building/printing READY-TO-CREATE metadata must not strand Ingredients chips.
+    if (promptForCleanup && !createMayHaveBeenClicked) {
+      try {
+        await clearPromptVerified(promptForCleanup, selectors, 4000);
+        console.error("Failure cleanup: prompt and Ingredients chips cleared and verified.");
+      } catch (cleanupError) {
+        console.error(`CRITICAL: failure cleanup could not verify prompt/chips empty: ${cleanupError.message}. Inspect Flow and clear manually before rerunning.`);
+      }
+    }
     await closeAccountMenuIfOpen(chosen.page, selectors, args.expectedEmail);
     if (args.waitForResult && chosen.page.url() !== originalUrl) {
       await chosen.page.goBack({ waitUntil: "domcontentloaded", timeout: 10000 }).catch(() => {});

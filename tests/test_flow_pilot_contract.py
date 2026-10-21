@@ -233,5 +233,60 @@ class FlowPilotContractTests(unittest.TestCase):
         self.assertNotIn('character_id', self.script)
 
 
+    def test_face_reference_is_selected_from_this_jobs_reference_images(self):
+        self.assertIn("const requestedFaceReference = scene.face_reference_id;", self.script)
+        self.assertIn("face_reference_id must match one of the image paths in this job's reference_images.", self.script)
+        self.assertIn("face_reference_id must identify one path from reference_images.", self.script)
+        self.assertIn("const orderedReferenceImages = [", self.script)
+        self.assertIn("faceReferenceImage,\n    ...referenceImages.filter(imagePath => imagePath !== faceReferenceImage)", self.script)
+        self.assertIn('referenceImages: orderedReferenceImages, faceReferenceImage', self.script)
+
+    def test_primary_face_anchor_is_explicit_in_ascii_composed_prompt(self):
+        self.assertIn("PRIMARY FACE REFERENCE: The first attached reference image is the primary face identity anchor.", self.script)
+        self.assertIn("Match its facial structure, eye shape and spacing, nose, lips, jawline, and overall likeness as closely as possible.", self.script)
+        self.assertIn("Use the remaining attached reference images only as supporting references", self.script)
+        self.assertIn("if (!/^[\\x00-\\x7F]+$/.test(scene.prompt))", self.script)
+
+    def test_dry_run_reports_selected_face_reference_and_order(self):
+        self.assertIn("face_reference_id: scene.face_reference_id", self.script)
+        self.assertIn("face_reference_image: path.basename(faceReferenceImage)", self.script)
+        self.assertIn('reference_order: "primary face reference first, supporting references after"', self.script)
+
+    def test_face_reference_defaults_to_first_image_for_older_jobs(self):
+        self.assertIn("faceReferenceImage = referenceImages[0];", self.script)
+        self.assertIn("scene.face_reference_id = scene.reference_images[0];", self.script)
+
+
+    def test_prepare_destructures_face_reference_image_from_load_inputs(self):
+        prepare = self.script.split("async function prepare(args, browser, rl) {", 1)[1].split(
+            "async function main()", 1
+        )[0]
+        self.assertIn(
+            "const { scene, selectors, referenceImages, faceReferenceImage } = await loadInputs(args);",
+            prepare,
+        )
+        self.assertIn("face_reference_image: path.basename(faceReferenceImage)", prepare)
+        self.assertIn("face_reference_id: scene.face_reference_id", prepare)
+
+    def test_pre_submit_errors_run_verified_prompt_and_ingredients_cleanup(self):
+        prepare = self.script.split("async function prepare(args, browser, rl) {", 1)[1].split(
+            "async function main()", 1
+        )[0]
+        self.assertIn("let promptForCleanup = null;", prepare)
+        self.assertIn("let createMayHaveBeenClicked = false;", prepare)
+        self.assertIn("if (promptForCleanup && !createMayHaveBeenClicked)", prepare)
+        self.assertIn("await clearPromptVerified(promptForCleanup, selectors, 4000);", prepare)
+        self.assertIn("Failure cleanup: prompt and Ingredients chips cleared and verified.", prepare)
+        self.assertIn("CRITICAL: failure cleanup could not verify prompt/chips empty", prepare)
+        self.assertLess(
+            prepare.index("await uploadSceneReferences(chosen.page, selectors, referenceImages, prompt)"),
+            prepare.index("face_reference_image: path.basename(faceReferenceImage)"),
+        )
+        self.assertLess(
+            prepare.index("createMayHaveBeenClicked = true;"),
+            prepare.index("await finalButton.click({ timeout: 2500 })"),
+        )
+
+
 if __name__ == "__main__":
     unittest.main()
