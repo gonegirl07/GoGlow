@@ -8,21 +8,50 @@ class FlowPilotContractTests(unittest.TestCase):
     def setUpClass(cls):
         cls.script = (Path(__file__).parents[1] / "scripts" / "flow-pilot.mjs").read_text(encoding="utf-8")
 
-    def test_uses_only_the_configured_local_cdp_endpoint(self):
+    def test_uses_only_the_configured_local_cdp_endpoint_and_never_navigates(self):
         self.assertIn('const CDP_ENDPOINT = "http://127.0.0.1:9224"', self.script)
         self.assertIn("chromium.connectOverCDP(CDP_ENDPOINT)", self.script)
         self.assertNotIn("page.goto(", self.script)
 
-    def test_dry_run_is_default_and_does_not_reach_create_click(self):
+    def test_current_flow_project_urls_are_supported_and_404_is_rejected(self):
+        self.assertIn('const FLOW_HOST = "flow.google.com"', self.script)
+        self.assertIn('url.hostname !== FLOW_HOST', self.script)
+        self.assertIn('url.pathname === "/404"', self.script)
+        self.assertIn("PROJECT_PATH.exec(url.pathname)", self.script)
+        self.assertIn("--expected-project", self.script)
+
+    def test_dry_run_stops_before_create_and_execute_requires_second_confirmation(self):
         self.assertIn("if (!args.execute)", self.script)
         self.assertIn("DRY RUN COMPLETE: stopped before clicking Create", self.script)
-        self.assertIn('if (!args.execute) {', self.script)
-        self.assertIn('await finalButton.click({ timeout: 5000 })', self.script)
+        self.assertIn("CREATE ONE VIDEO FOR", self.script)
+        self.assertIn('await finalButton.click({ timeout: 2500 })', self.script)
 
-    def test_requires_account_credit_and_second_create_confirmation(self):
-        self.assertIn("CONFIRM ACCOUNT ${args.accountLabel} HAS CREDIT", self.script)
-        self.assertIn("CREATE ONE VIDEO FOR ${scene.scene_id}", self.script)
-        self.assertIn('scene.model !== "Omni 1.1 Flash" || scene.resolution !== "360p"', self.script)
+    def test_verifies_dom_email_not_just_operator_label(self):
+        self.assertIn("--expected-email", self.script)
+        self.assertIn('button[aria-label^="Google Account:"]', self.script)
+        self.assertIn("Google account mismatch", self.script)
+        self.assertIn("account_email_verified", self.script)
+
+    def test_non_ascii_prompt_is_rejected_before_browser_mutation(self):
+        self.assertIn(r"/^[\x00-\x7F]+$/", self.script)
+        self.assertIn("Prompt must be ASCII/English only", self.script)
+        self.assertLess(self.script.index("Prompt must be ASCII/English only"), self.script.index("await prompt.fill(scene.prompt"))
+
+    def test_all_ui_controls_are_preflighted_before_prompt_fill(self):
+        self.assertIn('"settings_trigger"', self.script)
+        self.assertIn('"model_option"', self.script)
+        self.assertIn('"ingredients_mode"', self.script)
+        self.assertIn('"aspect_9_16"', self.script)
+        self.assertIn('"duration"', self.script)
+        self.assertLess(self.script.index('exactVisibleLocator(chosen.page, selectors.duration'), self.script.index("await prompt.fill(scene.prompt"))
+        self.assertIn('role !== "radio"', self.script)
+        self.assertIn('after !== "true"', self.script)
+
+    def test_credit_cost_is_reported_and_overlay_is_closed_before_prompt_fill(self):
+        self.assertIn("Generating will use", self.script)
+        self.assertIn("estimated_credit_cost", self.script)
+        self.assertIn("settingsAgain.click({ timeout: 2500 })", self.script)
+        self.assertLess(self.script.index("settingsAgain.click"), self.script.index("await prompt.fill(scene.prompt"))
 
     def test_ambiguous_submission_is_logged_without_retry(self):
         self.assertIn('event: "submission_intent"', self.script)
@@ -33,7 +62,7 @@ class FlowPilotContractTests(unittest.TestCase):
 
     def test_requires_unique_visible_selectors(self):
         self.assertIn("expected exactly one", self.script)
-        self.assertIn("isVisible()", self.script)
+        self.assertIn("isVisible", self.script)
         self.assertIn("create_button_enabled", self.script)
 
 
