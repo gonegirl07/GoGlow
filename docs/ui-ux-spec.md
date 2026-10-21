@@ -148,7 +148,7 @@ The GoGlow application uses a 3-tier layout:
 - **Location:** Main Workspace -> Right Panel.
 - **Timeline Overview Bar:**
   - Displays a visual sequence bar showing each scene's proportional duration.
-  - Color-coded by canonical workflow status:
+  - Color-coded by canonical workflow status (`specs/scene-plan.schema.json`):
     - Grey: `PLANNED`
     - Blue: `PROMPT_READY` / `PROMPT_REVISED`
     - Orange: `WAITING_FOR_GENERATION`
@@ -212,8 +212,9 @@ stateDiagram-v2
     PROMPT_READY --> WAITING_FOR_GENERATION : Prompt copied to clipboard for Flow
     WAITING_FOR_GENERATION --> GENERATED : Operator manually declares media_uri
     GENERATED --> QC_REVIEW : Open for human review checklist
-    QC_REVIEW --> APPROVED : PASS (human QC: no unresolved BLOCKER or MAJOR defects)
-    QC_REVIEW --> NEEDS_REVISION : FAIL (human QC: MAJOR or BLOCKER defect found; clip rejected, revise/re-plan)
+    QC_REVIEW --> APPROVED : PASS in QC report (no unresolved BLOCKER or MAJOR defects)
+    QC_REVIEW --> NEEDS_REVISION : FAIL in QC report (MAJOR defect; narrow revision needed)
+    QC_REVIEW --> NEEDS_REVISION : FAIL in QC report (BLOCKER defect; clip rejected & excluded from assembly, re-plan/revise)
     NEEDS_REVISION --> PROMPT_REVISED : Prompt updated with revision notes
     PROMPT_REVISED --> WAITING_FOR_GENERATION : Ready for regeneration
     PLANNED --> BLOCKED : Missing asset or reference
@@ -225,13 +226,13 @@ stateDiagram-v2
 #### Canonical Mapping from QC Report to UI Workflow
 Per `docs/media-qc-protocol.md`, Section 2.3:
 
-| QC Report Outcome (`review_status`) | Project Workflow Action & UI State |
+| QC Report Outcome (`review_status` in `specs/qc-report.schema.json`) | Project Workflow Action & UI State (`status` in `specs/scene-plan.schema.json`) |
 |---|---|
 | `PASS` (no unresolved `BLOCKER` or `MAJOR` defects) | Eligible for human sign-off to `APPROVED`. QC PASS alone is not approval to publish. |
-| `REVIEW` (open checks remain) | Remains in `QC_REVIEW`. Highlight open categories before decision. |
-| `FAIL` with a `MAJOR` defect | Moves to `NEEDS_REVISION`. Opens narrow revision prompt editor. |
-| `FAIL` with a `BLOCKER` defect | Reject that clip. Do not assemble it. Moves to `NEEDS_REVISION` (or `BLOCKED` if missing decisions/assets) to regenerate or re-plan; do not patch report to pass. |
-| `NOT_REVIEWED` (clip inaccessible or uninspected) | Remains in `GENERATED` / `QC_REVIEW` with no decision. Cannot be assembled or approved. |
+| `REVIEW` (open checks remain) | QC report/check có trạng thái `REVIEW`; project workflow vẫn ở `QC_REVIEW`. Highlight open categories before decision. |
+| `FAIL` with a `MAJOR` defect | Recorded as `FAIL` in QC report. Project workflow moves to `NEEDS_REVISION`. Opens narrow revision prompt editor. |
+| `FAIL` with a `BLOCKER` defect | Recorded as `FAIL` in QC report. Clip is rejected and blocked from assembly. Project workflow moves to `NEEDS_REVISION` (or `BLOCKED` if decisions/assets missing) to re-plan or regenerate. The project workflow status `REJECTED` is not used because the schema does not support it. |
+| `NOT_REVIEWED` (clip inaccessible or uninspected) | QC report has status `NOT_REVIEWED`. Project workflow remains in `GENERATED` or `QC_REVIEW` with no decision (or `BLOCKED` in tracker if clip inaccessible). Cannot be assembled or approved. |
 
 #### Severity Scale Separation (Crucial Architectural Rule)
 - **Media Defect Severity (Clips & Video):** Evaluated strictly as `BLOCKER` / `MAJOR` / `MINOR` / `NOTE` per `docs/media-qc-protocol.md`.
@@ -257,8 +258,8 @@ Per `docs/media-qc-protocol.md`, Section 2.3:
    - Having a `media_uri` does **not** equal QC approval.
    - A scene can only transition to `APPROVED` after a human operator opens the Mini QC Modal, completes the checklist, confirms `PASS` with zero unresolved `BLOCKER` or `MAJOR` defects, and signs off with reviewer name and date.
 5. **Handling Missing Clip Access vs Missing Specific Evidence (Operator Decision):**
-   - **Clip access missing:** If the operator reports that the video file cannot be opened, played, or accessed, the operator marks the review as `BLOCKED` in the tracker and `NOT_REVIEWED` in the QC report. The checklist is disabled until a playable file is provided.
-   - **Evidence for a specific check missing:** If the clip is playable, but a specific check cannot be confirmed (e.g., foot pedal contact hidden by deep shadow), the operator selects `NOT_CHECKED` or `REVIEW` for that individual check. This keeps the scene in `QC_REVIEW` workflow status (with QC report review_status as `REVIEW`), without falsely treating the entire clip as unreviewable (`NOT_REVIEWED`).
+   - **Clip access missing:** If the operator reports that the video file cannot be opened, played, or accessed, the operator marks the review as `BLOCKED` in the project workflow tracker and `NOT_REVIEWED` in the QC report. The checklist is disabled until a playable file is provided.
+   - **Evidence for a specific check missing:** If the clip is playable, but a specific check cannot be confirmed (e.g., foot pedal contact hidden by deep shadow), the operator selects `NOT_CHECKED` or `REVIEW` for that individual check. QC report/check có trạng thái `REVIEW`; project workflow vẫn ở `QC_REVIEW`, without falsely treating the entire clip as unreviewable (`NOT_REVIEWED`).
 6. **Wardrobe Category Serialization:**
    - Wardrobe defects affecting character identity are recorded under `identity`.
    - Outfit/accessory defects that do not alter character identity are recorded under `other`, and the UI automatically prepends `wardrobe:` to the notes field, adhering to schema constraints without data loss.
@@ -424,7 +425,7 @@ Scenario: Distinguishing unplayable clips from unverified checklist items
   Given Scene 1 has a declared media_uri attached
   When the operator inspects the clip and cannot confirm foot pedal contact due to deep shadow
   Then the operator marks "physics" check as "REVIEW" and leaves passing checks as "PASS"
-  And the scene remains in "QC_REVIEW" workflow status with QC report review_status set to "REVIEW" (not marked "BLOCKED" in tracker or "NOT_REVIEWED" in report)
+  And QC report/check có trạng thái "REVIEW"; project workflow vẫn ở "QC_REVIEW" (không đánh dấu "BLOCKED" trong tracker hoặc "NOT_REVIEWED" trong báo cáo)
 ```
 
 ---
@@ -443,7 +444,7 @@ This specification incorporates and reconciles all architectural directives from
    - The UI introduces a manual user declaration modal requiring `media_uri` entry and user confirmation before moving to `GENERATED`, eliminating accidental one-click status jumps.
    - The specification strictly avoids claiming that false status defects are completely eliminated by code alone, acknowledging that GoGlow M1 has no automated video verification mechanism; having a `media_uri` is solely a user declaration.
    - Having a `media_uri` does not imply QC pass or approval; transition to `APPROVED` remains strictly dependent on human visual inspection per `docs/media-qc-protocol.md` Section 2.3.
-   - Scene workflow states strictly adhere to the 9 canonical states from `docs/workflow.md` and `specs/scene-plan.schema.json` (`PLANNED`, `PROMPT_READY`, `WAITING_FOR_GENERATION`, `GENERATED`, `QC_REVIEW`, `NEEDS_REVISION`, `PROMPT_REVISED`, `APPROVED`, `BLOCKED`). No non-canonical workflow states (such as `REJECTED` or using QC report status `REVIEW` as a scene status) are introduced.
+   - **Separation of QC Report Status and Project Workflow Status:** Scene workflow states strictly adhere to the 9 canonical states from `docs/workflow.md` and `specs/scene-plan.schema.json` (`PLANNED`, `PROMPT_READY`, `WAITING_FOR_GENERATION`, `GENERATED`, `QC_REVIEW`, `NEEDS_REVISION`, `PROMPT_REVISED`, `APPROVED`, `BLOCKED`). The value `REJECTED` is never used as a project workflow status. When QC encounters a `BLOCKER` defect, the QC report records `FAIL`, the clip is excluded from assembly, and workflow moves to `NEEDS_REVISION` (or `BLOCKED` if decisions/assets missing) without mutating the schema. QC report statuses (`PASS`, `REVIEW`, `FAIL`, `NOT_REVIEWED`) are never confused with project workflow statuses.
 4. **Aspect Ratio Alignment (Resolving Grok P2 Finding #1):**
    - Enforces `9:16` as the single verified option in M1, resolving discrepancy with `src/goglow/validator.py`.
 5. **Strict Duration Sum Enforcement & Export Blocking (Grok Finding #3 & `docs/workflow.md`):**
