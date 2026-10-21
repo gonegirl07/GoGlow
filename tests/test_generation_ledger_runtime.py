@@ -123,6 +123,20 @@ class GenerationLedgerRuntimeTests(unittest.TestCase):
         self.assertIn("JSON.stringify(project(),null,2)", self.html)
         self.assertIn("scenes.map(s=>Object.assign({},s", self.html)
 
+    def test_qc_update_targets_attempt_and_requires_reviewer_and_defects_for_fail(self):
+        self.assertIn("function updateAttemptQC(record, form, now)", self.runtime)
+        self.assertIn('["not_reviewed", "pass", "fail", "needs_review"]', self.runtime)
+        self.assertIn("Reviewer is required to record QC.", self.runtime)
+        self.assertIn("QC FAIL requires at least one observed defect.", self.runtime)
+        self.assertIn("QC PASS cannot include unresolved defects.", self.runtime)
+        self.assertIn('root.GoGlowGenerationLedger = { version: VERSION, makeAttempt, validateAttempt, appendAttempt, updateAttemptQC }', self.runtime)
+        self.assertIn("data-ledger='qc_reviewer'", self.html)
+        self.assertIn("data-ledger='qc_defects'", self.html)
+        self.assertIn("generationLedger.find(item=>item.attempt_id===attemptId&&item.scene_id===s.id)", self.html)
+        self.assertIn("window.GoGlowGenerationLedger.updateAttemptQC(attempt,{status,reviewed_by:reviewer,defects,notes})", self.html)
+        self.assertIn("generationLedgerEvents.push(event)", self.html)
+        self.assertIn("reviewer,defects,notes,created_at:attempt.qc.reviewed_on", self.html)
+
     def test_flow_jsonl_import_validates_and_appends_without_duplicate_attempt_ids(self):
         self.assertIn('id="importFlowLedger"', self.html)
         self.assertIn('id="flowLedgerFile"', self.html)
@@ -132,6 +146,26 @@ class GenerationLedgerRuntimeTests(unittest.TestCase):
         self.assertIn('generationLedger.push(record);known.add(record.attempt_id);added++', self.html)
         self.assertIn('scene.generation_attempts=generationLedger.filter(record=>record.scene_id===scene.id)', self.html)
         self.assertIn('Đã nhập "+added+" attempt vào Generation Ledger', self.html)
+
+
+    def test_project_level_qc_can_update_imported_attempt_without_matching_plan_scene_id(self):
+        self.assertIn('id="projectQc"', self.html)
+        self.assertIn("function projectQcPanel()", self.html)
+        self.assertIn("generationLedger.map(a=>", self.html)
+        self.assertIn("project_qc_attempt_id", self.html)
+        self.assertIn("generationLedger.find(item=>item.attempt_id===attemptId)", self.html)
+        self.assertIn("ledger-qc-project", self.html)
+        self.assertIn("scene_id:attempt.scene_id,attempt_id:attemptId", self.html)
+        self.assertIn("Chọn bất kỳ attempt đã import, kể cả khi scene_id không khớp", self.html)
+
+    def test_qc_reviewer_reviewed_on_and_defects_are_visible_in_markdown_and_ui_audit(self):
+        self.assertIn('reviewer="+(a.qc.reviewed_by||"unknown")', self.html)
+        self.assertIn('reviewed_on="+(a.qc.reviewed_on||"unknown")', self.html)
+        self.assertIn('defects="+((a.qc.observed_defects||[]).join("; ")||"none")', self.html)
+        self.assertIn('reviewer="+(e.reviewer||"unknown")', self.html)
+        self.assertIn('reviewed_on="+(e.reviewed_on||e.created_at||"unknown")', self.html)
+        self.assertIn('defects="+((e.defects||[]).join("; ")||"none")', self.html)
+        self.assertIn('defects: "+esc((e.defects||[]).join("; ")||"none")', self.html)
 
 
 if __name__ == "__main__":

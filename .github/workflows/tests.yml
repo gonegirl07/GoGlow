@@ -27,6 +27,8 @@ jobs:
         run: python -m unittest discover -s tests -v
       - name: Syntax-check Flow pilot runner
         run: node --check scripts/flow-pilot.mjs
+      - name: Syntax-check inline JavaScript in browser app
+        run: python scripts/check_inline_js.py app/index.html
       - name: Validate JSON examples
         run: |
           python -m json.tool examples/cycling-36s.json >/dev/null
