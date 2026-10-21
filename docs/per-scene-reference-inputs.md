@@ -15,7 +15,7 @@ The runner combines the character description and scene prompt and adds an instr
 
 ## Ingredients upload and dry-run
 
-The runner validates all local paths before touching Flow. The picker is opened with `button[aria-label="Add ingredients to the prompt box"]`; because Flow creates its file input only after the user clicks `Upload media`, the runner waits for Playwright's `filechooser` event and calls `setFiles()`. It then resolves each uploaded asset by its displayed filename, extracts the UUID from the library thumbnail URL, selects that asset, and verifies the same UUID appears in the attached prompt chip. It fails closed on missing UUIDs, mismatched identities, duplicate chip UUIDs, or a final chip count mismatch.
+The runner validates all local paths before touching Flow. The picker is opened with `button[aria-label="Add ingredients to the prompt box"]`; because Flow creates its file input only after the user clicks `Upload media`, the runner waits for Playwright's `filechooser` event and calls `setFiles()`. It then resolves each uploaded asset by its displayed filename, extracts the UUID from the library thumbnail URL, selects that asset, and verifies the same UUID appears in the attached prompt chip. Asset readiness waits up to 90 seconds by default because Flow can render the library tile before its thumbnail URL/UUID is ready. Override with `FLOW_ASSET_READY_TIMEOUT_MS` (15,000–180,000 ms). The runner fails closed on missing UUIDs, mismatched identities, duplicate chip UUIDs, or a final chip count mismatch.
 
 The selector config includes:
 - `ingredient_add_button`: opens the Ingredients asset picker.
@@ -24,9 +24,9 @@ The selector config includes:
 - `ingredient_add_to_prompt`: button used when selecting an asset does not immediately attach it.
 - `ingredient_reference_items`: `flow-ingredient-bar button[aria-label="Ingredient"]` chip selector.
 - `clear_prompt`: `button[aria-label="Clear prompt"]`, which clears both prompt text and attached chips.
-- `ingredient_picker_backdrop`: the visible CDK overlay backdrop used to close the picker; Escape is not relied on.
+- `ingredient_picker_backdrop`: the visible CDK overlay backdrop used to close the picker; the runner clicks near the backdrop edge and verifies that it is no longer visible. Escape is not relied on.
 
-Flow may retain uploaded media in the project library. The runner currently uploads the files supplied by each job, so repeated runs can create duplicate library assets. Before merging, inspect the visible thumbnails and chip UUIDs in a dry-run; if Flow's library contains multiple assets with the same filename, the runner must distinguish the newly uploaded asset from older duplicates rather than assume the first matching name is correct. Do not use `--execute` until the real-browser dry-run passes. Dry-run never clicks Create and must finish with prompt text empty and zero attached chips.
+Flow may retain uploaded media in the project library. The runner currently uploads the files supplied by each job, so repeated runs can create duplicate library assets. Before merging, inspect the visible thumbnails and chip UUIDs in a dry-run; if Flow's library contains multiple assets with the same filename, the runner must distinguish the newly uploaded asset from older duplicates rather than assume the first matching name is correct. Do not use `--execute` until the real-browser dry-run passes. On an upload failure, a `finally` cleanup attempts to close and verify the picker, then clears and verifies prompt text and chips; cleanup failures are logged explicitly and require manual inspection. Dry-run never clicks Create and must finish with prompt text empty and zero attached chips.
 
 ## Mai test
 
