@@ -97,6 +97,12 @@ class BrowserContractTests(unittest.TestCase):
         self.assertIn('p.credit_estimates?.test_360p_8s??6', self.html)
         self.assertIn('Ước tính credits 360p/8s:', self.html)
 
+    def test_auto_advance_routes_valid_qc_fail_to_needs_revision(self):
+        self.assertIn('s.qc_report.review_status==="FAIL"&&availableTransitions(s).includes("NEEDS_REVISION")', self.html)
+        self.assertIn('s.status="NEEDS_REVISION";s.status_history=[...(s.status_history||["PLANNED"]),"NEEDS_REVISION"]', self.html)
+        self.assertIn("QC FAIL hợp lệ và tự chuyển sang NEEDS_REVISION", self.html)
+        self.assertIn("QC FAIL hợp lệ sẽ chuyển sang NEEDS_REVISION", self.html)
+
     def test_browser_disclaims_automatic_media_verification(self):
         self.assertIn("không phải xác minh file hay tự động xem video", self.html)
         self.assertIn("không tự đánh giá video", self.html)
