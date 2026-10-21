@@ -1,0 +1,56 @@
+# Phase 1–2 data model: prompt rules and generation ledger
+
+## Status and scope
+
+This is a **design/seed-data PR**, not a runtime implementation. It does not change the browser UI or automate Google Flow. Phase 1 (rule library behavior) and Phase 2 (generation-attempt logging) remain separate implementation PRs, each requiring tester approval before merge.
+
+## Design principles
+
+1. **Append-only attempts:** every generation attempt is a new record. Never overwrite a failed attempt with a retry.
+2. **Evidence before confidence:** store the observed result, QC checklist, prompt, configuration, and evidence source. A rule's `confirmed` label means owner/tester accepted it for its explicit scope; it is not a universal success guarantee.
+3. **No invented data:** unknown credit charge, provider error code, timestamps, or prompt text stay unknown/null. Never infer that Flow charged or refunded credits.
+4. **Prompt reproducibility:** retain exact prompt text and rule IDs/version used for every attempt. Hashes are optional until computed by the implementation.
+5. **Narrow applicability:** rules can scope activity, pose, character, model label, aspect ratio, duration, and resolution. Do not apply a Warrior II hold rule to a dynamic transition by default.
+6. **Human QC remains authoritative:** automated workflow state or a successful generation response is not visual QC.
+7. **Provider-neutral records:** `provider` identifies Flow/API/other, but no unsupported provider integration is implied.
+8. **Privacy/security:** no cookies, API keys, session tokens, or credentials in prompts, logs, fixtures, or evidence.
+
+## Files
+
+- `specs/prompt-rule.schema.json`: versioned reusable rules, scope, positive/avoid instructions, provenance, and evidence.
+- `specs/generation-attempt.schema.json`: one record per attempt, including configuration, exact prompt, rules used, result/failure, credit evidence, media reference, and human QC.
+- `examples/prompt-rules.seed.json`: first seed rule and its supporting/counterexample evidence.
+- `examples/generation-attempts.seed.json`: two earlier failures plus the successful stable-hold attempt.
+
+## First seed rule
+
+`yoga.warrior-ii.stable-hold-breathe@1` is marked `confirmed` because the project owner reports a real Flow clip passing QC 7/7. It is deliberately scoped to Yoga / Warrior II / Mai / Omni 1.1 Flash / 9:16 / 360p / 8 seconds with `warrior-still-v4` and `mai-face` references.
+
+The successful prompt is stored verbatim. Two preceding failure records preserve the known failure pattern (knee-bend/transition strategy, rear-foot slide reported around 20–40 px, hand/fingertip crop). The exact earlier prompts and per-attempt timings were not provided; the seed explicitly says so rather than inventing them. Their credit charges are unknown.
+
+The Flow URL is an edit/project URL supplied by the user. It is not represented as a verified direct-download URI or a local media file.
+
+## Implementation plan after design approval
+
+### Phase 1 implementation PR — Prompt rule library
+- Load and validate rule records.
+- Compose applicable rules deterministically with explicit ordering and conflict warnings.
+- Show source rule IDs/version and allow preview before applying to a scene.
+- Keep rule status/provenance visible; no silent auto-promotion from candidate to confirmed.
+- Test the stable-hold rule and its narrow scope; prove dynamic Warrior II transitions do not inherit it accidentally.
+
+### Phase 2 implementation PR — Generation ledger
+- Append an attempt before starting/recording a generation action.
+- Capture exact prompt, rule versions, settings, result/failure, and QC evidence.
+- Capture credits only from a source the user/tester can identify; otherwise mark unknown.
+- Provide retry linking without deleting prior attempts.
+- Suggest alternative prompts for failures as drafts, with the reason and changed text visible before retry.
+
+## Acceptance criteria for this design PR
+
+- Both JSON Schemas parse as JSON and describe required fields and enums.
+- Seed JSON parses and each record includes provenance/limitations for missing source details.
+- Successful prompt matches the user-provided prompt exactly.
+- Success record contains the user-reported 7/7, 0 px rear-foot slide, hands in frame, visible breathing, model/resolution/duration/aspect ratio and both reference IDs.
+- Two failures are represented separately; no invented exact prompt, generation timestamp, credit amount, direct media URL, or provider error code.
+- No runtime behavior is changed by this PR.
