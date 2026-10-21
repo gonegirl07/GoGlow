@@ -21,9 +21,15 @@ class GenerationLedgerRuntimeTests(unittest.TestCase):
 
     def test_ledger_is_append_only_and_retries_link_to_previous_attempt(self):
         self.assertIn("scene.generation_attempts.push(record)", self.runtime)
-        self.assertIn("retry_of: previous ? previous.attempt_id : null", self.runtime)
+        self.assertIn('retry_of: previous && form.retry_mode === "retry_previous" ? previous.attempt_id : null', self.runtime)
+        self.assertIn('value=\'retry_previous\'', self.html)
+        self.assertIn('value=\'new\'', self.html)
         self.assertIn("attempt_number: attemptNumber", self.runtime)
         self.assertIn("Lịch sử cũ được giữ nguyên", self.html)
+        self.assertIn("generationLedger", self.html)
+        self.assertIn("generation_attempts:generationLedger", self.html)
+        self.assertIn("ledger-qc-add", self.html)
+        self.assertIn("generationLedgerEvents.push", self.html)
 
     def test_attempt_captures_exact_prompt_configuration_and_rule_ids(self):
         for marker in ("text: String(scene.prompt || \"\")", "model_label:", "resolution:", "duration_seconds:", "aspect_ratio:", "rule_ids:"):
@@ -38,6 +44,10 @@ class GenerationLedgerRuntimeTests(unittest.TestCase):
 
     def test_credit_amounts_and_evidence_are_never_invented(self):
         self.assertIn("estimated_amount: nullableNumber(form.estimated_amount)", self.runtime)
+        self.assertIn("before_balance: nullableNumber(form.before_balance)", self.runtime)
+        self.assertIn("after_balance: nullableNumber(form.after_balance)", self.runtime)
+        self.assertIn("estimated credits:", self.html)
+        self.assertIn("credits estimated=", self.html)
         self.assertIn("actual_amount: nullableNumber(form.actual_amount)", self.runtime)
         self.assertIn('charge_status: form.charge_status || "unknown"', self.runtime)
         self.assertIn('evidence_source: form.evidence_source || "unknown"', self.runtime)
