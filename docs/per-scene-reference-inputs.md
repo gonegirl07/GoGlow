@@ -15,14 +15,18 @@ The runner combines the character description and scene prompt and adds an instr
 
 ## Ingredients upload and dry-run
 
-The runner validates all local paths before touching Flow. It requires the Ingredients reference panel to be empty, uploads exactly the listed files, and verifies that the visible attached-item count matches the list length. Ambiguous selectors, failed uploads, or count mismatches stop the run before filling the prompt or reaching READY-TO-CREATE.
+The runner validates all local paths before touching Flow. The picker is opened with `button[aria-label="Add ingredients to the prompt box"]`; because Flow creates its file input only after the user clicks `Upload media`, the runner waits for Playwright's `filechooser` event and calls `setFiles()`. It then resolves each uploaded asset by its displayed filename, extracts the UUID from the library thumbnail URL, selects that asset, and verifies the same UUID appears in the attached prompt chip. It fails closed on missing UUIDs, mismatched identities, duplicate chip UUIDs, or a final chip count mismatch.
 
-The three reference-upload selectors in `local/flow-selectors.json` must be inspected and set against the actual Flow UI:
-- `ingredient_add_button`: unique visible button that opens the add-reference flow.
-- `ingredient_file_input`: unique `input[type=file]` used for Ingredients.
-- `ingredient_reference_items`: selector matching only attached reference thumbnails/items.
+The selector config includes:
+- `ingredient_add_button`: opens the Ingredients asset picker.
+- `ingredient_upload_button`: visible `Upload media` button that triggers the file chooser.
+- `ingredient_library_item`: project-library asset entries, not prompt chips.
+- `ingredient_add_to_prompt`: button used when selecting an asset does not immediately attach it.
+- `ingredient_reference_items`: `flow-ingredient-bar button[aria-label="Ingredient"]` chip selector.
+- `clear_prompt`: `button[aria-label="Clear prompt"]`, which clears both prompt text and attached chips.
+- `ingredient_picker_backdrop`: the visible CDK overlay backdrop used to close the picker; Escape is not relied on.
 
-A dry-run screenshot and console output are required to confirm the expected images are visibly attached before any real generation. A correct count alone cannot establish image identity if the wrong files were selected; inspect the thumbnails and names visually. Do not use `--execute` until the real-browser dry-run passes. Dry-run never clicks Create.
+Flow may retain uploaded media in the project library. The runner currently uploads the files supplied by each job, so repeated runs can create duplicate library assets. Before merging, inspect the visible thumbnails and chip UUIDs in a dry-run; if Flow's library contains multiple assets with the same filename, the runner must distinguish the newly uploaded asset from older duplicates rather than assume the first matching name is correct. Do not use `--execute` until the real-browser dry-run passes. Dry-run never clicks Create and must finish with prompt text empty and zero attached chips.
 
 ## Mai test
 
