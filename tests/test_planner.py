@@ -31,6 +31,9 @@ class PlannerTests(unittest.TestCase):
         project = create_project("cycling", target_duration_seconds=36, scene_count=4)
         self.assertEqual([s["duration_seconds"] for s in project["scenes"]], [8, 8, 10, 10])
         self.assertEqual([s["flow_clip_seconds"] for s in project["scenes"]], ["8", "8", "10", "10"])
+        self.assertIn("pose_reference_uri", project["scenes"][0])
+        self.assertIn("media_uri_360p", project["scenes"][0])
+        self.assertIn("media_uri_720p", project["scenes"][0])
         self.assertEqual(validate_project(project), [])
 
     def test_30_seconds_can_use_three_10_second_clips(self):
