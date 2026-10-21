@@ -48,7 +48,7 @@ class PromptLibraryRuntimeTests(unittest.TestCase):
     def test_prompt_composer_fills_outfit_and_room_placeholders(self):
         self.assertIn("Outfit matching the selected reference, chest and upper torso fully covered, SFW.", self.runtime)
         self.assertIn("A bright, uncluttered yoga studio.", self.runtime)
-        self.assertIn("function uniqueLines(parts)", self.runtime)
+        self.assertIn("function uniqueSentences(parts)", self.runtime)
         self.assertIn("return uniqueSentences(parts).join", self.runtime)
         self.assertIn('scene.prompt ? "Existing prompt details: " + scene.prompt : ""', self.runtime)
 
