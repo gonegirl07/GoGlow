@@ -97,8 +97,11 @@ Example options to add to the normal `--execute` command:
 ```bash
 --wait --wait-timeout-ms 600000 \
   --download-dir local/flow-downloads \
-  --ledger-output local/flow-generation-ledger.jsonl
+  --ledger-output local/flow-generation-ledger.jsonl \
+  --ledger-project-id "your-GoGlow-project-id"
 ```
+
+`--ledger-project-id` is optional. Set it to the Project ID shown in the GoGlow app's Markdown export if the imported attempts should be grouped under that GoGlow project; otherwise the Flow project UUID is used as the record's `project_id`.
 
 The JSONL file is append-only and each line is a GoGlow Generation Attempt record with prompt SHA-256, result status, balance before/after, observed charge if known, Flow media URL, downloaded file path and SHA-256, and QC left `not_reviewed`. A timed-out attempt is recorded as `unknown`; do not re-run it until Flow has been inspected manually. To bring these records into the browser-based GoGlow project ledger, open the GoGlow app and click **Nhập Flow ledger**, select the JSONL file, then save/export the project. Import validates each record and skips duplicate attempt IDs. The Flow project UUID is used as `project_id` by default; this is preserved as provider-project provenance and may differ from the browser prototype's own project ID.
 
