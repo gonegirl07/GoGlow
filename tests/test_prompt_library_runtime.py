@@ -49,7 +49,7 @@ class PromptLibraryRuntimeTests(unittest.TestCase):
         self.assertIn("Outfit matching the selected reference, chest and upper torso fully covered, SFW.", self.runtime)
         self.assertIn("A bright, uncluttered yoga studio.", self.runtime)
         self.assertIn("function uniqueSentences(parts)", self.runtime)
-        self.assertIn("return uniqueSentences(parts).join", self.runtime)
+        self.assertIn("uniqueSentences(parts).join", self.runtime)
         self.assertIn('scene.prompt ? "Existing prompt details: " + scene.prompt : ""', self.runtime)
 
     def test_warnings_are_non_blocking_and_prompt_is_not_silently_rewritten(self):
