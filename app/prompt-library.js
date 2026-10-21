@@ -92,7 +92,7 @@
     if (options && options.include_candidate_realtime === true) {
       parts.push("real-time speed, never slow motion.");
     }
-    return { text: uniqueLines(parts).join("\n"), analysis };
+    return { text: uniqueSentences(parts).join("\n"), analysis };
   }
 
   root.GoGlowPromptLibrary = Object.freeze({
