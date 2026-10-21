@@ -1,0 +1,20 @@
+{
+  "job_id": "mai-seated-breath-variants-01",
+  "scene_id": "mai-seated-breath-variants-01",
+  "variants": 3,
+  "framing_helper": true,
+  "reference_images": [
+    "/workspace/mai-fitness/refs/REPLACE_WITH_FRONT_FACE_IMAGE.png",
+    "/workspace/mai-fitness/refs/REPLACE_WITH_SUPPORTING_IMAGE.png"
+  ],
+  "face_reference_ids": [
+    "/workspace/mai-fitness/refs/REPLACE_WITH_FRONT_FACE_IMAGE.png"
+  ],
+  "face_description_mode": "hybrid",
+  "character_description": "A slightly slim heart-shaped face, bright expressive eyes, and a warm smile showing upper teeth.",
+  "model": "Omni 1.1 Flash",
+  "resolution": "360p",
+  "duration": "8s",
+  "prompt": "An adult woman sits comfortably on a studio mat and breathes gently. Keep her entire upper body and both knees comfortably inside the frame. One continuous shot, stable camera, realistic anatomy, soft daylight, no cuts, no text, no logos. Keep the chest fully covered with a high, closed neckline and no cleavage.",
+  "expression": "Eyes open throughout, warm smile showing teeth with eyes crescenting gently."
+}

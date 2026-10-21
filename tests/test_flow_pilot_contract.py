@@ -393,5 +393,66 @@ class FlowPilotContractTests(unittest.TestCase):
         self.assertIn("did not attach asset", upload_fn)
 
 
+
+    def test_variants_are_limited_to_one_through_three_and_default_to_one(self):
+        self.assertIn('const variants = scene.variants === undefined ? 1 : scene.variants;', self.script)
+        self.assertIn('variants < 1 || variants > 3', self.script)
+        self.assertIn('args._variantCount = variantCount', self.script)
+        self.assertIn('for (let index = 1; index <= variantCount; index += 1)', self.script)
+
+    def test_variant_execution_requires_wait_and_single_total_confirmation(self):
+        self.assertIn('Executing variants requires --wait', self.script)
+        self.assertIn('estimated total ${totalEstimate} credits', self.script)
+        self.assertIn('if (!args._variantsConfirmed)', self.script)
+        self.assertIn('args._variantsConfirmed = true', self.script)
+        self.assertIn('Type CREATE ${variantCount} VARIANTS FOR ${scene.scene_id}', self.script)
+
+    def test_variants_keep_same_job_and_log_each_variant(self):
+        self.assertIn('job_id: scene.job_id || scene.scene_id', self.script)
+        self.assertIn('variant_index: variantIndex', self.script)
+        self.assertIn('variant_count: variantCount', self.script)
+        self.assertIn('selected_variant: null', self.script)
+        self.assertIn('variantIndex, variantCount,', self.script)
+        self.assertIn('variantCount > 1 ? `${safeScene}__v${variantIndex}${extension}`', self.script)
+
+    def test_seated_shots_get_optional_wide_knee_margin_helper(self):
+        self.assertIn('scene.framing_helper_applied', self.script)
+        self.assertIn('Camera pulled back, with a wide margin on both sides of the knees', self.script)
+        self.assertIn('scene.framing_helper === false ? false', self.script)
+
+    def test_watermark_status_is_recorded_for_human_qc(self):
+        self.assertIn('watermark_status: scene.watermark_status || "not_reviewed"', self.script)
+
+    def test_flow_prominent_people_policy_failure_text_is_recognized(self):
+        matcher = self.script.split("function isGenerationFailureText(value)", 1)[1].split(
+            "async function activateVideosTab", 1
+        )[0]
+        self.assertIn("might violate", matcher)
+        self.assertIn("violate(?:s|d)? (?:our )?policies", matcher)
+        self.assertIn("prominent people", matcher)
+        self.assertIn("you will be refunded", matcher)
+        self.assertIn(r"/\bfailed\b/i.test", self.script)
+
+    def test_failure_detection_checks_new_tiles_without_false_positive_from_old_grid_tiles(self):
+        wait_fn = self.script.split("async function waitForGenerationAndDownload", 1)[1].split(
+            "function createConfirmationReader()", 1
+        )[0]
+        self.assertIn("const failedTile = newItems.find", wait_fn)
+        self.assertIn(r"if (!/\/(?:edit|video)\//i.test(page.url())) return;", wait_fn)
+        self.assertIn("failedTile.text || failedTile.state", wait_fn)
+
+    def test_failure_ledger_preserves_provider_message_without_automation_prefix(self):
+        self.assertIn("function rawProviderMessage(value)", self.script)
+        self.assertIn('const tileMarker = " reports failure: "', self.script)
+        self.assertIn('provider_message: resultStatus === "failed" ? rawProviderMessage(timeoutError)', self.script)
+        self.assertNotIn('.slice(-700)', self.script)
+
+    def test_failed_variant_stops_batch_and_records_refund_pending_when_provider_says_refund(self):
+        self.assertIn("refundPending", self.script)
+        self.assertIn('"refunded_pending"', self.script)
+        self.assertIn("args._stopVariants = true", self.script)
+        self.assertIn("if (args._stopVariants) break", self.script)
+        self.assertIn("later variants will NOT be submitted with the same prompt", self.script)
+
 if __name__ == "__main__":
     unittest.main()
