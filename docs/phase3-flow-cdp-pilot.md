@@ -24,7 +24,7 @@ Only `labs.google/fx/tools/flow` URLs are recognized in this pilot. If the curre
 
 Selector config requires unique selectors for `prompt`, `model`, `resolution`, and `create`. Each selector must match exactly one visible element. Model and resolution selectors must either be native `select` elements with a matching label/value, or open a menu containing one exact accessible `option` name.
 
-## Dry run (default, no Create click)
+## Dry run (default, no Create click; `--dry-run` is explicit)
 
 ```bash
 node scripts/flow-pilot.mjs \
@@ -32,7 +32,7 @@ node scripts/flow-pilot.mjs \
   --scene examples/flow-pilot-scene.example.json \
   --selectors local/flow-selectors.json \
   --account-label "my intended Flow account"
-``
+```
 
 Replace tab index and account label with the values shown/verified on your machine. Before changing the page, the runner prints the selected tab and visible page text, then requires the operator to type exactly:
 
@@ -49,7 +49,7 @@ node scripts/flow-pilot.mjs --execute \
   --selectors local/flow-selectors.json \
   --account-label "my intended Flow account" \
   --log local/flow-pilot.jsonl
-``
+```
 
 The runner requires the same account-and-credit confirmation before filling fields, then prints the final prompt/model/resolution and requires a second exact phrase:
 
