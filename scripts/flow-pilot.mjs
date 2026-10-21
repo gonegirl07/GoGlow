@@ -47,7 +47,7 @@ function argsOf(argv) {
   }
   if (args.inspect && args.execute) throw new Error("Use --inspect or --execute, not both.");
   if (args.execute && args.dryRun) throw new Error("Use --dry-run or --execute, not both.");
-  if (args.waitForResult && !args.execute) throw new Error("--wait requires --execute; dry-run never waits for or downloads a generation.");
+  if (args.waitForResult && !args.execute && !args.dryRun) throw new Error("--wait without --execute is preflight-only; pass --dry-run --wait explicitly.");
   if (!Number.isInteger(args.waitTimeoutMs) || args.waitTimeoutMs < 30000 || args.waitTimeoutMs > 1800000) throw new Error("--wait-timeout-ms must be an integer from 30000 to 1800000.");
   if (args.waitForResult && (!args.downloadDir || !args.ledgerOutput)) throw new Error("--wait requires non-empty --download-dir and --ledger-output paths.");
   if (args.tab !== null && (!Number.isInteger(args.tab) || args.tab < 0)) throw new Error("--tab must be a zero-based non-negative index.");
@@ -74,8 +74,14 @@ Wait for completion, download 360p Original size, and append a credit/media ledg
   node scripts/flow-pilot.mjs --execute --wait --wait-timeout-ms 600000 \\
     --download-dir local/flow-downloads --ledger-output local/flow-generation-ledger.jsonl ...
 
+Selector-only preflight (no Create click; validates balance and stable tile identities):
+  node scripts/flow-pilot.mjs --dry-run --wait --tab 4 --scene path/to/scene.json \\\
+    --selectors local/flow-selectors.json --account-label "my Flow account" \\\
+    --expected-email "you@example.com" --expected-project "project-uuid"
+
 --wait requires selector keys: credit_balance, generated_video_items, download_media_button,
-and download_360p_original_button. Configure and dry-run the selectors before enabling it.
+and download_360p_original_button. Replace the example selectors and pass --dry-run --wait
+to validate credit balance and existing tile identities before any real execute.
 Never run --execute until the dry-run and selector inspection have passed.
 `);
 }
@@ -827,15 +833,28 @@ async function prepare(args, browser, rl) {
   // stop before filling the prompt or enabling a possible Create action.
   const attachedReferenceUuids = await uploadSceneReferences(chosen.page, selectors, referenceImages, prompt);
   if (args.waitForResult) {
-    const initialBalance = await readCreditBalance(chosen.page, selectors.credit_balance);
-    if (initialBalance === null) throw new Error("Could not read an integer credit balance; refusing --wait submission before Create.");
-    const initialItems = await generatedItemKeys(chosen.page, selectors.generated_video_items);
-    if (initialItems.some(key => !key) || new Set(initialItems).size !== initialItems.length) {
-      throw new Error("generated_video_items selector must match distinct tiles with stable data-id, data-testid, href, link href, or media src keys.");
+    try {
+      const initialBalance = await readCreditBalance(chosen.page, selectors.credit_balance);
+      if (initialBalance === null) throw new Error("Could not read an integer credit balance.");
+      const initialItems = await generatedItemKeys(chosen.page, selectors.generated_video_items);
+      if (initialItems.some(key => !key) || new Set(initialItems).size !== initialItems.length) {
+        throw new Error("generated_video_items selector must match distinct tiles with stable data-id, data-testid, href, link href, or media src keys.");
+      }
+      args._waitInitialBalance = initialBalance;
+      args._waitInitialItemKeys = initialItems;
+      args._waitInitialItemCount = initialItems.length;
+      console.log("WAIT SELECTOR PREFLIGHT (read-only; no Create click)");
+      console.log(JSON.stringify({ credit_balance: initialBalance, existing_video_tile_count: initialItems.length, existing_video_tile_keys: initialItems }, null, 2));
+    } catch (error) {
+      let cleanup = "Prompt/Ingredients cleanup was not verified.";
+      try {
+        await clearPromptVerified(prompt, selectors, 2500);
+        cleanup = "Prompt and Ingredients were cleared and verified.";
+      } catch (cleanupError) {
+        cleanup += ` Cleanup error: ${cleanupError.message}`;
+      }
+      throw new Error(`Wait selector preflight failed: ${error.message}. ${cleanup}`);
     }
-    args._waitInitialBalance = initialBalance;
-    args._waitInitialItemKeys = initialItems;
-    args._waitInitialItemCount = initialItems.length;
   }
 
   // Only now modify the prompt. If fill fails, attempt to clear it before returning an error.
