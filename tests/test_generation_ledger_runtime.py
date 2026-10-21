@@ -51,6 +51,18 @@ class GenerationLedgerRuntimeTests(unittest.TestCase):
         self.assertNotIn('id:"scene-"+String(i+1).padStart(2,"0")', self.html)
         self.assertIn('generationLedger.filter(a=>a.scene_id===s.id)', self.html)
 
+    def test_attempt_ids_are_globally_unique_even_for_same_second_cross_scene_attempts(self):
+        self.assertIn('crypto.randomUUID()', self.runtime)
+        self.assertIn('const existingIds = new Set([', self.runtime)
+        self.assertIn('project.generation_attempts', self.runtime)
+        self.assertIn('while (existingIds.has(attemptId))', self.runtime)
+        self.assertNotIn('const attemptId = "attempt-" + timestamp.replace(/[^0-9]/g, "").slice(0, 14) + "-" + attemptNumber', self.runtime)
+        self.assertIn('if (!generationLedger.some(x=>x.attempt_id===a.attempt_id))generationLedger.push(a)', self.html)
+
+    def test_markdown_exports_project_id_in_header_and_each_project_ledger_row(self):
+        self.assertIn('- Project ID: "+p.project_id', self.html)
+        self.assertIn('project_id="+a.project_id+" · "+a.scene_id', self.html)
+
     def test_attempt_captures_exact_prompt_configuration_and_rule_ids(self):
         for marker in ("text: String(scene.prompt || \"\")", "model_label:", "resolution:", "duration_seconds:", "aspect_ratio:", "rule_ids:"):
             with self.subTest(marker=marker):
