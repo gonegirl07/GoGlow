@@ -2,7 +2,7 @@ name: Python tests
 
 on:
   push:
-    branches: [main]
+    branches: [main, "feat/phase1-prompt-library-preview"]
   pull_request:
   workflow_dispatch:
 
