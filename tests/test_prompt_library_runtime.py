@@ -49,7 +49,8 @@ class PromptLibraryRuntimeTests(unittest.TestCase):
         self.assertIn("Outfit matching the selected reference, chest and upper torso fully covered, SFW.", self.runtime)
         self.assertIn("A bright, uncluttered yoga studio.", self.runtime)
         self.assertIn("function uniqueLines(parts)", self.runtime)
-        self.assertIn("return uniqueLines(parts).join", self.runtime)
+        self.assertIn("return uniqueSentences(parts).join", self.runtime)
+        self.assertIn('scene.prompt ? "Existing prompt details: " + scene.prompt : ""', self.runtime)
 
     def test_warnings_are_non_blocking_and_prompt_is_not_silently_rewritten(self):
         self.assertIn("warnings", self.runtime)
@@ -58,6 +59,8 @@ class PromptLibraryRuntimeTests(unittest.TestCase):
         self.assertIn("warn-shoulder-roll-ambiguity", self.runtime)
         self.assertIn("warn-platform-branding", self.runtime)
         self.assertIn("s.prompt_preview=result.text", self.html)
+        self.assertIn("delete s.qc_report;s.qc_draft=blankQcDraft(s)", self.html)
+        self.assertIn("s.status=\"QC_REVIEW\"", self.html)
 
 
 if __name__ == "__main__":
