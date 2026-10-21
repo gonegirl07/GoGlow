@@ -65,6 +65,11 @@ class BrowserContractTests(unittest.TestCase):
             with self.subTest(marker=marker):
                 self.assertIn(marker, self.html)
         self.assertIn("finalStageReady", self.html)
+        scene_categories = self.scene_schema["properties"]["scenes"]["items"]["properties"]["qc_draft"]["properties"]["checks"]["items"]["properties"]["category"]["enum"]
+        report_categories = self.qc_schema["properties"]["checks"]["items"]["properties"]["category"]["enum"]
+        for category in ("yoga_framing", "yoga_foot_sliding", "yoga_joint_alignment", "yoga_left_right", "yoga_wardrobe_coverage"):
+            self.assertIn(category, scene_categories)
+            self.assertIn(category, report_categories)
 
     def test_browser_disclaims_automatic_media_verification(self):
         self.assertIn("không phải xác minh file hay tự động xem video", self.html)
