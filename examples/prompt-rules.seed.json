@@ -29,6 +29,12 @@
         ],
         "resolution_labels": [
           "360p"
+        ],
+        "pose_reference_ids": [
+          "warrior-still-v4"
+        ],
+        "face_reference_ids": [
+          "mai-face"
         ]
       },
       "priority": 100,
