@@ -30,6 +30,8 @@ class PromptAndGenerationSeedTests(unittest.TestCase):
         self.assertEqual(rule["status"], "confirmed")
         self.assertEqual(rule["scope"]["pose_ids"], ["warrior-ii"])
         self.assertEqual(rule["scope"]["model_labels"], ["Omni 1.1 Flash"])
+        self.assertEqual(rule["scope"]["pose_reference_ids"], ["warrior-still-v4"])
+        self.assertEqual(rule["scope"]["face_reference_ids"], ["mai-face"])
         passes = [item for item in rule["evidence"] if item["kind"] == "pass"]
         failures = [item for item in rule["evidence"] if item["kind"] == "fail"]
         self.assertEqual(len(passes), 1)
