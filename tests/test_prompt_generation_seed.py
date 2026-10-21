@@ -66,6 +66,12 @@ class PromptAndGenerationSeedTests(unittest.TestCase):
         self.assertIsNone(attempts[0]["prompt"]["sha256"])
         self.assertIn("not a verified direct downloadable media file", attempts[2]["qc"]["notes"])
 
+    def test_prompt_library_schema_and_seed_top_level_contract(self):
+        required = set(self.library_schema["required"])
+        self.assertTrue(required.issubset(self.library.keys()))
+        self.assertEqual(self.library_schema["properties"]["provider"]["const"], "google_flow")
+        self.assertEqual(self.library["schema_version"], "1.0")
+
     def test_prompt_library_template_and_warnings_are_seeded(self):
         library = self.library
         self.assertEqual(library["model_label"], "Omni 1.1 Flash")
