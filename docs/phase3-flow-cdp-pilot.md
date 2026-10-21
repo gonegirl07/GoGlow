@@ -2,88 +2,101 @@
 
 This is a local, human-gated browser pilot. It does not call a Google Flow API or send direct HTTP requests to Flow. It attaches to the already-open Chrome CDP endpoint at `127.0.0.1:9224`.
 
-## Install and preflight
+## Install and inspect
 
-Use the same Linux user/session that owns the Chrome instance. Ensure Chrome was started with remote debugging enabled on port 9224 and the intended Flow tab is already open.
+Use the same Linux user/session that owns the Chrome instance. Ensure Chrome was started with remote debugging enabled on port 9224 and the intended Flow project tab is already open.
 
 ```bash
 npm install
 npm run flow:inspect
 ```
 
-The inspector is read-only. It lists every page exposed by CDP, including a zero-based global tab index, context index, title, URL, visible text and a small set of UI controls. It never navigates, fills a field, or clicks anything. If the intended Flow tab is not listed, stop; do not let the runner open a new tab or assume another profile is the correct account.
+Inspection is read-only: it lists exposed tabs, their URLs, visible text and visible controls. It never navigates, fills, or clicks. The current project UI is recognized at `https://flow.google.com/project/<UUID>`; the old `labs.google/fx/tools/flow` route remains supported. A `flow.google.com/404` page is explicitly rejected. CDP context indexes do **not** prove which Google account is active.
 
-Only `labs.google/fx/tools/flow` URLs are recognized in this pilot. If the current official Flow UI uses a different host or route, update the allowlist only after manually verifying the official URL.
-
-## Prepare selector config
-
-1. Run `npm run flow:inspect` and inspect the actual page controls on the account/profile that has credit.
-2. Copy `examples/flow-pilot-selectors.example.json` to a local-only file such as `local/flow-selectors.json`.
-3. Replace every `REPLACE_AFTER_INSPECT` value with a CSS selector observed on the current UI. The example intentionally does not guess selectors.
-4. Do not commit real account identifiers, screenshots, logs, or local selector files if they reveal private account information.
-
-Selector config requires unique selectors for `prompt`, `model`, `resolution`, and `create`. Each selector must match exactly one visible element. Model and resolution selectors must either be native `select` elements with a matching label/value, or open a menu containing one exact accessible `option` name.
-
-## Dry run (default, no Create click; `--dry-run` is explicit)
+## Prepare local selectors
 
 ```bash
-node scripts/flow-pilot.mjs \
-  --tab 0 \
-  --scene examples/flow-pilot-scene.example.json \
-  --selectors local/flow-selectors.json \
-  --account-label "my intended Flow account"
+mkdir -p local
+cp examples/flow-pilot-selectors.example.json local/flow-selectors.json
 ```
 
-Replace tab index and account label with the values shown/verified on your machine. Before changing the page, the runner prints the selected tab and visible page text, then requires the operator to type exactly:
+The selector template reflects the tested current DOM pattern. Verify every selector with `--inspect` before use. The settings panel must be opened before model and radio controls exist. The runner uses the settings trigger, opens the model family menu, selects the exact `menuitem`, and verifies radio state through `aria-checked="true"`.
 
-`CONFIRM ACCOUNT my intended Flow account HAS CREDIT`
+Required selector keys:
 
-The runner then fills the prompt and selected settings, checks the Create control, saves a screenshot, prints a review summary, and exits **without clicking Create**. If a selector is missing, ambiguous, hidden, or disabled, it stops. Dry-run does not generate a video.
+- `account_button`: account control with an aria-label containing the active account email; defaults to `button[aria-label^="Google Account:"]`.
+- `prompt`, `settings_trigger`, `model`, `model_option`, `resolution`, `ingredients_mode`, `aspect_9_16`, `duration`, `create`.
 
-## Execute one generation (only after dry-run passes)
+Do not commit the local selector file, account identifiers, screenshots, or logs.
+
+## Dry run — always stop before Create
 
 ```bash
-node scripts/flow-pilot.mjs --execute \
-  --tab 0 \
+node scripts/flow-pilot.mjs --dry-run \
+  --tab 4 \
   --scene examples/flow-pilot-scene.example.json \
   --selectors local/flow-selectors.json \
   --account-label "my intended Flow account" \
+  --expected-email "you@example.com" \
+  --expected-project "project-uuid"
+```
+
+Replace the tab index, email, project UUID and label with the exact values you have verified. `--expected-email` is mandatory: the runner reads the email from the Google account button's DOM aria-label and compares it before changing any page fields. `--expected-project` is optional but recommended; when supplied it must exactly match the project UUID in the current URL.
+
+The first confirmation still requires typing exactly:
+
+`CONFIRM ACCOUNT my intended Flow account HAS CREDIT`
+
+Before filling the prompt, the runner validates the project and account, checks the prompt/Create/settings selectors, opens settings, validates the model/radio controls, and applies/verifies these settings:
+
+- Model: `Omni 1.1 Flash`
+- Resolution: `360p`
+- Mode: `Ingredients`
+- Aspect ratio: `9:16`
+- Duration: `8s`
+
+It reads the visible `Generating will use N credits` text when present and includes the estimated cost in the READY-TO-CREATE CHECK. It closes the settings overlay before filling the prompt. Non-ASCII prompt text is rejected before connecting to or changing the page. After prompt fill it verifies Create is enabled, saves a screenshot and exits without clicking Create.
+
+If a selector or setting fails before prompt fill, the prompt is not touched. If prompt fill itself fails or the button remains disabled, the runner attempts to clear the prompt. Keep the terminal attached; if stdin closes, the runner reports that the confirmation input closed and does not proceed.
+
+## Execute exactly one generation — requires separate approval
+
+Do not run this command until the tester has accepted the dry-run output and explicitly approves one real generation.
+
+```bash
+node scripts/flow-pilot.mjs --execute \
+  --tab 4 \
+  --scene examples/flow-pilot-scene.example.json \
+  --selectors local/flow-selectors.json \
+  --account-label "my intended Flow account" \
+  --expected-email "you@example.com" \
+  --expected-project "project-uuid" \
   --log local/flow-pilot.jsonl
 ```
 
-The runner requires the same account-and-credit confirmation before filling fields, then prints the final prompt/model/resolution and requires a second exact phrase:
+After the account confirmation and READY-TO-CREATE CHECK, the runner requires a second exact phrase:
 
 `CREATE ONE VIDEO FOR pilot-scene-01`
 
-Only then does it re-check the existing tab URL and Create control and attempt one click. There is no loop and no automatic retry. If a click throws or the result is ambiguous, the append-only JSONL receipt records `submission_outcome_unknown`; inspect Flow manually and **do not click again** until you know whether a generation was submitted.
-
-The JSONL receipt records intent before the non-idempotent click, then records that the click returned or that the outcome is unknown. It does not claim that generation completed or that credits were charged. Completion detection and automatic URI import are out of scope for this pilot.
+It re-checks the URL, project/account identity and Create control before a single click. It never retries. If the click outcome is ambiguous, inspect Flow manually and do not click again until the result is known. The append-only receipt records submission intent and whether the click returned or its outcome is unknown; it does not claim generation completion or credit charge.
 
 ## Safety properties
 
-- Connects only to `http://127.0.0.1:9224`; it does not launch a separate browser or navigate tabs.
-- Enumerates existing tabs and requires an explicit tab index. A non-Flow page is rejected.
-- Requires an operator-supplied account label and explicit confirmation that the selected account has credit.
-- Restricts the scene to exact labels `Omni 1.1 Flash` and `360p`.
-- Uses configured selectors only; no blind coordinate clicks.
-- Dry-run is the default. Only `--execute` plus the final typed phrase can reach the Create click.
-- A single Create click at most; no retry on timeout/ambiguous outcome.
-- Does not save credentials, cookies, or profile data into GoGlow.
-- The runner does not read or infer the credit balance.
+- Existing Chrome CDP connection only; no navigation, direct Flow API or direct HTTP request.
+- Rejects non-Flow tabs and `flow.google.com/404`; can optionally pin the exact project UUID.
+- Verifies active Google email from page DOM against mandatory `--expected-email`; operator-supplied label alone is not treated as identity proof.
+- ASCII-only prompt, exact model/resolution, and verified Ingredients / 9:16 / 8s settings.
+- Dry-run is the default and never clicks Create.
+- Execute requires two explicit confirmations and permits at most one Create click.
+- No retry, no inferred completion/credit deduction, no credential or cookie storage.
 
 ## Tester acceptance
 
-1. Run `--inspect` with several Chrome tabs/profiles open. Verify the correct Flow tab can be identified without navigation or writes.
-2. Use a valid local selector config in dry-run. Verify exact prompt, Omni 1.1 Flash, 360p and screenshot; verify no generation/credit change occurs.
-3. Try an incorrect tab index, a non-Flow tab, zero-match selector and duplicate-match selector; each must stop without Create click.
-4. Cancel the first account/credit confirmation; no field should be filled.
-5. In a disposable test, verify dry-run never clicks Create even when the button is enabled.
-6. Only after those pass, execute one 360p pilot and manually verify one generation appears. Verify the JSONL receipt and manually inspect result/credit balance; GoGlow must not infer either.
-7. Run existing Python CI and Chrome regression checks. Keep screenshots/logs local if they reveal account details.
-
-## Known limitations
-
-- The real Flow DOM, exact option labels and Create button selector must be confirmed by the tester; no selectors are assumed to be stable.
-- The runner is intentionally interactive and requires a terminal. Do not run it unattended.
-- A click returning is not proof that generation started or finished.
-- No generation completion polling, result download, URI import, automatic credit tracking, or multi-scene loop is included.
+1. With multiple tabs/profiles open, verify inspect recognizes the real `flow.google.com/project/<UUID>` tab and rejects the 404 tab.
+2. Verify a mismatched `--expected-email` and mismatched `--expected-project` both stop before any page mutation.
+3. Verify non-ASCII prompt text is rejected before the runner touches Flow.
+4. Run dry-run with the local selectors. Confirm model, 360p, Ingredients, 9:16, 8s and credit-cost estimate; verify settings overlay closes and prompt is filled only after selector preflight.
+5. Confirm dry-run does not click Create and credit remains unchanged.
+6. Exercise out-of-range/non-Flow tab, zero-match/duplicate selectors, and cancelled confirmations.
+7. Only after the above pass, separately approve and run exactly one `--execute` test. Manually verify the resulting generation and balance; do not retry ambiguous outcomes.
+8. Run Python tests, Node syntax check, JSON validation and existing Chrome regression checks.
