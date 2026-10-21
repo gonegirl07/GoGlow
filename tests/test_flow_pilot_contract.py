@@ -423,6 +423,7 @@ class FlowPilotContractTests(unittest.TestCase):
 
     def test_seated_shots_get_optional_wide_knee_margin_helper(self):
         self.assertIn('scene.framing_helper_applied', self.script)
+        self.assertIn('Locked-off tripod shot from the first frame: the camera does not move, pan, tilt, dolly, or zoom at any time', self.script)
         self.assertIn('Camera pulled back, with a wide margin on both sides of the knees', self.script)
         self.assertIn('scene.framing_helper === false ? false', self.script)
 
