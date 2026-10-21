@@ -42,14 +42,21 @@ _ACTIVITY_BEATS = {
 }
 
 def _divide_duration(total: int, count: int) -> list[int]:
-    base, remainder = divmod(total, count)
-    return [base + (1 if i < remainder else 0) for i in range(count)]
+    """Allocate exact Flow clip lengths (8s/10s) without silently inventing 9s clips."""
+    ten_count = (total - 8 * count) / 2
+    if not ten_count.is_integer() or not 0 <= ten_count <= count:
+        raise ValueError(
+            f"Target duration {total}s cannot be made from {count} Flow clips of 8s or 10s. "
+            "Change the scene count or target duration."
+        )
+    ten_count = int(ten_count)
+    return [8] * (count - ten_count) + [10] * ten_count
 
 def _qc_for(activity: str) -> list[str]:
     common = ["Character identity and wardrobe match the selected references.", "Start and end states are clear and continuity is usable.", "Review the actual output; do not infer QC from the prompt alone."]
     specific = {
         "cycling": ["Travel direction, road/lane, wheel rotation, and pedaling agree.", "Hands remain on handlebars and feet on pedals; speed is plausible."],
-        "yoga": ["Pose and support points match the intended posture.", "Left/right limbs, balance, and joint alignment are plausible; full body remains visible."],
+        "yoga": ["Both hands and feet remain in frame with margin and match the pose reference.", "Rear foot/leg does not slide; balance, support points, and joint angles match a reputable pose reference.", "Left/right limbs are correct and not mirrored; chest coverage remains secure."],
         "dance": ["Footwork and weight transfer are readable and match the beat.", "No unrequested spins, foot sliding, or sudden facing flips."],
         "fashion": ["Outfit, shoes, colors, and accessories remain stable.", "Framing shows the required outfit details; fabric and limbs remain plausible."],
         "other": ["Primary action is readable and physically plausible."],
@@ -72,13 +79,13 @@ def create_project(activity: str, target_duration_seconds: int = DEFAULT_TARGET_
         start, action, end, constraint = beats[index % len(beats)]
         if index:
             start = "Continue from the previous scene's ending state. " + start
-        prompt = (f"Vertical 9:16 video featuring {character_name}. Activity: {activity}. {brief.strip()} "
+        prompt = (f"Vertical 9:16 video featuring {character_name}. Activity: {activity}. Flow clip length: {duration}s. {brief.strip()} "
                   f"Starting state: {start} Primary action: {action} Ending state: {end} "
                   f"Continuity and constraints: {constraint} Use one coherent shot, stable identity and wardrobe, "
                   "plausible body mechanics, and a deliberate camera plan. This is a starter prompt; replace generic "
                   "details with the exact character reference, location, camera setup, and action before generation.").strip()
         scenes.append({
-            "id": f"scene-{index + 1:02d}", "duration_seconds": duration, "wardrobe": "", "location": "",
+            "id": f"scene-{index + 1:02d}", "duration_seconds": duration, "flow_clip_seconds": str(duration), "pose_reference_uri": "", "face_reference_uri": "", "media_uri_360p": "", "media_uri_720p": "", "breath_cue": "", "movement_benefit": "", "edit_transition": "hard_cut", "watermark_status": "not_checked", "wardrobe": "", "location": "",
             "start_state": start, "primary_action": action,
             "motion_direction": "Specify screen direction and path explicitly before generation.",
             "speed_and_timing": "Steady, deliberate motion; adjust to the activity and shot.",
