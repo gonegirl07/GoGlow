@@ -1,0 +1,14 @@
+{
+  "name": "goglow-flow-pilot",
+  "private": true,
+  "type": "module",
+  "engines": {
+    "node": ">=20"
+  },
+  "scripts": {
+    "flow:inspect": "node scripts/flow-pilot.mjs --inspect"
+  },
+  "dependencies": {
+    "playwright": "^1.55.0"
+  }
+}
