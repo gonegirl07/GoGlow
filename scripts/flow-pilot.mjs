@@ -140,7 +140,7 @@ function nextLedgerAttemptNumber(pathname, sceneId) {
   const absolute = path.resolve(pathname);
   if (!fs.existsSync(absolute)) return 1;
   let max = 0;
-  for (const line of fs.readFileSync(absolute, "utf8").split(/\\r?\\n/)) {
+  for (const line of fs.readFileSync(absolute, "utf8").split(/\r?\n/)) {
     if (!line.trim()) continue;
     try {
       const record = JSON.parse(line);
