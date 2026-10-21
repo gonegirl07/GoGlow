@@ -120,6 +120,20 @@
             "type": "string"
           },
           "uniqueItems": true
+        },
+        "pose_reference_ids": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "uniqueItems": true
+        },
+        "face_reference_ids": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "uniqueItems": true
         }
       }
     },
