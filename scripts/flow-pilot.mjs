@@ -450,14 +450,33 @@ async function waitForGenerationAndDownload(page, selectors, { beforeKeys, befor
           // If the new tile opened its own editor, keep waiting there for the
           // actual result instead of confusing an in-progress tile with a stale card.
           if (page.url().includes("/edit/") || page.url().includes("/video/")) {
-            while (Date.now() < deadline) {
+            while (true) {
               await failIfVisible();
               if (await page.locator(selectors.download_media_button).isVisible().catch(() => false)) break;
+              if (Date.now() >= deadline) {
+                // Recover to the project grid before checking credits: detail pages do
+                // not reliably expose the balance panel. If charged, keep polling rather
+                // than declaring an already-paid generation unknown.
+                if (!chargedExtensionUsed && beforeBalance !== null) {
+                  await page.goBack({ waitUntil: "domcontentloaded", timeout: 10000 }).catch(() => {});
+                  await activateVideosTab(page, selectors).catch(() => "not_found_no_tab_switch");
+                  const currentBalance = await readCreditBalance(page, selectors).catch(() => null);
+                  if (currentBalance !== null && currentBalance < beforeBalance) {
+                    chargedExtensionUsed = true;
+                    deadline = Date.now() + 300000;
+                    newItem = null;
+                    newKey = null;
+                    console.warn(`Flow credit balance decreased (${beforeBalance} -> ${currentBalance}) but Download media is not ready; extending result polling by 300000ms without resubmitting.`);
+                    break;
+                  }
+                }
+                await captureTimeout();
+                throw new Error("New video detail opened, but generation did not expose Download media before the wait deadline.");
+              }
               await page.waitForTimeout(1000);
             }
+            if (newItem === null || newKey === null) continue;
             if (await page.locator(selectors.download_media_button).isVisible().catch(() => false)) break;
-            await captureTimeout();
-            throw new Error("New video detail opened, but generation did not expose Download media before the wait deadline.");
           }
           // If no detail page opened, keep polling the project grid. This avoids
           // waiting ten minutes on a stale card that never navigated anywhere.
