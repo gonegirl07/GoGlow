@@ -78,6 +78,8 @@ The first runtime slice is implemented in app/prompt-library.js and the scene pa
 - Prompt composition creates a separate preview. The current scene prompt is unchanged until the user explicitly clicks “Áp dụng preview vào prompt”.
 - Outfit and room/environment fallback text is filled before preview; duplicate identical lines are removed.
 - Candidate rules do not auto-append. The real-time candidate can only be included through an unchecked opt-in in the preview UI. Confirmed stable-hold text is available only when the narrow Warrior II scope matches: character Mai, Yoga, Warrior II, Omni 1.1 Flash, 9:16, 8 seconds, and both named reference identifiers.
+- Applying a preview clears the current/360p/720p media URIs and old QC report so the old clip cannot be approved against a changed prompt. APPROVED, GENERATED, and QC_REVIEW return to WAITING_FOR_GENERATION; NEEDS_REVISION becomes PROMPT_REVISED.
+- A preview records a snapshot of its source fields/settings; if anything changes before Apply, the stale preview is rejected and must be regenerated.
 - The preview panel is advisory and never blocks generation/export. Human review of the actual Flow clip remains required.
 
 ### Follow-ups retained from tester round 7
@@ -95,5 +97,7 @@ The first runtime slice is implemented in app/prompt-library.js and the scene pa
 4. Confirm no candidate rule is added unless explicitly selected before preview; candidate defaults are unchecked.
 5. Confirm wardrobe/environment placeholders are filled and duplicate lines are removed.
 6. Confirm the stable-hold rule is not appended unless the exact narrow Warrior II scope matches.
-7. Confirm warnings are non-blocking and the existing QC/export/state-machine regressions still pass.
-8. Confirm no browser console/page errors and no request is made to Google Flow.
+7. Confirm applying a preview clears old media URIs and QC evidence; APPROVED/GENERATED/QC_REVIEW return to WAITING_FOR_GENERATION and NEEDS_REVISION returns to PROMPT_REVISED.
+8. Change scene/project inputs after preview and confirm stale preview cannot be applied; create a new preview first.
+9. Confirm warnings are non-blocking and the existing QC/export/state-machine regressions still pass.
+10. Confirm no browser console/page errors and no request is made to Google Flow.
