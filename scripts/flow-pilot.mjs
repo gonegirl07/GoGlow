@@ -274,8 +274,8 @@ async function loadInputs(args) {
   if (typeof scene.character_description !== "string" || !scene.character_description.trim()) {
     throw new Error("Scene JSON must contain a non-empty character_description in ASCII English.");
   }
-  if (!/^[\\x00-\\x7F]+$/.test(scene.prompt)) throw new Error("Prompt must be ASCII/English only; non-ASCII characters are blocked before touching Flow.");
-  if (!/^[\\x00-\\x7F]+$/.test(scene.character_description)) throw new Error("Character description must be ASCII/English only; non-ASCII characters are blocked before touching Flow.");
+  if (!/^[\x00-\x7F]+$/.test(scene.prompt)) throw new Error("Prompt must be ASCII/English only; non-ASCII characters are blocked before touching Flow.");
+  if (!/^[\x00-\x7F]+$/.test(scene.character_description)) throw new Error("Character description must be ASCII/English only; non-ASCII characters are blocked before touching Flow.");
   if (!Array.isArray(scene.reference_images) || scene.reference_images.length < 1 || scene.reference_images.length > 3) {
     throw new Error("Scene JSON must provide reference_images as an array of 1 to 3 local file paths.");
   }
@@ -291,8 +291,8 @@ async function loadInputs(args) {
   if (new Set(referenceImages).size !== referenceImages.length) throw new Error("reference_images must contain distinct file paths.");
   scene.character_description = scene.character_description.trim();
   scene.scene_prompt = scene.prompt;
-  scene.prompt = `CHARACTER DESCRIPTION: ${scene.character_description}\\n\\nSCENE: ${scene.prompt.trim()}\\n\\nUse the attached reference images as the visual identity source for the person. Preserve the same facial features, hair, skin tone, and body proportions. Do not substitute a different person.`;
-  if (!/^[\\x00-\\x7F]+$/.test(scene.prompt)) throw new Error("Composed prompt must contain ASCII characters only.");
+  scene.prompt = `CHARACTER DESCRIPTION: ${scene.character_description}\n\nSCENE: ${scene.prompt.trim()}\n\nUse the attached reference images as the visual identity source for the person. Preserve the same facial features, hair, skin tone, and body proportions. Do not substitute a different person.`;
+  if (!/^[\x00-\x7F]+$/.test(scene.prompt)) throw new Error("Composed prompt must contain ASCII characters only.");
   if (scene.model !== "Omni 1.1 Flash" || scene.resolution !== "360p") {
     throw new Error("Phase 3 pilot is restricted to model='Omni 1.1 Flash' and resolution='360p'.");
   }
