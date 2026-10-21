@@ -181,6 +181,56 @@
           }
         }
       }
+    },
+    "project_name": {
+      "type": "string"
+    },
+    "character_name": {
+      "type": "string"
+    },
+    "brief": {
+      "type": "string"
+    },
+    "created_at": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "metadata": {
+      "type": "object",
+      "properties": {
+        "planner": {
+          "type": "string"
+        },
+        "model_called": {
+          "type": "boolean"
+        },
+        "media_reviewed": {
+          "type": "boolean"
+        }
+      },
+      "additionalProperties": true
+    },
+    "reference_images": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "role": {
+            "type": "string"
+          },
+          "note": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "note"
+        ],
+        "additionalProperties": false
+      }
     }
   }
 }
