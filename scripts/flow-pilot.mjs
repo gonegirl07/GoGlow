@@ -330,8 +330,8 @@ function makeGenerationLedgerRecord({ scene, projectId, ledgerProjectId, prompt,
     ? beforeBalance - afterBalance : null;
   const actualAmount = observedDelta !== null && observedDelta > 0 ? observedDelta : null;
   const refundPending = resultStatus === "failed" && /refund(?:ed)?(?: for this generation| may take| pending)?|you will be refunded/i.test(String(timeoutError || ""));
-  const chargeStatus = actualAmount !== null ? "charged"
-    : (refundPending ? "refunded_pending"
+  const chargeStatus = refundPending ? "refunded_pending"
+    : (actualAmount !== null ? "charged"
       : (resultStatus === "failed" && beforeBalance !== null && afterBalance !== null && beforeBalance === afterBalance ? "not_charged" : "unknown"));
   const timestamp = new Date().toISOString();
   attemptId = attemptId || ("attempt-" + randomUUID());
