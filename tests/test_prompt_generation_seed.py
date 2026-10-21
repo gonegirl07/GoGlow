@@ -60,7 +60,7 @@ class PromptAndGenerationSeedTests(unittest.TestCase):
         self.assertTrue(all(a["credits"]["charge_status"] == "unknown" for a in attempts))
         self.assertTrue(all(a["credits"]["evidence_source"] == "unknown" for a in attempts))
         self.assertIsNone(attempts[0]["prompt"]["sha256"])
-        self.assertIn("not a verified direct-download URI", attempts[2]["qc"]["notes"])
+        self.assertIn("not a verified direct downloadable media file", attempts[2]["qc"]["notes"])
 
 
 if __name__ == "__main__":
