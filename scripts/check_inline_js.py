@@ -9,7 +9,7 @@ import tempfile
 from pathlib import Path
 
 
-SCRIPT_TAG = re.compile(r"<script\\b(?![^>]*\\bsrc\\s*=)[^>]*>([\\s\\S]*?)</script\\s*>", re.IGNORECASE)
+SCRIPT_TAG = re.compile(r"<script\b(?![^>]*\bsrc\s*=)[^>]*>([\s\S]*?)</script\s*>", re.IGNORECASE)
 
 
 def main() -> int:
