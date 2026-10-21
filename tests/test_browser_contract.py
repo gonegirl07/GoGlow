@@ -108,5 +108,12 @@ class BrowserContractTests(unittest.TestCase):
         self.assertIn("không tự đánh giá video", self.html)
 
 
+    def test_flow_qc_uri_actions_are_disabled_after_approval(self):
+        self.assertIn("data-act='use-test-uri'", self.html)
+        self.assertIn("data-act='use-final-uri'", self.html)
+        self.assertIn('s.status==="APPROVED"?"disabled aria-disabled=\'true\'', self.html)
+        self.assertIn('if(s.status==="APPROVED"){$("status").textContent="Cảnh đã APPROVED; hãy tạo lượt sửa mới trước khi thay clip.";return}', self.html)
+
+
 if __name__ == "__main__":
     unittest.main()
