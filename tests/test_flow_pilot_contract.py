@@ -379,7 +379,7 @@ class FlowPilotContractTests(unittest.TestCase):
         self.assertIn("currentBalance < beforeBalance", wait_fn)
         self.assertIn("deadline = Date.now() + 300000", wait_fn)
         self.assertIn("without resubmitting", wait_fn)
-        self.assertIn("detail pages do not reliably expose the balance panel", wait_fn)
+        self.assertIn('page.goBack({ waitUntil: "domcontentloaded", timeout: 10000 })', wait_fn)
         self.assertIn("newItem = null", wait_fn)
 
     def test_add_to_prompt_retries_click_only_after_uuid_check(self):
