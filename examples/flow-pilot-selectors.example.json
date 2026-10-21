@@ -1,0 +1,7 @@
+{
+  "_comment": "Template only. Replace every selector after running --inspect on the actual Flow UI. Do not use unverified selectors with --execute.",
+  "prompt": "REPLACE_AFTER_INSPECT",
+  "model": "REPLACE_AFTER_INSPECT",
+  "resolution": "REPLACE_AFTER_INSPECT",
+  "create": "REPLACE_AFTER_INSPECT"
+}
