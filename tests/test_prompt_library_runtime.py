@@ -99,12 +99,12 @@ class PromptLibraryRuntimeTests(unittest.TestCase):
     def test_prompt_output_must_be_english_and_blocks_apply_export_and_copy(self):
         import re
 
-        validator = re.compile(r"[À-ỹĐđ\\u0300-\\u036f]")
+        validator = re.compile(r"[àáạảãâầấẩẫậăằắẳẵặèéẹẻẽêềếểễệìíịỉĩòóọỏõôồốổỗộơờớởỡợùúụủũưừứửữựỳýỵỷỹđÀÁẠẢÃÂẦẤẨẪẬĂẰẮẲẴẶÈÉẸẺẼÊỀẾỂỄỆÌÍỊỈĨÒÓỌỎÕÔỒỐỔỖỘƠỜỚỞỠỢÙÚỤỦŨƯỪỨỬỮỰỲÝỴỶỸĐ\\u0300-\\u036f]")
         self.assertIsNone(validator.search("Mai holds Warrior II with gentle breathing."))
         self.assertIsNotNone(validator.search("Đứng yên trong tư thế."))
-        self.assertIsNotNone(validator.search("a\\u0301"))
+        self.assertIsNotNone(validator.search("a\u0301"))
         self.assertIn("function validateEnglishPrompt(text)", self.runtime)
-        self.assertIn("const re = /[À-ỹĐđ\\\\u0300-\\\\u036f]/g", self.runtime)
+        self.assertIn(r"const re = /[àáạảãâầấẩẫậăằắẳẵặèéẹẻẽêềếểễệìíịỉĩòóọỏõôồốổỗộơờớởỡợùúụủũưừứửữựỳýỵỷỹđÀÁẠẢÃÂẦẤẨẪẬĂẰẮẲẴẶÈÉẸẺẼÊỀẾỂỄỆÌÍỊỈĨÒÓỌỎÕÔỒỐỔỖỘƠỜỚỞỠỢÙÚỤỦŨƯỪỨỬỮỰỲÝỴỶỸĐ\u0300-\u036f]/g", self.runtime)
         self.assertIn("validateEnglishPrompt", self.runtime)
         self.assertIn("previewCheck.valid", self.html)
         self.assertIn("const applyCheck=window.GoGlowPromptLibrary.validateEnglishPrompt(s.prompt_preview)", self.html)
