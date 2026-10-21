@@ -32,6 +32,7 @@ jobs:
           python -m json.tool examples/cycling-36s.json >/dev/null
           python -m json.tool examples/flow-pilot-scene.example.json >/dev/null
           python -m json.tool examples/flow-pilot-selectors.example.json >/dev/null
+          python -m json.tool specs/flow-scene.schema.json >/dev/null
       - name: Validate example project
         run: goglow validate examples/cycling-36s.json
       - name: Smoke-test CLI export
