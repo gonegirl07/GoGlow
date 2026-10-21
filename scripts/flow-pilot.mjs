@@ -119,12 +119,14 @@ function waitForSelectors(selectors, args) {
 
 async function readCreditBalance(page, selectors) {
   const selector = typeof selectors === "string" ? selectors : selectors.credit_balance;
+  const parseBalance = text => {
+    const match = String(text || "").replace(/,/g, "").match(/(?:^|\D)(\d+)(?:\D|$)/);
+    return match ? Number(match[1]) : null;
+  };
   const readVisible = async () => {
     try {
       const locator = await exactVisibleLocator(page, selector, "credit balance");
-      const text = (await locator.innerText({ timeout: 2500 }).catch(() => "")).replace(/,/g, "");
-      const match = text.match(/(?:^|\D)(\d+)(?:\D|$)/);
-      return match ? Number(match[1]) : null;
+      return parseBalance(await locator.innerText({ timeout: 2500 }).catch(() => ""));
     } catch { return null; }
   };
   let balance = await readVisible();
@@ -132,18 +134,24 @@ async function readCreditBalance(page, selectors) {
   if (!selectors.account_panel_open || !selectors.account_panel_close) return null;
   const opener = await exactVisibleLocator(page, selectors.account_panel_open, "account panel open button").catch(() => null);
   if (!opener) return null;
-  await opener.click({ timeout: 2500 }).catch(() => {});
-  try {
-    const locator = await exactVisibleLocator(page, selector, "credit balance after opening account panel", 3000);
-    const text = (await locator.innerText({ timeout: 2500 }).catch(() => "")).replace(/,/g, "");
-    const match = text.match(/(?:^|\D)(\d+)(?:\D|$)/);
-    balance = match ? Number(match[1]) : null;
-  } finally {
-    const closer = await exactVisibleLocator(page, selectors.account_panel_close, "account panel close button").catch(() => null);
-    if (closer) {
-      await closer.click({ timeout: 2500 }).catch(() => {});
-      await page.locator(selectors.account_panel_close).waitFor({ state: "hidden", timeout: 2500 }).catch(() => {});
+  // Wait for asynchronous credit rendering; retry opening the account panel once.
+  for (let attempt = 0; attempt < 2; attempt += 1) {
+    await opener.click({ timeout: 2500 }).catch(() => {});
+    try {
+      await page.locator(selector).first().waitFor({ state: "visible", timeout: 8000 });
+      const locator = await exactVisibleLocator(page, selector, "credit balance after opening account panel", 2500);
+      balance = parseBalance(await locator.innerText({ timeout: 2500 }).catch(() => ""));
+      if (balance !== null) break;
+    } catch {
+      if (attempt === 1) break;
+      await page.keyboard.press("Escape").catch(() => {});
+      await page.waitForTimeout(300).catch(() => {});
     }
+  }
+  const closer = await exactVisibleLocator(page, selectors.account_panel_close, "account panel close button").catch(() => null);
+  if (closer) {
+    await closer.click({ timeout: 2500 }).catch(() => {});
+    await page.locator(selectors.account_panel_close).waitFor({ state: "hidden", timeout: 2500 }).catch(() => {});
   }
   return balance;
 }
@@ -158,6 +166,128 @@ async function generatedItemKeys(page, selector) {
       || "";
     return String(key).trim();
   }));
+}
+
+// Flow's media grid may virtualize its DOM. Sweep the grid's scroll container and
+// union keys from every viewport instead of treating the first rendered batch as
+// the complete project inventory. Restore the initial scroll position unless a
+// target key was requested, in which case leave that tile in view for a safe click.
+async function collectAllGeneratedItems(page, selector, { targetKey = null, maxScrolls = 120 } = {}) {
+  const scrollInfo = await page.evaluate(selectorText => {
+    const first = document.querySelector(selectorText);
+    let node = first?.parentElement || null;
+    while (node && node !== document.body) {
+      const style = getComputedStyle(node);
+      if (node.scrollHeight > node.clientHeight + 8 && /(auto|scroll|overlay)/.test(style.overflowY)) {
+        return { kind: "element", initialTop: node.scrollTop, clientHeight: node.clientHeight, scrollHeight: node.scrollHeight };
+      }
+      node = node.parentElement;
+    }
+    const root = document.scrollingElement || document.documentElement;
+    return { kind: "document", initialTop: root.scrollTop, clientHeight: root.clientHeight, scrollHeight: root.scrollHeight };
+  }, selector);
+  const all = new Map();
+  let stableBottomRounds = 0;
+  let targetIndex = null;
+  let unkeyedItemsDetected = false;
+  let duplicateVisibleKeyDetected = false;
+  for (let step = 0; step <= maxScrolls; step += 1) {
+    const visible = await page.locator(selector).evaluateAll(elements => elements.map((element, index) => {
+      const key = element.getAttribute("data-id")
+        || element.getAttribute("data-testid")
+        || element.getAttribute("href")
+        || element.querySelector("a[href]")?.getAttribute("href")
+        || element.querySelector("video, img")?.getAttribute("src")
+        || "";
+      const text = String(element.innerText || element.textContent || "").replace(/\s+/g, " ").trim();
+      const state = [element.getAttribute("data-status"), element.getAttribute("data-state"),
+        element.getAttribute("aria-label"), element.getAttribute("title")].filter(Boolean).join(" ");
+      const progress = Boolean(element.querySelector('[role="progressbar"], progress, [aria-valuenow]'));
+      return { key: String(key).trim(), text, state, progress, index };
+    }));
+    const keysThisViewport = new Set();
+    for (const item of visible) {
+      if (!item.key) unkeyedItemsDetected = true;
+      else {
+        if (keysThisViewport.has(item.key)) duplicateVisibleKeyDetected = true;
+        keysThisViewport.add(item.key);
+        all.set(item.key, { ...item });
+      }
+      if (targetKey && item.key === targetKey) targetIndex = item.index;
+    }
+    if (targetIndex !== null) return { items: Array.from(all.values()), targetIndex, scrolledToTarget: true, unkeyedItemsDetected, duplicateVisibleKeyDetected };
+    const metrics = await page.evaluate((selectorText) => {
+      const first = document.querySelector(selectorText);
+      let node = first?.parentElement || null;
+      while (node && node !== document.body) {
+        const style = getComputedStyle(node);
+        if (node.scrollHeight > node.clientHeight + 8 && /(auto|scroll|overlay)/.test(style.overflowY)) {
+          return { kind: "element", top: node.scrollTop, clientHeight: node.clientHeight, scrollHeight: node.scrollHeight };
+        }
+        node = node.parentElement;
+      }
+      const root = document.scrollingElement || document.documentElement;
+      return { kind: "document", top: root.scrollTop, clientHeight: root.clientHeight, scrollHeight: root.scrollHeight };
+    }, selector);
+    const atBottom = metrics.top + metrics.clientHeight >= metrics.scrollHeight - 3;
+    if (atBottom) stableBottomRounds += 1; else stableBottomRounds = 0;
+    if (stableBottomRounds >= 2 || step === maxScrolls) break;
+    await page.evaluate(({ selectorText, amount }) => {
+      const first = document.querySelector(selectorText);
+      let node = first?.parentElement || null;
+      while (node && node !== document.body) {
+        const style = getComputedStyle(node);
+        if (node.scrollHeight > node.clientHeight + 8 && /(auto|scroll|overlay)/.test(style.overflowY)) {
+          node.scrollTop = Math.min(node.scrollTop + amount, node.scrollHeight);
+          return;
+        }
+        node = node.parentElement;
+      }
+      const root = document.scrollingElement || document.documentElement;
+      root.scrollTop = Math.min(root.scrollTop + amount, root.scrollHeight);
+    }, { selectorText: selector, amount: Math.max(250, scrollInfo.clientHeight * 0.75) });
+    await page.waitForTimeout(120);
+  }
+  await page.evaluate(({ selectorText, initialTop }) => {
+    const first = document.querySelector(selectorText);
+    let node = first?.parentElement || null;
+    while (node && node !== document.body) {
+      const style = getComputedStyle(node);
+      if (node.scrollHeight > node.clientHeight + 8 && /(auto|scroll|overlay)/.test(style.overflowY)) {
+        node.scrollTop = initialTop;
+        return;
+      }
+      node = node.parentElement;
+    }
+    (document.scrollingElement || document.documentElement).scrollTop = initialTop;
+  }, { selectorText: selector, initialTop: scrollInfo.initialTop });
+  return { items: Array.from(all.values()), targetIndex: null, scrolledToTarget: false, unkeyedItemsDetected, duplicateVisibleKeyDetected };
+}
+
+function isGenerationFailureText(value) {
+  return /generation failed|failed to generate|couldn['’]?t generate|unable to generate|video failed|something went wrong|blocked by (?:policy|safety)|violat(?:es|ed) (?:our )?(?:policy|guidelines)|generation error/i.test(String(value || ""));
+}
+
+async function activateVideosTab(page, selectors) {
+  if (selectors.videos_tab) {
+    const tab = await exactVisibleLocator(page, selectors.videos_tab, "Videos tab");
+    await tab.click({ timeout: 3000 });
+    await page.waitForTimeout(300);
+    return "configured_selector";
+  }
+  const roleTab = page.getByRole("tab", { name: /^Videos$/i });
+  if (await roleTab.count().catch(() => 0) === 1 && await roleTab.isVisible().catch(() => false)) {
+    await roleTab.click({ timeout: 3000 });
+    await page.waitForTimeout(300);
+    return "role=tab";
+  }
+  const button = page.getByRole("button", { name: /^Videos$/i });
+  if (await button.count().catch(() => 0) === 1 && await button.isVisible().catch(() => false)) {
+    await button.click({ timeout: 3000 });
+    await page.waitForTimeout(300);
+    return "role=button";
+  }
+  return "not_found_no_tab_switch";
 }
 
 function appendGenerationLedger(pathname, record) {
@@ -185,7 +315,8 @@ function makeGenerationLedgerRecord({ scene, projectId, ledgerProjectId, prompt,
   const observedDelta = beforeBalance !== null && afterBalance !== null && beforeBalance >= afterBalance
     ? beforeBalance - afterBalance : null;
   const actualAmount = observedDelta !== null && observedDelta > 0 ? observedDelta : null;
-  const chargeStatus = actualAmount !== null ? "charged" : "unknown";
+  const chargeStatus = actualAmount !== null ? "charged"
+    : (resultStatus === "failed" && beforeBalance !== null && afterBalance !== null && beforeBalance === afterBalance ? "not_charged" : "unknown");
   const timestamp = new Date().toISOString();
   attemptId = attemptId || ("attempt-" + randomUUID());
   return {
@@ -198,15 +329,23 @@ function makeGenerationLedgerRecord({ scene, projectId, ledgerProjectId, prompt,
     provider: "google_flow",
     started_on: startedOn || null,
     finished_on: timestamp,
-    configuration: {
-      model_label: scene.model || "Omni 1.1 Flash",
-      resolution: scene.resolution || "360p",
-      duration_seconds: Number.parseInt(scene.duration || "8s", 10) || 8,
-      aspect_ratio: "9:16",
-      pose_reference_id: null,
-      face_reference_id: null,
-      other_reference_ids: (scene.reference_images || []).map(item => path.basename(item)),
-    },
+    configuration: (() => {
+      const referenceImages = scene.reference_images || [];
+      const selectedFaceRefs = scene.face_reference_ids || [scene.face_reference_id || referenceImages[0]].filter(Boolean);
+      const selectedPaths = new Set(selectedFaceRefs.map(item => path.resolve(String(item))));
+      return {
+        model_label: scene.model || "Omni 1.1 Flash",
+        resolution: scene.resolution || "360p",
+        duration_seconds: Number.parseInt(scene.duration || "8s", 10) || 8,
+        aspect_ratio: "9:16",
+        pose_reference_id: null,
+        face_reference_id: selectedFaceRefs[0] ? path.basename(selectedFaceRefs[0]) : null,
+        face_reference_ids: selectedFaceRefs.map(item => path.basename(item)),
+        face_description_mode: scene.face_description_mode || "include",
+        expression: scene.expression || null,
+        other_reference_ids: referenceImages.filter(item => !selectedPaths.has(path.resolve(String(item)))).map(item => path.basename(item)),
+      };
+    })(),
     prompt: { text: prompt, sha256: createHash("sha256").update(prompt, "utf8").digest("hex"), template_version: null },
     rule_ids: [],
     result: {
@@ -236,23 +375,131 @@ function makeGenerationLedgerRecord({ scene, projectId, ledgerProjectId, prompt,
   };
 }
 
-async function waitForGenerationAndDownload(page, selectors, { beforeKeys, timeoutMs, downloadDir, sceneId, attemptId }) {
+async function waitForGenerationAndDownload(page, selectors, { beforeKeys, beforeBalance, timeoutMs, downloadDir, sceneId, attemptId, timeoutScreenshot }) {
   const itemLocator = page.locator(selectors.generated_video_items);
-  const deadline = Date.now() + timeoutMs;
+  let deadline = Date.now() + timeoutMs;
+  let chargedExtensionUsed = false;
+  let newKey = null;
   let newItem = null;
-  while (Date.now() < deadline) {
-    const keys = await generatedItemKeys(page, selectors.generated_video_items).catch(() => []);
-    const newIndexes = keys.map((key, index) => ({ key, index })).filter(item => item.key && !beforeKeys.includes(item.key));
-    if (newIndexes.length === 1) { newItem = itemLocator.nth(newIndexes[0].index); break; }
-    if (newIndexes.length > 1) throw new Error(`More than one new Flow video tile appeared (${newIndexes.length}); refusing to guess which clip to download.`);
+  let attemptedKeys = new Set();
+  const failIfVisible = async () => {
+    const bodyText = await page.locator("body").innerText({ timeout: 2000 }).catch(() => "");
+    if (isGenerationFailureText(bodyText)) {
+      throw new Error(`FLOW_GENERATION_FAILED: Flow displayed a generation/policy failure: ${bodyText.replace(/\s+/g, " ").trim().slice(-700)}`);
+    }
+  };
+  const captureTimeout = async () => {
+    if (!timeoutScreenshot) return;
+    try {
+      fs.mkdirSync(path.dirname(path.resolve(timeoutScreenshot)), { recursive: true });
+      await page.screenshot({ path: path.resolve(timeoutScreenshot), fullPage: false, timeout: 5000 });
+      console.error(`Wait-timeout screenshot saved: ${path.resolve(timeoutScreenshot)}`);
+    } catch (error) {
+      console.error(`Could not save wait-timeout screenshot: ${error.message}`);
+    }
+  };
+  while (true) {
+    if (Date.now() >= deadline) {
+      // A credit debit is strong evidence that Create was accepted even when Flow's
+      // media grid is stale. Give the newly charged generation one extra five-minute
+      // discovery window; never click Create again.
+      if (!chargedExtensionUsed && beforeBalance !== null) {
+        const currentBalance = await readCreditBalance(page, selectors).catch(() => null);
+        if (currentBalance !== null && currentBalance < beforeBalance) {
+          chargedExtensionUsed = true;
+          deadline = Date.now() + 300000;
+          console.warn(`Flow credit balance decreased (${beforeBalance} -> ${currentBalance}) but the new video is not yet verified; extending result polling by 300000ms without resubmitting.`);
+        } else {
+          break;
+        }
+      } else {
+        break;
+      }
+    }
+    // Flow can switch back to All media after Create. Explicitly re-select Videos
+    // on every grid poll before comparing the new result against the pre-Create inventory.
+    await activateVideosTab(page, selectors).catch(() => "not_found_no_tab_switch");
+    await failIfVisible();
+    const scan = await collectAllGeneratedItems(page, selectors.generated_video_items).catch(() => ({ items: [] }));
+    const newItems = scan.items.filter(item => item.key && !beforeKeys.includes(item.key));
+    const firstTile = scan.items[0] || null;
+    const firstTileIsNew = Boolean(firstTile && firstTile.key && !beforeKeys.includes(firstTile.key)
+      && scan.items.length > beforeKeys.length);
+    const candidateItems = firstTileIsNew ? [firstTile] : newItems;
+    const failedTile = newItems.find(item => isGenerationFailureText(`${item.state} ${item.text}`));
+    if (failedTile) {
+      throw new Error(`FLOW_GENERATION_FAILED: new Flow tile ${failedTile.key} reports failure: ${failedTile.text || failedTile.state}`);
+    }
+    if (!firstTileIsNew && newItems.length > 1) {
+      throw new Error(`More than one new Flow video tile appeared after a full virtualized-grid sweep (${newItems.length}); refusing to guess which clip to download.`);
+    }
+    if (candidateItems.length === 1 && !attemptedKeys.has(candidateItems[0].key)) {
+      newKey = candidateItems[0].key;
+      attemptedKeys.add(newKey);
+      const located = await collectAllGeneratedItems(page, selectors.generated_video_items, { targetKey: newKey }).catch(() => ({ targetIndex: null }));
+      if (located.targetIndex !== null) {
+        newItem = itemLocator.nth(located.targetIndex);
+        await newItem.click({ timeout: 5000 });
+        const shortWait = Math.min(3500, Math.max(500, deadline - Date.now()));
+        const downloadButtonLocator = page.locator(selectors.download_media_button);
+        try {
+          await downloadButtonLocator.waitFor({ state: "visible", timeout: shortWait });
+          break;
+        } catch {
+          await failIfVisible();
+          // If the new tile opened its own editor, keep waiting there for the
+          // actual result instead of confusing an in-progress tile with a stale card.
+          if (page.url().includes("/edit/") || page.url().includes("/video/")) {
+            while (true) {
+              await failIfVisible();
+              if (await page.locator(selectors.download_media_button).isVisible().catch(() => false)) break;
+              if (Date.now() >= deadline) {
+                // Recover to the project grid before checking credits: detail pages do
+                // not reliably expose the balance panel. If charged, keep polling rather
+                // than declaring an already-paid generation unknown.
+                if (!chargedExtensionUsed && beforeBalance !== null) {
+                  await page.goBack({ waitUntil: "domcontentloaded", timeout: 10000 }).catch(() => {});
+                  await activateVideosTab(page, selectors).catch(() => "not_found_no_tab_switch");
+                  const currentBalance = await readCreditBalance(page, selectors).catch(() => null);
+                  if (currentBalance !== null && currentBalance < beforeBalance) {
+                    chargedExtensionUsed = true;
+                    deadline = Date.now() + 300000;
+                    newItem = null;
+                    newKey = null;
+                    console.warn(`Flow credit balance decreased (${beforeBalance} -> ${currentBalance}) but Download media is not ready; extending result polling by 300000ms without resubmitting.`);
+                    break;
+                  }
+                }
+                await captureTimeout();
+                throw new Error("New video detail opened, but generation did not expose Download media before the wait deadline.");
+              }
+              await page.waitForTimeout(1000);
+            }
+            if (newItem === null || newKey === null) continue;
+            if (await page.locator(selectors.download_media_button).isVisible().catch(() => false)) break;
+          }
+          // If no detail page opened, keep polling the project grid. This avoids
+          // waiting ten minutes on a stale card that never navigated anywhere.
+          newItem = null;
+          newKey = null;
+        }
+      }
+    }
     await page.waitForTimeout(1000);
   }
-  if (!newItem) throw new Error(`No uniquely identifiable new video tile appeared within ${timeoutMs}ms. Submission may still be processing; do not retry.`);
-  await newItem.click({ timeout: 5000 });
+  if (!newItem || !newKey) {
+    await failIfVisible();
+    await captureTimeout();
+    throw new Error(`No verified new video detail/download became available within ${timeoutMs}ms. The virtualized media grid was fully swept; completion remains unverified. Do not retry.`);
+  }
   const remainingMs = Math.max(1000, deadline - Date.now());
   const downloadButtonLocator = page.locator(selectors.download_media_button);
   try { await downloadButtonLocator.waitFor({ state: "visible", timeout: remainingMs }); }
-  catch { throw new Error("A new video tile appeared, but Download media did not become visible before the wait deadline; completion remains unverified."); }
+  catch {
+    await failIfVisible();
+    await captureTimeout();
+    throw new Error("A new tile was opened but Download media did not become visible before the wait deadline; completion remains unverified.");
+  }
   const downloadButton = await exactVisibleLocator(page, selectors.download_media_button, "Download media button");
   const mediaUri = page.url();
   try {
@@ -355,6 +602,11 @@ async function closeIngredientsPicker(page, selectors) {
 
 async function clearPromptContentsVerified(prompt, selectors, timeout = 2500) {
   const page = prompt.page();
+  const initialHandle = await prompt.elementHandle();
+  if (!initialHandle) throw new Error("Prompt textbox disappeared before empty-state verification.");
+  const initialValue = await initialHandle.evaluate(element => ("value" in element) ? element.value : (element.innerText || element.textContent || ""));
+  const initialChipCount = await page.locator(selectors.ingredient_reference_items).count().catch(() => -1);
+  if (String(initialValue).trim() === "" && initialChipCount === 0) return;
   const clearButton = await exactVisibleLocator(page, selectors.clear_prompt, "Clear prompt button");
   await clearButton.click({ timeout: 2500 });
   const handle = await prompt.elementHandle();
@@ -425,7 +677,7 @@ async function checkedRadio(page, selector, value, label) {
   const locator = await exactVisibleLocator(page, selector, label);
   const role = await locator.getAttribute("role");
   if (role !== "radio") throw new Error(`The ${label} selector must match a role=radio element.`);
-  const labelText = (await locator.innerText()).replace(/\\s+/g, " ").trim();
+  const labelText = (await locator.innerText()).replace(/\s+/g, " ").trim();
   if (!labelText.includes(value)) throw new Error(`The ${label} selector text ${JSON.stringify(labelText)} does not match expected value ${JSON.stringify(value)}.`);
   const checked = await locator.getAttribute("aria-checked");
   if (checked !== "true") {
@@ -587,7 +839,30 @@ async function uploadSceneReferencesUnsafe(page, selectors, referenceImages) {
     }
     if (!attached) {
       const addToPrompt = await exactVisibleLocator(page, selectors.ingredient_add_to_prompt, "Add to prompt button");
-      await addToPrompt.click({ timeout: 2500 });
+      let attachedAfterClick = false;
+      let lastClickError = null;
+      // This Flow button occasionally remains visible/enabled/stable while its first
+      // click times out. Retry at most twice, but verify the UUID after every attempt
+      // before clicking again so an accepted first click cannot create a duplicate.
+      for (let clickAttempt = 0; clickAttempt < 3; clickAttempt += 1) {
+        try {
+          await addToPrompt.click({ timeout: 6000 });
+          lastClickError = null;
+        } catch (error) {
+          lastClickError = error;
+        }
+        attachedAfterClick = await page.waitForFunction(({ selector, uuid }) => Array.from(document.querySelectorAll(selector)).some(chip => {
+          const src = chip.querySelector("img.chip-image")?.getAttribute("src") || "";
+          return src.toLowerCase().includes(uuid);
+        }), { selector: selectors.ingredient_reference_items, uuid: assetUuid }, { timeout: 2500 }).then(() => true).catch(() => false);
+        if (attachedAfterClick) break;
+        if (clickAttempt < 2) await page.waitForTimeout(350);
+      }
+      if (!attachedAfterClick) {
+        await closeIngredientsPicker(page, selectors);
+        const detail = lastClickError ? ` Last click error: ${lastClickError.message}` : "";
+        throw new Error(`Add to prompt did not attach asset ${filename} after 3 verified click attempts.${detail}`);
+      }
       try {
         await page.waitForFunction(({ selector, uuid }) => Array.from(document.querySelectorAll(selector)).some(chip => {
           const src = chip.querySelector("img.chip-image")?.getAttribute("src") || "";
@@ -665,11 +940,22 @@ async function loadInputs(args) {
   const selectors = JSON.parse(fs.readFileSync(args.selectors, "utf8"));
   if (typeof scene.scene_id !== "string" || !scene.scene_id.trim()) throw new Error("Scene JSON must contain a non-empty scene_id.");
   if (typeof scene.prompt !== "string" || !scene.prompt.trim()) throw new Error("Scene JSON must contain a non-empty prompt.");
-  if (typeof scene.character_description !== "string" || !scene.character_description.trim()) {
-    throw new Error("Scene JSON must contain a non-empty character_description in ASCII English.");
+  const faceDescriptionMode = scene.face_description_mode ?? "include";
+  if (!["include", "hybrid", "reference_only"].includes(faceDescriptionMode)) {
+    throw new Error("face_description_mode must be 'include', 'hybrid', or 'reference_only'.");
   }
+  if (typeof scene.character_description !== "string") {
+    throw new Error("Scene JSON must contain character_description as a string (it may be empty when face_description_mode is 'reference_only').");
+  }
+  if (faceDescriptionMode !== "reference_only" && !scene.character_description.trim()) {
+    throw new Error("Scene JSON must contain a non-empty character_description in ASCII English unless face_description_mode is 'reference_only'.");
+  }
+  if (scene.expression !== undefined && (typeof scene.expression !== "string" || !scene.expression.trim())) {
+    throw new Error("expression must be a non-empty ASCII English string when provided.");
+  }
+  if (scene.expression && !/^[\x00-\x7F]+$/.test(scene.expression)) throw new Error("Expression must be ASCII/English only; non-ASCII characters are blocked before touching Flow.");
   if (!/^[\x00-\x7F]+$/.test(scene.prompt)) throw new Error("Prompt must be ASCII/English only; non-ASCII characters are blocked before touching Flow.");
-  if (!/^[\x00-\x7F]+$/.test(scene.character_description)) throw new Error("Character description must be ASCII/English only; non-ASCII characters are blocked before touching Flow.");
+  if (scene.character_description && !/^[\x00-\x7F]+$/.test(scene.character_description)) throw new Error("Character description must be ASCII/English only; non-ASCII characters are blocked before touching Flow.");
   if (!Array.isArray(scene.reference_images) || scene.reference_images.length < 1 || scene.reference_images.length > 3) {
     throw new Error("Scene JSON must provide reference_images as an array of 1 to 3 local file paths.");
   }
@@ -683,35 +969,75 @@ async function loadInputs(args) {
     return resolved;
   });
   if (new Set(referenceImages).size !== referenceImages.length) throw new Error("reference_images must contain distinct file paths.");
-  const requestedFaceReference = scene.face_reference_id;
-  let faceReferenceImage;
-  if (requestedFaceReference === undefined || requestedFaceReference === null || requestedFaceReference === "") {
-    faceReferenceImage = referenceImages[0];
-    scene.face_reference_id = scene.reference_images[0];
+  const requestedFaceReferences = scene.face_reference_ids;
+  let faceReferenceImages;
+  if (requestedFaceReferences !== undefined) {
+    if (scene.face_reference_id !== undefined && scene.face_reference_id !== null && scene.face_reference_id !== "") {
+      throw new Error("Use either face_reference_ids or face_reference_id, not both.");
+    }
+    if (!Array.isArray(requestedFaceReferences) || requestedFaceReferences.length < 1 || requestedFaceReferences.length > 3) {
+      throw new Error("face_reference_ids must be an array of 1 to 3 paths from this job's reference_images.");
+    }
+    faceReferenceImages = requestedFaceReferences.map((value, index) => {
+      if (typeof value !== "string" || !value.trim()) throw new Error(`face_reference_ids[${index}] must be a non-empty image path.`);
+      const resolved = path.resolve(path.dirname(scenePath), value);
+      if (!referenceImages.includes(resolved)) {
+        throw new Error("Every face_reference_ids entry must match a path in this job's reference_images.");
+      }
+      return resolved;
+    });
+    if (new Set(faceReferenceImages).size !== faceReferenceImages.length) {
+      throw new Error("face_reference_ids must contain distinct paths.");
+    }
+    scene.face_reference_ids = requestedFaceReferences;
+    scene.face_reference_id = requestedFaceReferences[0];
   } else {
-    if (typeof requestedFaceReference !== "string" || !requestedFaceReference.trim()) {
-      throw new Error("face_reference_id must identify one path from reference_images.");
+    const requestedFaceReference = scene.face_reference_id;
+    let singleFaceReference;
+    if (requestedFaceReference === undefined || requestedFaceReference === null || requestedFaceReference === "") {
+      singleFaceReference = referenceImages[0];
+      scene.face_reference_id = scene.reference_images[0];
+    } else {
+      if (typeof requestedFaceReference !== "string" || !requestedFaceReference.trim()) {
+        throw new Error("face_reference_id must identify one path from reference_images.");
+      }
+      singleFaceReference = path.resolve(path.dirname(scenePath), requestedFaceReference);
+      if (!referenceImages.includes(singleFaceReference)) {
+        throw new Error("face_reference_id must match one of the image paths in this job's reference_images.");
+      }
     }
-    faceReferenceImage = path.resolve(path.dirname(scenePath), requestedFaceReference);
-    if (!referenceImages.includes(faceReferenceImage)) {
-      throw new Error("face_reference_id must match one of the image paths in this job's reference_images.");
-    }
+    faceReferenceImages = [singleFaceReference];
   }
-  // Ingredients are attached in order, so place the selected face anchor first.
+  // Face references are attached first in the caller-declared order; supporting references follow.
   const orderedReferenceImages = [
-    faceReferenceImage,
-    ...referenceImages.filter(imagePath => imagePath !== faceReferenceImage),
+    ...faceReferenceImages,
+    ...referenceImages.filter(imagePath => !faceReferenceImages.includes(imagePath)),
   ];
+  // Canonicalize paths so the ledger can reliably distinguish face refs from supporting refs.
+  scene.reference_images = referenceImages;
+  scene.face_reference_ids = faceReferenceImages;
+  scene.face_reference_id = faceReferenceImages[0];
   scene.character_description = scene.character_description.trim();
   scene.scene_prompt = scene.prompt;
-  scene.prompt = `PRIMARY FACE REFERENCE: The first attached reference image is the primary face identity anchor. Match its facial structure, eye shape and spacing, nose, lips, jawline, and overall likeness as closely as possible. Keep the same person throughout the clip.\n\nCHARACTER DESCRIPTION: ${scene.character_description}\n\nSCENE: ${scene.prompt.trim()}\n\nUse the remaining attached reference images only as supporting references for appearance and context. Do not let them override the primary face reference. Preserve the person's facial features, hair, and skin tone. Do not substitute a different person.`;
+  const faceAnchorInstructions = faceReferenceImages.length > 1
+    ? "The first attached image is the primary face identity anchor. The other selected face reference images show the SAME PERSON from additional angles; combine them to understand facial structure, eye shape and spacing, nose, lips, cheeks, jawline, and overall likeness. Do not blend this identity with any supporting reference."
+    : "The first attached reference image is the primary face identity anchor. Match its facial structure, eye shape and spacing, nose, lips, cheeks, jawline, and overall likeness as closely as possible.";
+  const characterDescriptionSection = faceDescriptionMode === "reference_only" || !scene.character_description
+    ? "Use the attached reference images for all appearance details; do not invent or reinterpret facial features."
+    : faceDescriptionMode === "hybrid"
+      ? `HYBRID FACE DESCRIPTION (brief matching traits only; reference images remain authoritative): ${scene.character_description.trim().replace(/[.\s]+$/, "")}. Match the reference images and do not add conflicting traits.`
+      : `CHARACTER DESCRIPTION (supporting traits only; do not override the face reference): ${scene.character_description}`;
+  const expressionSection = scene.expression
+    ? `\n\nEXPRESSION AND EYE STATE (follow throughout the entire shot): ${scene.expression}. Keep this expression and eye state consistent from the first frame to the last; this instruction takes priority over breathing or other subtle motion.`
+    : "";
+  scene.prompt = `PRIMARY FACE REFERENCE: ${faceAnchorInstructions} Keep the same person throughout the clip.\n\n${characterDescriptionSection}\n\nSCENE: ${scene.prompt.trim()}${expressionSection}\n\nUse remaining attached images only as supporting references for clothing, body, or context. Preserve the selected face identity, hair, and skin tone. Do not substitute a different person.`;
   if (!/^[\x00-\x7F]+$/.test(scene.prompt)) throw new Error("Composed prompt must contain ASCII characters only.");
   if (scene.model !== "Omni 1.1 Flash" || scene.resolution !== "360p") {
     throw new Error("Phase 3 pilot is restricted to model='Omni 1.1 Flash' and resolution='360p'.");
   }
   if (scene.duration && scene.duration !== "8s") throw new Error("Phase 3 pilot is restricted to duration='8s'.");
   requiredSelectorConfig(selectors);
-  return { scene, selectors, referenceImages: orderedReferenceImages, faceReferenceImage };
+  return { scene, selectors, referenceImages: orderedReferenceImages, faceReferenceImage: faceReferenceImages[0], faceReferenceImages };
 }
 async function chooseFlowTab(browser, args) {
   const pages = await listPages(browser);
@@ -761,7 +1087,7 @@ async function verifyAccount(page, selectors, expectedEmail) {
   const selector = selectors.account_button || '[role="button"][aria-label^="Google Account:"]';
   const account = await exactVisibleLocator(page, selector, "Google account button");
   const label = await account.getAttribute("aria-label") || "";
-  const match = label.match(/\(([^()\s]+@[^()\s]+)\)\s*$/);
+  const match = label.match(/\(([^()\s]+@[^()\s]+)\)/);
   const observedEmail = match?.[1]?.toLowerCase() ?? null;
   if (!observedEmail) throw new Error(`Could not read an email from the Google account button aria-label ${JSON.stringify(label)}.`);
   if (observedEmail !== expectedEmail.toLowerCase()) {
@@ -871,15 +1197,18 @@ async function prepare(args, browser, rl) {
     try {
       const initialBalance = await readCreditBalance(chosen.page, selectors);
       if (initialBalance === null) throw new Error("Could not read an integer credit balance.");
-      const initialItems = await generatedItemKeys(chosen.page, selectors.generated_video_items);
-      if (initialItems.some(key => !key) || new Set(initialItems).size !== initialItems.length) {
-        throw new Error("generated_video_items selector must match distinct tiles with stable data-id, data-testid, href, link href, or media src keys.");
+      const videosTabState = await activateVideosTab(chosen.page, selectors);
+      const initialScan = await collectAllGeneratedItems(chosen.page, selectors.generated_video_items);
+      const initialItems = initialScan.items.map(item => item.key);
+      if (initialScan.unkeyedItemsDetected || initialScan.duplicateVisibleKeyDetected
+        || initialItems.some(key => !key) || new Set(initialItems).size !== initialItems.length) {
+        throw new Error("generated_video_items selector must expose a stable key for every tile and distinct keys within each viewport across a full virtualized-grid sweep.");
       }
       args._waitInitialBalance = initialBalance;
       args._waitInitialItemKeys = initialItems;
       args._waitInitialItemCount = initialItems.length;
-      console.log("WAIT SELECTOR PREFLIGHT (read-only; no Create click)");
-      console.log(JSON.stringify({ credit_balance: initialBalance, existing_video_tile_count: initialItems.length, existing_video_tile_keys: initialItems }, null, 2));
+      console.log("WAIT SELECTOR PREFLIGHT (read-only; no Create click; Videos tab selected when available; virtualized grid swept)");
+      console.log(JSON.stringify({ credit_balance: initialBalance, videos_tab_state: videosTabState, existing_video_tile_count: initialItems.length, existing_video_tile_keys: initialItems }, null, 2));
     } catch (error) {
       let cleanup = "Prompt/Ingredients cleanup was not verified.";
       try {
@@ -925,6 +1254,8 @@ async function prepare(args, browser, rl) {
     reference_image_names: referenceImages.map(file => path.basename(file)),
     face_reference_id: scene.face_reference_id,
     face_reference_image: path.basename(faceReferenceImage),
+    face_reference_ids: (scene.face_reference_ids || [scene.face_reference_id]).map(value => path.basename(value)),
+    face_description_mode: scene.face_description_mode || "include",
     reference_order: "primary face reference first, supporting references after",
     character_description: scene.character_description,
     model: scene.model,
@@ -957,7 +1288,7 @@ async function prepare(args, browser, rl) {
   args._waitStartedOn = new Date().toISOString();
   appendEvent(args.log, {
     event: "submission_intent", scene_id: scene.scene_id, reference_image_count: referenceImages.length, reference_image_names: referenceImages.map(file => path.basename(file)), face_reference_id: scene.face_reference_id, face_reference_image: path.basename(faceReferenceImage), character_description: scene.character_description, model: scene.model, resolution: scene.resolution,
-    prompt: scene.prompt, account_email: account.observedEmail, project_id: chosen.projectId,
+    prompt: scene.prompt, expression: scene.expression || null, account_email: account.observedEmail, project_id: chosen.projectId,
     estimated_credit_cost: creditCost, url: chosen.page.url(), status: "submission_in_progress",
   });
   try {
@@ -972,7 +1303,13 @@ async function prepare(args, browser, rl) {
       const currentBalance = await readCreditBalance(chosen.page, selectors);
       if (currentBalance === null) throw new Error("Credit balance could not be re-read immediately before Create; refusing to click.");
       args._waitInitialBalance = currentBalance;
-      args._waitInitialItemKeys = await generatedItemKeys(chosen.page, selectors.generated_video_items);
+      await activateVideosTab(chosen.page, selectors);
+      const currentScan = await collectAllGeneratedItems(chosen.page, selectors.generated_video_items);
+      args._waitInitialItemKeys = currentScan.items.map(item => item.key);
+      if (currentScan.unkeyedItemsDetected || currentScan.duplicateVisibleKeyDetected
+        || new Set(args._waitInitialItemKeys).size !== args._waitInitialItemKeys.length) {
+        throw new Error("Pre-Create media inventory is ambiguous; every tile must have a stable unique key. Refusing to click Create.");
+      }
       args._waitInitialItemCount = args._waitInitialItemKeys.length;
     }
     createMayHaveBeenClicked = true; // Conservatively preserve state if the click result is ambiguous.
@@ -994,11 +1331,13 @@ async function prepare(args, browser, rl) {
         attemptNumber = nextLedgerAttemptNumber(args.ledgerOutput, scene.scene_id);
         const result = await waitForGenerationAndDownload(chosen.page, selectors, {
           beforeKeys: args._waitInitialItemKeys,
+          beforeBalance: args._waitInitialBalance,
           beforeCount: args._waitInitialItemCount,
           timeoutMs: args.waitTimeoutMs,
           downloadDir: args.downloadDir,
           sceneId: scene.scene_id,
           attemptId: args._waitAttemptId,
+          timeoutScreenshot: `${screenshot}.wait-timeout.png`,
         });
         downloadedFile = result.downloadedFile;
         mediaUri = result.mediaUri || chosen.page.url();
@@ -1007,7 +1346,8 @@ async function prepare(args, browser, rl) {
       } catch (error) {
         timeoutError = String(error.message || error);
         mediaUri = chosen.page.url();
-        appendEvent(args.log, { event: "generation_wait_unverified", scene_id: scene.scene_id, status: "unknown_do_not_retry", error: timeoutError });
+        if (timeoutError.startsWith("FLOW_GENERATION_FAILED:")) resultStatus = "failed";
+        appendEvent(args.log, { event: resultStatus === "failed" ? "generation_failed_detected" : "generation_wait_unverified", scene_id: scene.scene_id, status: resultStatus === "failed" ? "failed_do_not_retry" : "unknown_do_not_retry", error: timeoutError });
         console.error(`WAIT STOPPED SAFELY: ${timeoutError}`);
       }
       // Detail pages do not expose credits; return to the original project before polling.
@@ -1042,6 +1382,10 @@ async function prepare(args, browser, rl) {
           console.error(`Clip is ready but download failed: ${downloadError}`);
           process.exitCode = 2;
         }
+      } else if (resultStatus === "failed") {
+        console.error("Flow generation failure was detected and recorded in the ledger. Do NOT retry automatically.");
+        process.exitCode = 2;
+        return;
       } else {
         console.error("Generation result remains unverified. Do NOT retry automatically; inspect Flow manually.");
         throw new Error("Generation was submitted but completion could not be verified; ledger recorded status=unknown.");

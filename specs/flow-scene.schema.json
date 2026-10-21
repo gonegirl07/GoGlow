@@ -6,7 +6,6 @@
   "required": [
     "scene_id",
     "reference_images",
-    "character_description",
     "model",
     "resolution",
     "prompt"
@@ -29,8 +28,7 @@
     },
     "character_description": {
       "type": "string",
-      "minLength": 1,
-      "description": "ASCII English description of the person in the supplied reference images."
+      "description": "ASCII English face description. Required and non-empty for include/hybrid modes; may be empty for reference_only."
     },
     "model": {
       "const": "Omni 1.1 Flash"
@@ -45,6 +43,37 @@
       "type": "string",
       "minLength": 1,
       "description": "ASCII English scene/action/wardrobe/constraint prompt."
+    },
+    "face_reference_id": {
+      "type": "string",
+      "minLength": 1,
+      "description": "Optional single face reference path from reference_images; mutually exclusive with face_reference_ids."
+    },
+    "face_reference_ids": {
+      "type": "array",
+      "minItems": 1,
+      "maxItems": 3,
+      "uniqueItems": true,
+      "items": {
+        "type": "string",
+        "minLength": 1
+      },
+      "description": "Optional 1–3 face-reference paths from reference_images, attached before supporting references."
+    },
+    "face_description_mode": {
+      "type": "string",
+      "enum": [
+        "include",
+        "hybrid",
+        "reference_only"
+      ],
+      "default": "include",
+      "description": "hybrid uses a short face description as supporting traits; reference_only relies on the supplied images."
+    },
+    "expression": {
+      "type": "string",
+      "minLength": 1,
+      "description": "Optional ASCII English expression/eye-state instruction applied near the end of the composed prompt."
     }
   }
 }

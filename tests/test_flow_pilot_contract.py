@@ -1,4 +1,5 @@
 """Static safety contract checks for the human-gated Flow pilot runner."""
+import re
 import unittest
 from pathlib import Path
 
@@ -31,6 +32,22 @@ class FlowPilotContractTests(unittest.TestCase):
         self.assertIn('[role="button"][aria-label^="Google Account:"]', self.script)
         self.assertIn("Google account mismatch", self.script)
         self.assertIn("account_email_verified", self.script)
+
+    def test_google_account_email_accepts_suffixes_and_newlines(self):
+        # Mirror the JavaScript extraction pattern against the aria-label variants
+        # reported by Google. The email is inside parentheses, not necessarily at end.
+        self.assertIn(r"label.match(/\(([^()\s]+@[^()\s]+)\)/)", self.script)
+        pattern = re.compile(r"\(([^()\s]+@[^()\s]+)\)")
+        labels = [
+            "Google Account: <name> (vudinhhuy11cdtm1@gmail.com), Google membership",
+            "Google Account: <name> (vudinhhuy11cdtm1@gmail.com)\nGoogle membership",
+            "Google Account: <name> (vudinhhuy11cdtm1@gmail.com)",
+        ]
+        for label in labels:
+            with self.subTest(label=label):
+                match = pattern.search(label)
+                self.assertIsNotNone(match)
+                self.assertEqual(match.group(1), "vudinhhuy11cdtm1@gmail.com")
 
     def test_waits_for_settings_model_selector_after_opening_settings(self):
         self.assertIn('chosen.page.locator(selectors.model).waitFor({ state: "visible", timeout: 5000 })', self.script)
@@ -103,14 +120,14 @@ class FlowPilotContractTests(unittest.TestCase):
     def test_wait_mode_requires_execute_and_bounded_timeout(self):
         self.assertIn('if (args.waitForResult && !args.execute && !args.dryRun)', self.script)
         self.assertIn('--wait without --execute is preflight-only; pass --dry-run --wait explicitly.', self.script)
-        self.assertIn('WAIT SELECTOR PREFLIGHT (read-only; no Create click)', self.script)
+        self.assertIn('WAIT SELECTOR PREFLIGHT (read-only; no Create click; Videos tab selected when available; virtualized grid swept)', self.script)
         self.assertIn('--wait-timeout-ms must be an integer from 30000 to 1800000', self.script)
         self.assertIn('--wait requires a non-empty', self.script)
         self.assertIn('["credit_balance", "generated_video_items", "download_media_button", "download_360p_original_button", "account_panel_open", "account_panel_close"]', self.script)
 
     def test_wait_tracks_new_tile_by_stable_identity_and_never_retries(self):
-        self.assertIn('generatedItemKeys(page, selectors.generated_video_items)', self.script)
-        self.assertIn('newIndexes.length === 1', self.script)
+        self.assertIn('collectAllGeneratedItems(page, selectors.generated_video_items)', self.script)
+        self.assertIn('candidateItems.length === 1', self.script)
         self.assertIn('refusing to guess which clip to download', self.script)
         self.assertIn('status: "unknown_do_not_retry"', self.script)
         self.assertIn('Do NOT retry automatically', self.script)
@@ -155,7 +172,8 @@ class FlowPilotContractTests(unittest.TestCase):
         self.assertIn("Refusing to overwrite an existing scene/attempt download", self.script)
 
     def test_virtualized_flow_grid_uses_new_stable_keys_not_tile_count(self):
-        self.assertIn("const newIndexes = keys.map((key, index)", self.script)
+        self.assertIn("const newItems = scan.items.filter(item => item.key && !beforeKeys.includes(item.key))", self.script)
+        self.assertIn("async function collectAllGeneratedItems(page, selector", self.script)
         self.assertNotIn("count > beforeCount", self.script)
 
     def test_confirmation_reader_buffers_piped_stdin(self):
@@ -232,30 +250,84 @@ class FlowPilotContractTests(unittest.TestCase):
         self.assertNotIn('--character-profile', self.script)
         self.assertNotIn('character_id', self.script)
 
+    def test_hybrid_face_description_and_expression_are_composed_near_prompt_end(self):
+        self.assertIn('faceDescriptionMode === "hybrid"', self.script)
+        self.assertIn("HYBRID FACE DESCRIPTION (brief matching traits only; reference images remain authoritative)", self.script)
+        self.assertIn("const expressionSection = scene.expression", self.script)
+        self.assertIn("EXPRESSION AND EYE STATE (follow throughout the entire shot)", self.script)
+        self.assertIn("this instruction takes priority over breathing or other subtle motion", self.script)
+        self.assertIn("Expression must be ASCII/English only", self.script)
+
+    def test_generation_ledger_records_face_reference_configuration(self):
+        self.assertIn("face_reference_ids: selectedFaceRefs.map(item => path.basename(item))", self.script)
+        self.assertIn('face_description_mode: scene.face_description_mode || "include"', self.script)
+        self.assertIn("expression: scene.expression || null", self.script)
+        self.assertIn("other_reference_ids: referenceImages.filter(item => !selectedPaths.has", self.script)
+
+    def test_virtualized_media_grid_is_swept_before_tile_identity_comparison(self):
+        self.assertIn("async function collectAllGeneratedItems(page, selector", self.script)
+        self.assertIn("Flow's media grid may virtualize its DOM", self.script)
+        self.assertIn("const initialScan = await collectAllGeneratedItems", self.script)
+        self.assertIn("const videosTabState = await activateVideosTab", self.script)
+        self.assertIn('page.getByRole("tab", { name: /^Videos$/i })', self.script)
+        self.assertIn("unkeyedItemsDetected", self.script)
+        self.assertIn("duplicateVisibleKeyDetected", self.script)
+        self.assertIn("Pre-Create media inventory is ambiguous", self.script)
+        self.assertIn("full virtualized-grid sweep", self.script)
+
+    def test_generation_failure_is_detected_and_logged_without_retry(self):
+        self.assertIn("function isGenerationFailureText(value)", self.script)
+        self.assertIn("FLOW_GENERATION_FAILED:", self.script)
+        self.assertIn('event: resultStatus === "failed" ? "generation_failed_detected" : "generation_wait_unverified"', self.script)
+        self.assertIn('resultStatus === "failed" && beforeBalance !== null && afterBalance !== null && beforeBalance === afterBalance ? "not_charged" : "unknown"', self.script)
+        self.assertIn('else if (resultStatus === "failed")', self.script)
+        self.assertIn("Flow generation failure was detected and recorded in the ledger", self.script)
+        self.assertIn("Wait-timeout screenshot saved", self.script)
+
+    def test_hybrid_face_description_strips_trailing_period_before_adding_punctuation(self):
+        self.assertIn(r'scene.character_description.trim().replace(/[.\s]+$/, "")', self.script)
+
+    def test_credit_preflight_waits_for_render_and_retries_once(self):
+        self.assertIn('waitFor({ state: "visible", timeout: 8000 })', self.script)
+        self.assertIn("for (let attempt = 0; attempt < 2; attempt += 1)", self.script)
+        self.assertIn("retry opening the account panel once", self.script)
+
+    def test_cleanup_does_not_click_clear_when_already_clean(self):
+        self.assertIn("const initialChipCount = await page.locator(selectors.ingredient_reference_items)", self.script)
+        self.assertIn('String(initialValue).trim() === "" && initialChipCount === 0', self.script)
+
 
     def test_face_reference_is_selected_from_this_jobs_reference_images(self):
-        self.assertIn("const requestedFaceReference = scene.face_reference_id;", self.script)
+        self.assertIn("const requestedFaceReferences = scene.face_reference_ids;", self.script)
+        self.assertIn("Every face_reference_ids entry must match a path in this job's reference_images.", self.script)
         self.assertIn("face_reference_id must match one of the image paths in this job's reference_images.", self.script)
-        self.assertIn("face_reference_id must identify one path from reference_images.", self.script)
+        self.assertIn("Use either face_reference_ids or face_reference_id, not both.", self.script)
         self.assertIn("const orderedReferenceImages = [", self.script)
-        self.assertIn("faceReferenceImage,\n    ...referenceImages.filter(imagePath => imagePath !== faceReferenceImage)", self.script)
-        self.assertIn('referenceImages: orderedReferenceImages, faceReferenceImage', self.script)
+        self.assertIn("...faceReferenceImages,", self.script)
+        self.assertIn("...referenceImages.filter(imagePath => !faceReferenceImages.includes(imagePath))", self.script)
+        self.assertIn("referenceImages: orderedReferenceImages, faceReferenceImage: faceReferenceImages[0], faceReferenceImages", self.script)
 
-    def test_primary_face_anchor_is_explicit_in_ascii_composed_prompt(self):
-        self.assertIn("PRIMARY FACE REFERENCE: The first attached reference image is the primary face identity anchor.", self.script)
-        self.assertIn("Match its facial structure, eye shape and spacing, nose, lips, jawline, and overall likeness as closely as possible.", self.script)
-        self.assertIn("Use the remaining attached reference images only as supporting references", self.script)
-        self.assertIn("if (!/^[\\x00-\\x7F]+$/.test(scene.prompt))", self.script)
+    def test_multiple_face_references_are_described_as_same_person(self):
+        self.assertIn("The other selected face reference images show the SAME PERSON from additional angles", self.script)
+        self.assertIn("face_reference_ids must contain distinct paths.", self.script)
+        self.assertIn("face_reference_ids must be an array of 1 to 3 paths from this job's reference_images.", self.script)
+
+    def test_reference_only_mode_can_omit_character_description(self):
+        self.assertIn('const faceDescriptionMode = scene.face_description_mode ?? "include";', self.script)
+        self.assertIn('["include", "hybrid", "reference_only"].includes(faceDescriptionMode)', self.script)
+        self.assertIn('face_description_mode is \'reference_only\'', self.script)
+        self.assertIn('faceDescriptionMode === "reference_only" || !scene.character_description', self.script)
+        self.assertIn("Use the attached reference images for all appearance details; do not invent or reinterpret facial features.", self.script)
 
     def test_dry_run_reports_selected_face_reference_and_order(self):
         self.assertIn("face_reference_id: scene.face_reference_id", self.script)
         self.assertIn("face_reference_image: path.basename(faceReferenceImage)", self.script)
-        self.assertIn('reference_order: "primary face reference first, supporting references after"', self.script)
+        self.assertIn('face_reference_ids: (scene.face_reference_ids || [scene.face_reference_id]).map(value => path.basename(value))', self.script)
+        self.assertIn('face_description_mode: scene.face_description_mode || "include"', self.script)
 
     def test_face_reference_defaults_to_first_image_for_older_jobs(self):
-        self.assertIn("faceReferenceImage = referenceImages[0];", self.script)
+        self.assertIn("singleFaceReference = referenceImages[0];", self.script)
         self.assertIn("scene.face_reference_id = scene.reference_images[0];", self.script)
-
 
     def test_prepare_destructures_face_reference_image_from_load_inputs(self):
         prepare = self.script.split("async function prepare(args, browser, rl) {", 1)[1].split(
@@ -286,6 +358,39 @@ class FlowPilotContractTests(unittest.TestCase):
             prepare.index("createMayHaveBeenClicked = true;"),
             prepare.index("await finalButton.click({ timeout: 2500 })"),
         )
+
+
+    def test_wait_reselects_videos_and_uses_new_first_tile_when_inventory_grows(self):
+        wait_fn = self.script.split("async function waitForGenerationAndDownload", 1)[1].split(
+            "function createConfirmationReader()", 1
+        )[0]
+        self.assertIn("Explicitly re-select Videos", wait_fn)
+        self.assertIn("await activateVideosTab(page, selectors)", wait_fn)
+        self.assertIn("const firstTile = scan.items[0] || null", wait_fn)
+        self.assertIn("const firstTileIsNew = Boolean(firstTile", wait_fn)
+        self.assertIn("scan.items.length > beforeKeys.length", wait_fn)
+        self.assertIn("const candidateItems = firstTileIsNew ? [firstTile] : newItems", wait_fn)
+
+    def test_wait_extends_polling_when_credit_was_charged_but_result_is_late(self):
+        wait_fn = self.script.split("async function waitForGenerationAndDownload", 1)[1].split(
+            "function createConfirmationReader()", 1
+        )[0]
+        self.assertIn("beforeBalance", wait_fn)
+        self.assertIn("currentBalance < beforeBalance", wait_fn)
+        self.assertIn("deadline = Date.now() + 300000", wait_fn)
+        self.assertIn("without resubmitting", wait_fn)
+        self.assertIn('page.goBack({ waitUntil: "domcontentloaded", timeout: 10000 })', wait_fn)
+        self.assertIn("newItem = null", wait_fn)
+
+    def test_add_to_prompt_retries_click_only_after_uuid_check(self):
+        upload_fn = self.script.split("async function uploadSceneReferencesUnsafe", 1)[1].split(
+            "async function uploadSceneReferences(", 1
+        )[0]
+        self.assertIn("for (let clickAttempt = 0; clickAttempt < 3; clickAttempt += 1)", upload_fn)
+        self.assertIn("await addToPrompt.click({ timeout: 6000 })", upload_fn)
+        self.assertIn("attachedAfterClick = await page.waitForFunction", upload_fn)
+        self.assertIn("if (attachedAfterClick) break", upload_fn)
+        self.assertIn("did not attach asset", upload_fn)
 
 
 if __name__ == "__main__":
