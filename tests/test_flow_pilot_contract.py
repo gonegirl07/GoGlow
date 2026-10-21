@@ -127,7 +127,7 @@ class FlowPilotContractTests(unittest.TestCase):
 
     def test_wait_tracks_new_tile_by_stable_identity_and_never_retries(self):
         self.assertIn('collectAllGeneratedItems(page, selectors.generated_video_items)', self.script)
-        self.assertIn('newItems.length === 1', self.script)
+        self.assertIn('candidateItems.length === 1', self.script)
         self.assertIn('refusing to guess which clip to download', self.script)
         self.assertIn('status: "unknown_do_not_retry"', self.script)
         self.assertIn('Do NOT retry automatically', self.script)
@@ -358,6 +358,37 @@ class FlowPilotContractTests(unittest.TestCase):
             prepare.index("createMayHaveBeenClicked = true;"),
             prepare.index("await finalButton.click({ timeout: 2500 })"),
         )
+
+
+    def test_wait_reselects_videos_and_uses_new_first_tile_when_inventory_grows(self):
+        wait_fn = self.script.split("async function waitForGenerationAndDownload", 1)[1].split(
+            "function createConfirmationReader()", 1
+        )[0]
+        self.assertIn("Explicitly re-select Videos", wait_fn)
+        self.assertIn("await activateVideosTab(page, selectors)", wait_fn)
+        self.assertIn("const firstTile = scan.items[0] || null", wait_fn)
+        self.assertIn("const firstTileIsNew = Boolean(firstTile", wait_fn)
+        self.assertIn("scan.items.length > beforeKeys.length", wait_fn)
+        self.assertIn("const candidateItems = firstTileIsNew ? [firstTile] : newItems", wait_fn)
+
+    def test_wait_extends_polling_when_credit_was_charged_but_result_is_late(self):
+        wait_fn = self.script.split("async function waitForGenerationAndDownload", 1)[1].split(
+            "function createConfirmationReader()", 1
+        )[0]
+        self.assertIn("beforeBalance", wait_fn)
+        self.assertIn("currentBalance < beforeBalance", wait_fn)
+        self.assertIn("deadline = Date.now() + 300000", wait_fn)
+        self.assertIn("without resubmitting", wait_fn)
+
+    def test_add_to_prompt_retries_click_only_after_uuid_check(self):
+        upload_fn = self.script.split("async function uploadSceneReferencesUnsafe", 1)[1].split(
+            "async function uploadSceneReferences(", 1
+        )[0]
+        self.assertIn("for (let clickAttempt = 0; clickAttempt < 3; clickAttempt += 1)", upload_fn)
+        self.assertIn("await addToPrompt.click({ timeout: 6000 })", upload_fn)
+        self.assertIn("attachedAfterClick = await page.waitForFunction", upload_fn)
+        self.assertIn("if (attachedAfterClick) break", upload_fn)
+        self.assertIn("did not attach asset", upload_fn)
 
 
 if __name__ == "__main__":
