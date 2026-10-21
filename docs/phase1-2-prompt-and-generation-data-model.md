@@ -1,3 +1,11 @@
+## Mandatory English-only prompt output
+
+- Every prompt composed for Google Flow must be English-only, including the project brief when included, activity/start/action/end/body-mechanics defaults, wardrobe/location/environment, and reference instructions.
+- The UI may remain Vietnamese. The validator applies to prompt text, not UI labels or explanatory messages.
+- The prompt runtime rejects Vietnamese precomposed letters and decomposed diacritic marks. Apply, copy-to-Flow, Markdown export, and JSON export are blocked when a prompt/preview contains those characters. Export also validates the project brief because it is injected into composed prompts.
+- Do not silently translate or delete user content. Show the offending positions and ask the user to rewrite the source field in English.
+- All built-in action templates and the default project brief/environment must be English.
+
 # Phase 1–2 data model: prompt rules and generation ledger
 
 ## Status and scope
@@ -102,4 +110,5 @@ The first runtime slice is implemented in app/prompt-library.js and the scene pa
 7. Confirm applying a preview clears old media URIs and QC evidence; APPROVED/GENERATED/QC_REVIEW return to WAITING_FOR_GENERATION and NEEDS_REVISION returns to PROMPT_REVISED.
 11. Confirm stale previews cannot be applied if a change bypasses immediate invalidation; create a new preview first.
 9. Confirm warnings are non-blocking and the existing QC/export/state-machine regressions still pass.
-13. Confirm no browser console/page errors and no request is made to Google Flow.
+13. Add Vietnamese text/diacritics to brief, action, environment, and an existing prompt; confirm Apply, copy, and both exports are blocked with a clear warning. Confirm English-only defaults pass.
+14. Confirm no browser console/page errors and no request is made to Google Flow.
