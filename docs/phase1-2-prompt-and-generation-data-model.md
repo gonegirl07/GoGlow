@@ -76,10 +76,12 @@ The first runtime slice is implemented in app/prompt-library.js and the scene pa
 - The runtime adapter exposes deterministic analysis/composition and a version (1.0); it does not call Google Flow or perform network requests.
 - The scene panel displays matched rule IDs/statuses and non-blocking warnings, including candidate warnings for time-coded static poses, shoulder-roll/shrug wording, platform branding, and prompt length.
 - Prompt composition creates a separate preview. The current scene prompt is unchanged until the user explicitly clicks “Áp dụng preview vào prompt”.
-- Outfit and room/environment fallback text is filled before preview; duplicate identical lines are removed.
+- Outfit and room/environment fallback text is filled before preview; duplicate sentences are removed. The project brief is not injected into the English prompt, and the Yoga defaults use concise English static-hold instructions rather than a weight-shifting transition.
 - Candidate rules do not auto-append. The real-time candidate can only be included through an unchecked opt-in in the preview UI. Confirmed stable-hold text is available only when the narrow Warrior II scope matches: character Mai, Yoga, Warrior II, Omni 1.1 Flash, 9:16, 8 seconds, and both named reference identifiers.
 - Applying a preview clears the current/360p/720p media URIs and old QC report so the old clip cannot be approved against a changed prompt. APPROVED, GENERATED, and QC_REVIEW return to WAITING_FOR_GENERATION; NEEDS_REVISION becomes PROMPT_REVISED.
-- A preview records a snapshot of its source fields/settings; if anything changes before Apply, the stale preview is rejected and must be regenerated.
+- A preview records a snapshot of its source fields/settings; changing a scene field, project setting, or rule option clears the stale preview immediately and requires regeneration.
+- Applied rule IDs and warning rule IDs are shown separately; each list is deduplicated. Only rules actually appended to the preview appear under applied rules.
+- Re-applying the library to an already composed prompt reuses the original source prompt rather than nesting the previous composed output under “Existing prompt details”.
 - The preview panel is advisory and never blocks generation/export. Human review of the actual Flow clip remains required.
 
 ### Follow-ups retained from tester round 7
@@ -98,6 +100,6 @@ The first runtime slice is implemented in app/prompt-library.js and the scene pa
 5. Confirm wardrobe/environment placeholders are filled and duplicate lines are removed.
 6. Confirm the stable-hold rule is not appended unless the exact narrow Warrior II scope matches.
 7. Confirm applying a preview clears old media URIs and QC evidence; APPROVED/GENERATED/QC_REVIEW return to WAITING_FOR_GENERATION and NEEDS_REVISION returns to PROMPT_REVISED.
-8. Change scene/project inputs after preview and confirm stale preview cannot be applied; create a new preview first.
+11. Confirm stale previews cannot be applied if a change bypasses immediate invalidation; create a new preview first.
 9. Confirm warnings are non-blocking and the existing QC/export/state-machine regressions still pass.
-10. Confirm no browser console/page errors and no request is made to Google Flow.
+13. Confirm no browser console/page errors and no request is made to Google Flow.
