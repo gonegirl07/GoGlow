@@ -29,7 +29,7 @@ A copied prompt is not a generated result. A checklist is not a QC pass.
 - Each scene records `status_history`; every adjacent pair must be a permitted transition in `src/goglow/validator.py`.
 - `GENERATED`, `QC_REVIEW`, and `APPROVED` require a non-empty `media_uri`. This is a manual declaration only; it does not prove that a file exists or is playable.
 - `APPROVED` additionally requires a structured `qc_report` with `review_status: PASS`, human reviewer, review timestamp, and checks. A URI alone can never satisfy the approval gate.
-- The browser prototype intentionally does not offer `GENERATED`, `QC_REVIEW`, or `APPROVED) transitions until it supports media declaration and QC evidence entry. Use the Python/JSON workflow for evidence-backed status records in the meantime.
+- The browser prototype now supports manual media declaration and structured human-QC reports. It offers `GENERATED` only after a media URI is entered, `QC_REVIEW` only with media declared, `APPROVED` only after a matching QC `PASS` report with reviewer/time and all checks marked `PASS`, and `NEEDS_REVISION` only after a `FAIL` report with a revision prompt.
 - Even a structurally valid QC report is user-supplied evidence, not automatic video verification. GoGlow M1 does not prove URI accessibility or that a reviewer actually watched the clip.
 
 ## QC mapping (canonical source)

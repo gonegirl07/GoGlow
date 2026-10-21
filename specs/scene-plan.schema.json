@@ -178,6 +178,72 @@
           },
           "qc_report": {
             "$ref": "./qc-report.schema.json"
+          },
+          "qc_draft": {
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+              "review_status": {
+                "enum": [
+                  "PASS",
+                  "REVIEW",
+                  "FAIL",
+                  "NOT_REVIEWED"
+                ]
+              },
+              "reviewed_by": {
+                "type": "string"
+              },
+              "reviewed_at": {
+                "type": "string",
+                "description": "Local datetime input draft; converted to ISO 8601 when saved as qc_report."
+              },
+              "defects": {
+                "type": "string"
+              },
+              "revision_prompt": {
+                "type": "string"
+              },
+              "checks": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "additionalProperties": false,
+                  "required": [
+                    "category",
+                    "status",
+                    "notes"
+                  ],
+                  "properties": {
+                    "category": {
+                      "enum": [
+                        "identity",
+                        "anatomy",
+                        "action",
+                        "physics",
+                        "continuity",
+                        "camera",
+                        "artifacts",
+                        "duration",
+                        "format",
+                        "other"
+                      ]
+                    },
+                    "status": {
+                      "enum": [
+                        "PASS",
+                        "REVIEW",
+                        "FAIL",
+                        "NOT_CHECKED"
+                      ]
+                    },
+                    "notes": {
+                      "type": "string"
+                    }
+                  }
+                }
+              }
+            }
           }
         },
         "allOf": [
