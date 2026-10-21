@@ -61,8 +61,8 @@ def create_project(activity: str, target_duration_seconds: int = DEFAULT_TARGET_
     activity = activity.strip().lower()
     if activity not in SUPPORTED_ACTIVITIES:
         raise ValueError(f"Unsupported activity {activity!r}. Choose: {', '.join(SUPPORTED_ACTIVITIES)}")
-    if isinstance(target_duration_seconds, bool) or not isinstance(target_duration_seconds, int) or target_duration_seconds < 31:
-        raise ValueError("Target duration must be at least 31 seconds.")
+    if isinstance(target_duration_seconds, bool) or not isinstance(target_duration_seconds, int) or target_duration_seconds < 30:
+        raise ValueError("Target duration must be at least 30 seconds.")
     if isinstance(scene_count, bool) or not isinstance(scene_count, int) or not 1 <= scene_count <= 20:
         raise ValueError("Scene count must be between 1 and 20.")
     durations = _divide_duration(target_duration_seconds, scene_count)
