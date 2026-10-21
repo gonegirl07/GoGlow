@@ -113,6 +113,17 @@ class FlowPilotContractTests(unittest.TestCase):
         self.assertIn("isVisible", self.script)
         self.assertIn("create_button_enabled", self.script)
 
+    def test_character_profile_is_required_and_prompt_is_composed_before_flow_mutation(self):
+        self.assertIn('--character-profile', self.script)
+        self.assertIn('scene.character_id', self.script)
+        self.assertIn('loadCharacterProfile(args.characterProfile, scene.character_id)', self.script)
+        self.assertIn('composeCharacterPrompt(scene.prompt, character)', self.script)
+        self.assertIn('await uploadCharacterReferences(chosen.page, selectors, character)', self.script)
+        self.assertLess(self.script.index('await uploadCharacterReferences(chosen.page, selectors, character)'), self.script.index('await prompt.fill(scene.prompt'))
+        self.assertIn('reference_image_count: character.reference_images.length', self.script)
+        self.assertIn('ingredient_reference_items', self.script)
+        self.assertIn('Stopping before prompt fill/Create', self.script)
+
 
 if __name__ == "__main__":
     unittest.main()
