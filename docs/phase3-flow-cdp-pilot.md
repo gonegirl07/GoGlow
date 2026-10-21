@@ -90,7 +90,7 @@ After the same single Create click, `--wait` can monitor the project for one uni
 - `download_media_button`: the visible Download media control after opening the new tile.
 - `download_360p_original_button`: the menu option for 360p Original size.
 
-The example values for these selectors are placeholders. Inspect the real Flow DOM and validate them with a dry-run before using `--wait`. The runner captures the credit balance immediately before Create, then observes it for up to 30 seconds after the result. It records an actual charge only when a positive balance decrease is observed; an unchanged or unreadable balance remains unknown rather than being inferred as zero.
+The example values for these selectors are placeholders. First replace them with values inspected from the real Flow DOM, then run `--dry-run --wait`. This selector-only preflight reports the current balance and existing stable tile keys, then clears prompt/Ingredients; it never clicks Create, waits for a generation, or downloads media. If preflight fails, it attempts verified cleanup. Only use `--execute --wait` after the preflight passes. The runner captures the credit balance immediately before Create, then observes it for up to 30 seconds after the result. It records an actual charge only when a positive balance decrease is observed; an unchanged or unreadable balance remains unknown rather than being inferred as zero.
 
 Example options to add to the normal `--execute` command:
 
