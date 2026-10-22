@@ -222,7 +222,9 @@ class FlowPilotContractTests(unittest.TestCase):
         self.assertIn("skipping model menu interaction", choose_model)
         self.assertIn("trigger.click({ timeout: 8000 })", choose_model)
         self.assertIn('option.waitFor({ state: "visible", timeout: 8000 })', choose_model)
-        self.assertIn("await page.waitForTimeout(250)", choose_model)
+        self.assertIn("await page.waitForTimeout(150)", choose_model)
+        self.assertIn("stableBox = true", choose_model)
+        self.assertIn("Model menu option layout did not stabilize", choose_model)
         self.assertIn("verifiedOption.click({ timeout: 8000 })", choose_model)
 
     def test_preflight_screenshot_failure_is_nonfatal(self):

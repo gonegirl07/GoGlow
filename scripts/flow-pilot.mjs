@@ -726,9 +726,24 @@ async function chooseModel(page, selectors, model) {
   const option = page.locator(selectors.model_option);
   try {
     await option.waitFor({ state: "visible", timeout: 8000 });
-    // Let Flow's menu animation/layout settle, then confirm the option remains visible.
-    await page.waitForTimeout(250);
-    await option.waitFor({ state: "visible", timeout: 3000 });
+    // Wait for the menu option's rendered box to stop moving before clicking it.
+    let previousBox = await option.boundingBox();
+    let stableBox = false;
+    for (let attempt = 0; attempt < 5; attempt += 1) {
+      await page.waitForTimeout(150);
+      await option.waitFor({ state: "visible", timeout: 3000 });
+      const currentBox = await option.boundingBox();
+      if (previousBox && currentBox
+        && Math.abs(previousBox.x - currentBox.x) <= 1
+        && Math.abs(previousBox.y - currentBox.y) <= 1
+        && Math.abs(previousBox.width - currentBox.width) <= 1
+        && Math.abs(previousBox.height - currentBox.height) <= 1) {
+        stableBox = true;
+        break;
+      }
+      previousBox = currentBox;
+    }
+    if (!stableBox) throw new Error("Model menu option layout did not stabilize after opening.");
   } catch {
     throw new Error("Model option did not become stably visible within 8000ms after opening the model menu.");
   }
