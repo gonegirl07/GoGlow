@@ -296,10 +296,12 @@ async function collectAllGeneratedItems(page, selector, { targetKey = null, maxS
             }
             try { return new URL(source, location.href).pathname; }
             catch { return source.split(/[?#]/, 1)[0]; }
-          }).filter(Boolean)).catch(() => []);
-          if (currentTokens.length >= 3 && currentTokens.every(Boolean) && previousTokens
-            && previousTokens.length >= 3 && currentTokens.length === previousTokens.length
-            && currentTokens.every((token, i) => token === previousTokens[i])) break;
+          })).catch(() => []);
+          const firstThreeTokens = currentTokens.slice(0, 3);
+          const previousFirstThreeTokens = previousTokens?.slice(0, 3) || [];
+          if (firstThreeTokens.length === 3 && firstThreeTokens.every(Boolean) && previousFirstThreeTokens.length === 3
+            && previousFirstThreeTokens.every(Boolean) && currentTokens.length === previousTokens.length
+            && firstThreeTokens.every((token, i) => token === previousFirstThreeTokens[i])) break;
           previousTokens = currentTokens;
           await page.waitForTimeout(250);
         }
