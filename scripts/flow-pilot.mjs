@@ -982,12 +982,13 @@ async function loadInputs(args) {
   }
   if (scene.expression && !/^[\x00-\x7F]+$/.test(scene.expression)) throw new Error("Expression must be ASCII/English only; non-ASCII characters are blocked before touching Flow.");
   if (!/^[\x00-\x7F]+$/.test(scene.prompt)) throw new Error("Prompt must be ASCII/English only; non-ASCII characters are blocked before touching Flow.");
-  const variants = scene.variants === undefined ? 1 : scene.variants;
+  const variants = scene.variants === undefined ? 2 : scene.variants;
   if (!Number.isInteger(variants) || variants < 1 || variants > 3) throw new Error("variants must be an integer from 1 to 3.");
   const seatedShot = /\b(?:seated|sitting|sit|sits|kneeling|kneel|kneels)\b/i.test(scene.scene_id + " " + scene.prompt);
   scene.framing_helper_applied = scene.framing_helper === false ? false : (scene.framing_helper === true || seatedShot);
   if (scene.framing_helper_applied) {
-    const framingSentence = "Locked-off tripod shot from the first frame: the camera does not move, pan, tilt, dolly, or zoom at any time. Camera pulled back, with a wide margin on both sides of the knees; keep both knees comfortably inside the frame.";
+    scene.prompt = scene.prompt.replace(/\b(?:fills?|occupies?)\s+(?:about\s+)?\d{1,3}\s*(?:percent|%)\s+of\s+(?:the\s+)?frame\s+width\b/gi, "is framed from head to knees");
+    const framingSentence = "Locked-off tripod shot from the first frame: the camera does not move, pan, tilt, dolly, or zoom at any time. Frame the seated subject from head to knees, with the head-to-knees span occupying about 70 percent of the frame height. Leave clear space on both sides of both knees; keep both knees fully inside the frame.";
     if (!scene.prompt.includes(framingSentence)) scene.prompt = scene.prompt.trim() + " " + framingSentence;
   }
   if (scene.character_description && !/^[\x00-\x7F]+$/.test(scene.character_description)) throw new Error("Character description must be ASCII/English only; non-ASCII characters are blocked before touching Flow.");
@@ -1062,10 +1063,20 @@ async function loadInputs(args) {
     : faceDescriptionMode === "hybrid"
       ? `HYBRID FACE DESCRIPTION (brief matching traits only; reference images remain authoritative): ${scene.character_description.trim().replace(/[.\s]+$/, "")}. Match the reference images and do not add conflicting traits.`
       : `CHARACTER DESCRIPTION (supporting traits only; do not override the face reference): ${scene.character_description}`;
-  const expressionSection = scene.expression
-    ? `\n\nEXPRESSION AND EYE STATE (follow throughout the entire shot): ${scene.expression}. Keep this expression and eye state consistent from the first frame to the last; this instruction takes priority over breathing or other subtle motion.`
+  const normalizedExpression = scene.expression
+    ? scene.expression.trim().replace(/[.!?]+\s*$/, "")
     : "";
-  scene.prompt = `PRIMARY FACE REFERENCE: ${faceAnchorInstructions} Keep the same person throughout the clip.\n\n${characterDescriptionSection}\n\nSCENE: ${scene.prompt.trim()}${expressionSection}\n\nUse remaining attached images only as supporting references for clothing, body, or context. Keep the same character, hair, and skin tone throughout. Do not substitute a different person.`;
+  const openEyesGuard = /\b(?:eyes?\s+(?:stay|remain|are|clearly)?\s*open|open eyes)\b/i.test(normalizedExpression)
+    ? " Eyes stay open throughout the clip; natural brief blinks only. No prolonged eye closure or eyes-closed meditation."
+    : "";
+  const expressionSection = normalizedExpression
+    ? `\n\nEXPRESSION AND EYE STATE (follow throughout the entire shot): ${normalizedExpression}.${openEyesGuard} Keep this expression and eye state consistent from the first frame to the last; this instruction takes priority over breathing or other subtle motion.`
+    : "";
+  const supportingReferenceImages = referenceImages.filter(imagePath => !faceReferenceImages.includes(imagePath));
+  const supportingReferenceSection = supportingReferenceImages.length
+    ? " Use remaining attached images only as supporting references for clothing, body, or context."
+    : "";
+  scene.prompt = `PRIMARY FACE REFERENCE: ${faceAnchorInstructions} Keep the same person throughout the clip.\n\n${characterDescriptionSection}\n\nSCENE: ${scene.prompt.trim()}${expressionSection}\n\n${supportingReferenceSection} Keep the same character, hair, and skin tone throughout. Do not substitute a different person.`;
   if (!/^[\x00-\x7F]+$/.test(scene.prompt)) throw new Error("Composed prompt must contain ASCII characters only.");
   if (scene.model !== "Omni 1.1 Flash" || scene.resolution !== "360p") {
     throw new Error("Phase 3 pilot is restricted to model='Omni 1.1 Flash' and resolution='360p'.");
@@ -1500,7 +1511,7 @@ async function main() {
     let variantCount = 1;
     if (args.scene) {
       const inputScene = JSON.parse(fs.readFileSync(path.resolve(args.scene), "utf8"));
-      variantCount = inputScene.variants === undefined ? 1 : inputScene.variants;
+      variantCount = inputScene.variants === undefined ? 2 : inputScene.variants;
       if (!Number.isInteger(variantCount) || variantCount < 1 || variantCount > 3) throw new Error("variants must be an integer from 1 to 3.");
     }
     args._variantCount = variantCount;

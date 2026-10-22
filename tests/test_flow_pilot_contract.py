@@ -400,8 +400,9 @@ class FlowPilotContractTests(unittest.TestCase):
 
 
 
-    def test_variants_are_limited_to_one_through_three_and_default_to_one(self):
-        self.assertIn('const variants = scene.variants === undefined ? 1 : scene.variants;', self.script)
+    def test_variants_are_limited_to_one_through_three_and_default_to_two(self):
+        self.assertIn('const variants = scene.variants === undefined ? 2 : scene.variants;', self.script)
+        self.assertIn('variantCount = inputScene.variants === undefined ? 2 : inputScene.variants;', self.script)
         self.assertIn('variants < 1 || variants > 3', self.script)
         self.assertIn('args._variantCount = variantCount', self.script)
         self.assertIn('for (let index = 1; index <= variantCount; index += 1)', self.script)
@@ -421,11 +422,24 @@ class FlowPilotContractTests(unittest.TestCase):
         self.assertIn('variantIndex, variantCount,', self.script)
         self.assertIn('variantCount > 1 ? `${safeScene}__v${variantIndex}${extension}`', self.script)
 
-    def test_seated_shots_get_optional_wide_knee_margin_helper(self):
+    def test_seated_shots_get_head_to_knees_framing_and_wide_knee_margins(self):
         self.assertIn('scene.framing_helper_applied', self.script)
         self.assertIn('Locked-off tripod shot from the first frame: the camera does not move, pan, tilt, dolly, or zoom at any time', self.script)
-        self.assertIn('Camera pulled back, with a wide margin on both sides of the knees', self.script)
+        self.assertIn('head-to-knees span occupying about 70 percent of the frame height', self.script)
+        self.assertIn('Leave clear space on both sides of both knees; keep both knees fully inside the frame', self.script)
+        self.assertIn('is framed from head to knees', self.script)
         self.assertIn('scene.framing_helper === false ? false', self.script)
+
+    def test_supporting_reference_sentence_is_conditional(self):
+        self.assertIn('const supportingReferenceImages = referenceImages.filter(imagePath => !faceReferenceImages.includes(imagePath));', self.script)
+        self.assertIn('const supportingReferenceSection = supportingReferenceImages.length', self.script)
+        self.assertIn('${supportingReferenceSection} Keep the same character, hair, and skin tone throughout.', self.script)
+
+    def test_expression_punctuation_is_normalized_and_open_eyes_guard_is_added(self):
+        self.assertIn('scene.expression.trim().replace(/[.!?]+\\s*$/, "")', self.script)
+        self.assertIn('Eyes stay open throughout the clip; natural brief blinks only.', self.script)
+        self.assertIn('No prolonged eye closure or eyes-closed meditation.', self.script)
+        self.assertIn('EXPRESSION AND EYE STATE (follow throughout the entire shot): ${normalizedExpression}.', self.script)
 
     def test_watermark_status_is_recorded_for_human_qc(self):
         self.assertIn('watermark_status: scene.watermark_status || "not_reviewed"', self.script)
