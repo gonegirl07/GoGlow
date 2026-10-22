@@ -932,7 +932,7 @@ assert.deepEqual(findNewCompletedMediaItems([
             "async function uploadSceneReferences(", 1
         )[0]
         self.assertLess(
-            upload_fn.index("if (!expectedPreviewUuid || !previewContext.uuids?.includes(expectedPreviewUuid))"),
+            upload_fn.index("if (!immediateUuidMatches && !immediateLabelMatches)"),
             upload_fn.index("await addToPrompt.click({ timeout: 6000 });"),
         )
 
