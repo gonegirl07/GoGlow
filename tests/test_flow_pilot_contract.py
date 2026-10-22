@@ -123,13 +123,13 @@ class FlowPilotContractTests(unittest.TestCase):
     def test_wait_mode_requires_execute_and_bounded_timeout(self):
         self.assertIn('if (args.waitForResult && !args.execute && !args.dryRun)', self.script)
         self.assertIn('--wait without --execute is preflight-only; pass --dry-run --wait explicitly.', self.script)
-        self.assertIn('WAIT SELECTOR PREFLIGHT (read-only; no Create click; Videos tab selected when available; virtualized grid swept; Failed tiles retained only as baseline UUIDs)', self.script)
+        self.assertIn('WAIT SELECTOR PREFLIGHT (read-only; no Create click; Videos tab selected when available; first 6 tiles only; Failed tiles retained only as baseline UUIDs)', self.script)
         self.assertIn('--wait-timeout-ms must be an integer from 30000 to 1800000', self.script)
         self.assertIn('--wait requires a non-empty', self.script)
         self.assertIn('["credit_balance", "generated_video_items", "download_media_button", "download_360p_original_button", "account_panel_open", "account_panel_close"]', self.script)
 
     def test_wait_tracks_new_tile_by_stable_identity_and_never_retries(self):
-        self.assertIn('collectAllGeneratedItems(page, selectors.generated_video_items, { uuidCache })', self.script)
+        self.assertIn('collectAllGeneratedItems(page, selectors.generated_video_items, { uuidCache, topLimit: 1, selectors })', self.script)
         self.assertIn('candidateItems.length === 1', self.script)
         self.assertIn('refusing to guess which clip to download', self.script)
         self.assertIn('status: "unknown_do_not_retry"', self.script)
@@ -179,6 +179,7 @@ class FlowPilotContractTests(unittest.TestCase):
         self.assertIn("const topItem = scan.topItems?.[0] || null;", self.script)
         self.assertIn("const newItems = topItem?.mediaUuid && topItem.key && !beforeKeys.includes(topItem.key) ? [topItem] : [];", self.script)
         self.assertIn("Normalize media URLs to their stable UUID", self.script)
+        self.assertIn("thumbnailSrc || sources[0]", self.script)
         self.assertIn("const mediaUuid = sources.map(uuidFrom).find(Boolean)", self.script)
         self.assertIn("baseline_media_keys: initialItems", self.script)
         self.assertIn("ignored_failed_tile_keys: failedBaselineItems.map(item => item.key)", self.script)
@@ -559,13 +560,16 @@ class FlowPilotContractTests(unittest.TestCase):
         self.assertIn("refusal_rate:", self.policy_stats_script)
 
 
-    def test_media_grid_inventory_starts_at_top_and_must_reach_bottom_before_create(self):
+    def test_media_baseline_uses_only_first_six_tiles_and_result_checks_first_tile(self):
         self.assertIn("Always begin at the true top", self.script)
-        self.assertIn("let reachedBottom = false;", self.script)
-        self.assertIn("if (!initialScan.reachedBottom)", self.script)
-        self.assertIn("if (!currentScan.reachedBottom)", self.script)
+        self.assertIn("topLimit: 6, selectors", self.script)
+        self.assertIn("Pre-Create top-six baseline requires six visible tiles", self.script)
+        self.assertIn("Top-6 baseline requires six unique, stable media UUIDs/keys", self.script)
+        self.assertIn("topLimit: 1, selectors", self.script)
+        self.assertIn("baseline_strategy", self.script)
         self.assertIn("baseline_media_key_count: initialItems.length", self.script)
         self.assertIn("Pre-Create baseline UUID count:", self.script)
+        self.assertNotIn("full virtualized-grid sweep", self.script)
 
     def test_result_must_be_new_top_tile_and_newer_than_create_when_timestamp_exists(self):
         wait_fn = self.script.split("async function waitForGenerationAndDownload", 1)[1].split(
@@ -595,10 +599,11 @@ class FlowPilotContractTests(unittest.TestCase):
         self.assertIn("Could not resolve media UUID by opening tile index", self.script)
         self.assertNotIn("page.waitForFunction(() =>", resolver)
 
-    def test_dry_run_runs_full_read_only_media_baseline(self):
+    def test_dry_run_runs_top_six_read_only_media_baseline(self):
         self.assertIn("if (args.waitForResult || args.dryRun)", self.script)
         self.assertIn('mode: args.waitForResult ? "wait-preflight" : "dry-run-baseline"', self.script)
         self.assertIn("DRY-RUN MEDIA BASELINE (read-only; no Create click", self.script)
+        self.assertIn("first 6 tiles only; no full-grid sweep", self.script)
         self.assertIn("Dry-run baseline scan requires a configured generated_video_items selector", self.script)
 
     def test_asset_reuse_checks_all_dom_attributes_and_never_duplicates_unreadable_match(self):
@@ -665,12 +670,19 @@ class FlowPilotContractTests(unittest.TestCase):
         self.assertIn("baseline_media_inventory_summary", self.script)
         self.assertIn("uuid_count: baselineUuids.length", self.script)
         self.assertIn("uuid_sample_first_5: baselineUuids.slice(0, 5)", self.script)
+        self.assertIn("top_6_tiles_only", self.script)
         self.assertIn("reached_bottom: initialScan.reachedBottom", self.script)
         self.assertIn("Retrying media UUID lookup for tile index", self.script)
 
     def test_account_button_visibility_is_retried_without_changing_page_fields(self):
         self.assertIn("Google account button remained unavailable after 3 read-only visibility checks", self.script)
         self.assertIn("await page.keyboard.press(\"Escape\")", self.script)
+
+    def test_preflight_cleanup_has_one_authoritative_outer_owner(self):
+        preflight = self.script.split("if (args.waitForResult || args.dryRun)", 1)[1].split("// Only now modify the prompt.", 1)[0]
+        self.assertNotIn("Prompt/Ingredients cleanup was not verified.", preflight)
+        self.assertIn("Failure cleanup: prompt and Ingredients chips cleared and verified.", self.script)
+        self.assertIn("CRITICAL: failure cleanup could not verify prompt/chips empty", self.script)
 
     def test_cleanup_uses_observed_empty_state_when_click_times_out(self):
         self.assertIn("afterClickChips !== 0", self.script)
