@@ -105,6 +105,9 @@ class FlowPilotContractTests(unittest.TestCase):
         self.assertNotIn('clearPromptContentsVerified(prompt, selectors, 4000)', upload_wrapper)
         self.assertIn('await clearPromptVerified(promptForCleanup, selectors, 4000);', self.script)
         self.assertIn('chipCount !== 0', self.script)
+        self.assertIn('async function waitForStableVisibleChipCount(page, selector, timeoutMs = 2000)', self.script)
+        self.assertIn('visible Ingredients chip(s) remain after the DOM settled', self.script)
+        self.assertIn('function isElementActuallyVisible(element)', self.script)
 
     def test_deduplicated_upload_can_reuse_a_verifiable_existing_asset(self):
         self.assertIn('event: "asset_library_reused_existing"', self.script)
@@ -632,7 +635,12 @@ class FlowPilotContractTests(unittest.TestCase):
         self.assertIn('const addToPromptSelector = selectors.ingredient_add_to_prompt;', upload_fn)
         self.assertIn('const selectionWaitTimeoutMs = 8000;', upload_fn)
         self.assertIn('Date.now() - selectionWaitStartedAt < selectionWaitTimeoutMs', upload_fn)
-        self.assertIn('await asset.scrollIntoViewIfNeeded({ timeout: 3000 })', upload_fn)
+        self.assertIn('await asset.scrollIntoViewIfNeeded({ timeout: 1500 })', upload_fn)
+        self.assertIn('resolveVisibleIngredientsPicker(page, selectors, filename, filenameStem)', upload_fn)
+        self.assertIn('const addToPromptCandidates = pickerContainer.locator(addToPromptSelector);', upload_fn)
+        self.assertIn('event: "ingredients_picker_target_tile"', upload_fn)
+        self.assertIn('target_tile_box: initialAssetBox', upload_fn)
+        self.assertIn('event: "ingredients_picker_search_fallback"', upload_fn)
         self.assertIn('selection_retried: selectionRetried', upload_fn)
         self.assertIn('configured wait budget=${selectionWaitTimeoutMs}ms, actual elapsed=${Date.now() - selectionWaitStartedAt}ms', upload_fn)
         self.assertIn('if (addToPromptVisibleCount === 1)', upload_fn)
@@ -640,7 +648,8 @@ class FlowPilotContractTests(unittest.TestCase):
         self.assertIn('readiness_signal: "exactly_one_visible_add_to_prompt_button"', upload_fn)
         self.assertIn('event: "reference_asset_selection_ready"', upload_fn)
         self.assertIn('visible Add to prompt buttons=', upload_fn)
-        self.assertIn('const addToPrompt = await exactVisibleLocator(page, addToPromptSelector, "Add to prompt button", 1000);', upload_fn)
+        self.assertIn('const addToPrompt = pickerContainer.locator(addToPromptSelector);', upload_fn)
+        self.assertIn('active picker; stopping before chip attach', upload_fn)
         self.assertNotIn('selectedAssetAriaSelected === "true" && addToPromptVisibleCount', upload_fn)
         self.assertLess(
             upload_fn.index('if (addToPromptVisibleCount === 1)'),
