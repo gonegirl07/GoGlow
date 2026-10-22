@@ -587,9 +587,12 @@ class FlowPilotContractTests(unittest.TestCase):
 
 
     def test_flow_video_uuid_is_read_directly_from_edit_url_after_tile_click(self):
-        resolver = self.script.split("const resolveUuidByOpeningTile = async index =>", 1)[1].split(
+        resolver = self.script.split("const resolveUuidByOpeningTile = async (index, identity = null) =>", 1)[1].split(
             "let stableBottomRounds = 0;", 1
         )[0]
+        self.assertIn('await page.goto(gridUrl, { waitUntil: "domcontentloaded", timeout: 12000 }).catch(() => {});', resolver)
+        self.assertIn('elements.findIndex(element => element.querySelector("img")?.getAttribute("src") === src)', resolver)
+        self.assertIn("await page.waitForTimeout(1000);", resolver)
         self.assertIn("await tile.click({ timeout: 4000, force: true });", resolver)
         self.assertIn("await page.waitForURL(url => editRoute.test(new URL(url).pathname)", resolver)
         self.assertIn("const currentUrl = page.url();", resolver)
@@ -625,7 +628,7 @@ class FlowPilotContractTests(unittest.TestCase):
         self.assertIn("const resolveUuidFromNetwork = item =>", self.script)
         self.assertLess(
             self.script.index("const networkUuid = resolveUuidFromNetwork(item);"),
-            self.script.index("const resolvedUuid = await resolveUuidByOpeningTile(item.index);"),
+            self.script.index("const resolvedUuid = await resolveUuidByOpeningTile(item.index, item);"),
         )
 
     def test_edit_route_fallback_waits_then_force_clicks_animated_tile(self):
