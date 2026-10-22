@@ -8,6 +8,7 @@ class FlowPilotContractTests(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
         cls.script = (Path(__file__).parents[1] / "scripts" / "flow-pilot.mjs").read_text(encoding="utf-8")
+        cls.policy_stats_script = (Path(__file__).parents[1] / "scripts" / "summarize-policy-refusals.mjs").read_text(encoding="utf-8")
 
     def test_uses_only_the_configured_local_cdp_endpoint_and_never_navigates(self):
         self.assertIn('const CDP_ENDPOINT = "http://127.0.0.1:9224"', self.script)
@@ -474,7 +475,8 @@ class FlowPilotContractTests(unittest.TestCase):
         self.assertIn('Medium-wide full-body shot.', self.script)
         self.assertIn('The person and yoga mat fill most of the frame', self.script)
         self.assertIn('No prolonged eye closure or eyes-closed meditation.', self.script)
-        self.assertIn('EXPRESSION AND EYE STATE (follow throughout the entire shot): ${normalizedExpression}.', self.script)
+        self.assertIn('const expressionContent = [normalizedExpression, openEyesGuard].filter(Boolean)', self.script)
+        self.assertIn('EXPRESSION AND EYE STATE (follow throughout the entire shot): ${expressionContent}', self.script)
 
 
     def test_open_eyes_guard_does_not_duplicate_natural_blinks_clause(self):
@@ -544,6 +546,13 @@ class FlowPilotContractTests(unittest.TestCase):
     def test_expression_guard_removes_duplicate_short_eye_smile_clause(self):
         self.assertIn(r'eyes?\s+(?:stay|remain)\s+open', self.script)
         self.assertIn("standard guard below already states this full eye/smile requirement", self.script)
+
+    def test_policy_refusal_report_groups_by_reference_set_and_prompt(self):
+        self.assertIn("by_reference_set_and_prompt", self.policy_stats_script)
+        self.assertIn("by_reference_set:", self.policy_stats_script)
+        self.assertIn("by_prompt_sha256:", self.policy_stats_script)
+        self.assertIn('record.result?.failure?.category === "provider_policy_prominent_people"', self.policy_stats_script)
+        self.assertIn("refusal_rate:", self.policy_stats_script)
 
 if __name__ == "__main__":
     unittest.main()
