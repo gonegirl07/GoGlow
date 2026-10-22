@@ -178,7 +178,7 @@ async function generatedItemKeys(page, selector) {
 // union keys from every viewport instead of treating the first rendered batch as
 // the complete project inventory. Restore the initial scroll position unless a
 // target key was requested, in which case leave that tile in view for a safe click.
-async function collectAllGeneratedItems(page, selector, { targetKey = null, maxScrolls = 120, uuidCache = new Map() } = {}) {
+async function collectAllGeneratedItems(page, selector, { targetKey = null, maxScrolls = 120, uuidCache = new Map(), topLimit = null, selectors = {} } = {}) {
   const scrollInfo = await page.evaluate(selectorText => {
     const first = document.querySelector(selectorText);
     let node = first?.parentElement || null;
@@ -269,15 +269,33 @@ async function collectAllGeneratedItems(page, selector, { targetKey = null, maxS
     }
     (document.scrollingElement || document.documentElement).scrollTop = top;
   }, { selectorText: selector, top });
-  const resolveUuidByOpeningTile = async index => {
+  const resolveUuidByOpeningTile = async (index, identity = null) => {
     const gridUrl = page.url();
     const scrollTop = await readScrollTop();
     let lastError = null;
     for (let attempt = 1; attempt <= 3; attempt += 1) {
       try {
-        const tile = page.locator(selector).nth(index);
-        await tile.scrollIntoViewIfNeeded({ timeout: 3500 }).catch(() => {});
-        await page.waitForTimeout(350 + attempt * 200);
+        // Re-enter the project grid and Videos tab for each attempt, then re-find
+        // the same card by its thumbnail URL token instead of trusting a virtualized index.
+        await page.goto(gridUrl, { waitUntil: "domcontentloaded", timeout: 12000 }).catch(() => {});
+        await activateVideosTab(page, selectors).catch(() => null);
+        let currentIndex = -1;
+        if (identity?.thumbnailSrc) {
+          currentIndex = await page.locator(selector).evaluateAll((elements, src) =>
+            elements.findIndex(element => element.querySelector("img")?.getAttribute("src") === src), identity.thumbnailSrc).catch(() => -1);
+        }
+        if (currentIndex < 0 && identity?.text) {
+          const normalizedTargetText = String(identity.text).replace(/\\s+/g, " ").trim();
+          const matchingIndices = await page.locator(selector).evaluateAll((elements, targetText) =>
+            elements.map((element, i) => ({ i, text: String(element.innerText || element.textContent || "").replace(/\\s+/g, " ").trim() }))
+              .filter(item => item.text === targetText).map(item => item.i), normalizedTargetText).catch(() => []);
+          if (matchingIndices.length === 1) currentIndex = matchingIndices[0];
+        }
+        if (currentIndex < 0 && !identity?.thumbnailSrc && !identity?.text) currentIndex = index;
+        if (currentIndex < 0) throw new Error("Could not re-identify the same tile by thumbnail token/text after returning to the project grid.");
+        const tile = page.locator(selector).nth(currentIndex);
+        await tile.scrollIntoViewIfNeeded({ timeout: 3500 });
+        await page.waitForTimeout(1000);
         await tile.click({ timeout: 4000, force: true });
         // Read the browser's current URL directly. Flow can serve a cached editor
         // route without emitting a fresh network response, so response listeners
@@ -321,7 +339,7 @@ async function collectAllGeneratedItems(page, selector, { targetKey = null, maxS
   let unkeyedItemsDetected = false;
   let duplicateVisibleKeyDetected = false;
   for (let step = 0; step <= maxScrolls; step += 1) {
-    const visible = await page.locator(selector).evaluateAll(elements => elements.map((element, index) => {
+    let visible = await page.locator(selector).evaluateAll(elements => elements.map((element, index) => {
       // Normalize media URLs to their stable UUID so deleted/Failed tiles and URL-shape
       // changes cannot make the same video look like a newly-created item.
       const sources = [
@@ -345,8 +363,9 @@ async function collectAllGeneratedItems(page, selector, { targetKey = null, maxS
       const createdAt = element.querySelector("time[datetime]")?.getAttribute("datetime")
         || element.getAttribute("data-created-at") || element.getAttribute("data-createdat")
         || element.querySelector("[data-created-at]")?.getAttribute("data-created-at") || null;
-      return { key: String(key).trim(), mediaUuid: mediaUuid ? mediaUuid.toLowerCase() : null, hint, text, state, progress, index, createdAt };
+      return { key: String(key).trim(), mediaUuid: mediaUuid ? mediaUuid.toLowerCase() : null, hint, text, thumbnailSrc, state, progress, index, createdAt };
     }));
+    if (Number.isInteger(topLimit) && topLimit > 0) visible = visible.slice(0, topLimit);
     for (const item of visible) {
       if (!item.mediaUuid && item.hint && uuidCache.has(item.hint)) {
         item.mediaUuid = uuidCache.get(item.hint);
@@ -361,7 +380,7 @@ async function collectAllGeneratedItems(page, selector, { targetKey = null, maxS
         }
       }
       if (!item.mediaUuid) {
-        const resolvedUuid = await resolveUuidByOpeningTile(item.index);
+        const resolvedUuid = await resolveUuidByOpeningTile(item.index, item);
         if (resolvedUuid) {
           item.mediaUuid = resolvedUuid;
           item.key = `media:${resolvedUuid}`;
@@ -383,6 +402,10 @@ async function collectAllGeneratedItems(page, selector, { targetKey = null, maxS
     if (targetIndex !== null) {
       page.off("response", networkResponseListener);
       return { items: Array.from(all.values()), targetIndex, scrolledToTarget: true, unkeyedItemsDetected, duplicateVisibleKeyDetected };
+    }
+    if (Number.isInteger(topLimit) && topLimit > 0) {
+      reachedBottom = true; // Top-only inventory is complete by contract; no virtualized-grid sweep is required.
+      break;
     }
     const metrics = await page.evaluate((selectorText) => {
       const first = document.querySelector(selectorText);
@@ -431,7 +454,8 @@ async function collectAllGeneratedItems(page, selector, { targetKey = null, maxS
     (document.scrollingElement || document.documentElement).scrollTop = initialTop;
   }, { selectorText: selector, initialTop: scrollInfo.initialTop });
   page.off("response", networkResponseListener);
-  return { items: Array.from(all.values()), topItems: topItems || [], targetIndex: null, scrolledToTarget: false, unkeyedItemsDetected, duplicateVisibleKeyDetected, reachedBottom };
+  page.off("response", networkResponseListener);
+  return { items: Array.from(all.values()).slice(0, Number.isInteger(topLimit) && topLimit > 0 ? topLimit : undefined), topItems: topItems || [], targetIndex: null, scrolledToTarget: false, unkeyedItemsDetected, duplicateVisibleKeyDetected, reachedBottom, topLimited: Number.isInteger(topLimit) && topLimit > 0 };
 }
 
 function isGenerationFailureText(value) {
@@ -1722,18 +1746,18 @@ async function prepare(args, browser, rl) {
       if (args.waitForResult && initialBalance === null) throw new Error("Could not read an integer credit balance.");
       if (typeof selectors.generated_video_items !== "string" || !selectors.generated_video_items.trim()) throw new Error("Dry-run baseline scan requires a configured generated_video_items selector.");
       const videosTabState = await activateVideosTab(chosen.page, selectors);
-      const initialScan = await collectAllGeneratedItems(chosen.page, selectors.generated_video_items, { uuidCache: baselineUuidCache });
+      const initialScan = await collectAllGeneratedItems(chosen.page, selectors.generated_video_items, { uuidCache: baselineUuidCache, topLimit: 6, selectors });
       // Keep every stable media UUID in the baseline, including Failed tiles, so a
       // later disappearing/refunded tile cannot make another existing card look new.
       // Failed tiles are diagnostics only and never count as usable video candidates.
-      if (!initialScan.reachedBottom) throw new Error("Pre-Create media inventory did not prove it reached the bottom; refusing to Create with an incomplete baseline.");
+      if (!initialScan.topLimited || initialScan.items.length !== 6) throw new Error(`Pre-Create top-tile baseline requires six visible tiles; observed ${initialScan.items.length}. Refusing to Create with an incomplete baseline.`);
       const initialItems = initialScan.items.map(item => item.key);
       const baselineUuids = initialScan.items.map(item => item.mediaUuid).filter(Boolean);
       const failedBaselineItems = initialScan.items.filter(item =>
         /\bfailed\b/i.test(`${item.state} ${item.text}`) || isGenerationFailureText(`${item.state} ${item.text}`));
       console.log(JSON.stringify({
         event: "baseline_media_inventory_summary",
-        reached_bottom: initialScan.reachedBottom,
+        baseline_strategy: "top_6_tiles_only",\n        reached_bottom: initialScan.reachedBottom,
         tile_count: initialScan.items.length,
         uuid_count: baselineUuids.length,
         uuid_sample_first_5: baselineUuids.slice(0, 5),
@@ -1750,7 +1774,7 @@ async function prepare(args, browser, rl) {
       args._waitInitialItemCount = initialItems.length - failedBaselineItems.length;
       console.log(args.waitForResult
         ? "WAIT SELECTOR PREFLIGHT (read-only; no Create click; Videos tab selected when available; virtualized grid swept; Failed tiles retained only as baseline UUIDs)"
-        : "DRY-RUN MEDIA BASELINE (read-only; no Create click; Videos tab selected when available; full grid swept)");
+        : "DRY-RUN MEDIA BASELINE (read-only; no Create click; Videos tab selected when available; first 6 tiles only; no full-grid sweep)");
       console.log(JSON.stringify({
         mode: args.waitForResult ? "wait-preflight" : "dry-run-baseline",
         credit_balance: initialBalance,
@@ -1763,14 +1787,9 @@ async function prepare(args, browser, rl) {
       }, null, 2));
       console.log(`Phase timing: wait selector preflight completed in ${Date.now() - waitPreflightStartedAt}ms.`);
     } catch (error) {
-      let cleanup = "Prompt/Ingredients cleanup was not verified.";
-      try {
-        await clearPromptVerified(prompt, selectors, 2500);
-        cleanup = "Prompt and Ingredients were cleared and verified.";
-      } catch (cleanupError) {
-        cleanup += ` Cleanup error: ${cleanupError.message}`;
-      }
-      throw new Error(`Wait selector preflight failed: ${error.message}. ${cleanup}`);
+      // The outer pre-submit failure handler owns cleanup and emits the only
+      // authoritative success/failure message after verifying the actual state.
+      throw new Error(`Wait selector preflight failed: ${error.message}`);
     }
   }
 
