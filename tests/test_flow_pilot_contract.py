@@ -1,5 +1,6 @@
 """Static safety contract checks for the human-gated Flow pilot runner."""
 import re
+import subprocess
 import unittest
 from pathlib import Path
 
@@ -9,6 +10,11 @@ class FlowPilotContractTests(unittest.TestCase):
     def setUpClass(cls):
         cls.script = (Path(__file__).parents[1] / "scripts" / "flow-pilot.mjs").read_text(encoding="utf-8")
         cls.policy_stats_script = (Path(__file__).parents[1] / "scripts" / "summarize-policy-refusals.mjs").read_text(encoding="utf-8")
+
+    def test_flow_pilot_script_passes_node_syntax_check(self):
+        script_path = Path(__file__).parents[1] / "scripts" / "flow-pilot.mjs"
+        result = subprocess.run(["node", "--check", str(script_path)], capture_output=True, text=True, check=False)
+        self.assertEqual(result.returncode, 0, msg=result.stdout + result.stderr)
 
     def test_uses_configured_local_cdp_and_only_reloads_the_current_flow_project_for_tile_lookup(self):
         self.assertIn('const CDP_ENDPOINT = "http://127.0.0.1:9224"', self.script)
