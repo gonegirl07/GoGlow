@@ -743,8 +743,8 @@ async function waitForGenerationAndDownload(page, selectors, { beforeKeys, befor
         const currentBalance = await readCreditBalance(page, selectors).catch(() => null);
         if (currentBalance !== null && currentBalance < beforeBalance) {
           chargedExtensionUsed = true;
-          deadline = Date.now() + 300000;
-          console.warn(`Flow credit balance decreased (${beforeBalance} -> ${currentBalance}) but the new video is not yet verified; extending result polling by 300000ms without resubmitting.`);
+          deadline = Date.now() + 30000;
+          console.warn(`Flow credit balance decreased (${beforeBalance} -> ${currentBalance}) but the new video is not yet verified; extending result polling by 30000ms without resubmitting.`);
         } else {
           break;
         }
@@ -822,10 +822,10 @@ async function waitForGenerationAndDownload(page, selectors, { beforeKeys, befor
                   const currentBalance = await readCreditBalance(page, selectors).catch(() => null);
                   if (currentBalance !== null && currentBalance < beforeBalance) {
                     chargedExtensionUsed = true;
-                    deadline = Date.now() + 300000;
+                    deadline = Date.now() + 30000;
                     newItem = null;
                     newKey = null;
-                    console.warn(`Flow credit balance decreased (${beforeBalance} -> ${currentBalance}) but Download media is not ready; extending result polling by 300000ms without resubmitting.`);
+                    console.warn(`Flow credit balance decreased (${beforeBalance} -> ${currentBalance}) but Download media is not ready; extending result polling by 30000ms without resubmitting.`);
                     break;
                   }
                 }
