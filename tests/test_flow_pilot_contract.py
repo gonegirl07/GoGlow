@@ -10,10 +10,11 @@ class FlowPilotContractTests(unittest.TestCase):
         cls.script = (Path(__file__).parents[1] / "scripts" / "flow-pilot.mjs").read_text(encoding="utf-8")
         cls.policy_stats_script = (Path(__file__).parents[1] / "scripts" / "summarize-policy-refusals.mjs").read_text(encoding="utf-8")
 
-    def test_uses_only_the_configured_local_cdp_endpoint_and_never_navigates(self):
+    def test_uses_configured_local_cdp_and_only_reloads_the_current_flow_project_for_tile_lookup(self):
         self.assertIn('const CDP_ENDPOINT = "http://127.0.0.1:9224"', self.script)
         self.assertIn("chromium.connectOverCDP(CDP_ENDPOINT)", self.script)
-        self.assertNotIn("page.goto(", self.script)
+        self.assertIn("await page.goto(gridUrl, { waitUntil: \"domcontentloaded\", timeout: 12000 }).catch(() => {});", self.script)
+        self.assertNotIn('page.goto("http', self.script)
 
     def test_current_flow_project_urls_are_supported_and_404_is_rejected(self):
         self.assertIn('const FLOW_HOST = "flow.google.com"', self.script)
