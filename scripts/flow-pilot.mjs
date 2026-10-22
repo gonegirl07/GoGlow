@@ -1302,9 +1302,13 @@ async function uploadSceneReferencesUnsafe(page, selectors, referenceImages, ref
       await closeIngredientsPicker(page, selectors);
       throw new Error(`Selected asset ${filename} was attached, but neither its library metadata nor Ingredients chip exposed a stable UUID. Stopping before prompt fill/Create.`);
     }
+    if (assetUuid && selectedChipUuid !== assetUuid) {
+      await closeIngredientsPicker(page, selectors);
+      throw new Error(`Flow asset UUID mismatch after attach for ${filename}: library/network resolved ${assetUuid}, newly attached chip UUID ${selectedChipUuid}. Stopping before prompt fill/Create.`);
+    }
     if (requestedAssetUuidForPin && selectedChipUuid !== requestedAssetUuidForPin) {
       await closeIngredientsPicker(page, selectors);
-      throw new Error(`Pinned Flow asset UUID mismatch after attach for ${filename}: requested ${requestedAssetUuidForPin}, attached chip UUID ${selectedChipUuid}. Stopping before prompt fill/Create.`);
+      throw new Error(`Pinned Flow asset UUID mismatch after attach for ${filename}: requested ${requestedAssetUuidForPin}, newly attached chip UUID ${selectedChipUuid}. Stopping before prompt fill/Create.`);
     }
     assetUuid = selectedChipUuid;
     await closeIngredientsPicker(page, selectors);
