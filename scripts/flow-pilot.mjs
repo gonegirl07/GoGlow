@@ -178,7 +178,7 @@ async function generatedItemKeys(page, selector) {
 // union keys from every viewport instead of treating the first rendered batch as
 // the complete project inventory. Restore the initial scroll position unless a
 // target key was requested, in which case leave that tile in view for a safe click.
-async function collectAllGeneratedItems(page, selector, { targetKey = null, maxScrolls = 120, uuidCache = new Map(), topLimit = null, selectors = {} } = {}) {
+async function collectAllGeneratedItems(page, selector, { targetKey = null, maxScrolls = 120, uuidCache = new Map(), topLimit = null, selectors = {}, skipUuidResolution = false } = {}) {
   const scrollInfo = await page.evaluate(selectorText => {
     const first = document.querySelector(selectorText);
     let node = first?.parentElement || null;
@@ -451,7 +451,7 @@ async function collectAllGeneratedItems(page, selector, { targetKey = null, maxS
           if (item.hint) uuidCache.set(item.hint, networkUuid);
         }
       }
-      if (!item.mediaUuid) {
+      if (!item.mediaUuid && !skipUuidResolution) {
         const resolvedUuid = await resolveUuidByOpeningTile(item.index, item, visible, domTileCount);
         if (resolvedUuid) {
           item.mediaUuid = resolvedUuid;
@@ -746,16 +746,20 @@ async function waitForGenerationAndDownload(page, selectors, { beforeKeys, befor
     // on every grid poll before comparing the new result against the pre-Create inventory.
     await activateVideosTab(page, selectors).catch(() => "not_found_no_tab_switch");
     await failIfVisible();
-    const scan = await collectAllGeneratedItems(page, selectors.generated_video_items, { uuidCache, topLimit: 1, selectors }).catch(() => ({ items: [], topItems: [], reachedBottom: false, topLimited: false }));
-    if (!scan.topLimited || scan.unkeyedItemsDetected || scan.duplicateVisibleKeyDetected) {
-      console.warn("Media inventory scan is incomplete or ambiguous; refusing to identify/download a clip.");
-      await page.waitForTimeout(1000);
+    const scan = await collectAllGeneratedItems(page, selectors.generated_video_items, {
+      uuidCache, topLimit: 3, selectors, skipUuidResolution: true,
+    }).catch(() => ({ items: [], topItems: [], reachedBottom: false, topLimited: false }));
+    if (!scan.topLimited || scan.duplicateVisibleKeyDetected) {
+      console.warn("Post-Create media inventory snapshot is not ready; retrying within the bounded wait deadline.");
+      await page.waitForTimeout(500);
       continue;
     }
-    // Open/read only the first tile at the top of the post-Create Videos grid. The
-    // first six pre-Create UUIDs are the baseline; never scan the virtualized grid.
-    const topItem = scan.topItems?.[0] || null;
-    const newItems = topItem?.mediaUuid && topItem.key && !beforeKeys.includes(topItem.key) ? [topItem] : [];
+    // Do not open a generating tile to resolve its UUID: its thumbnail/token can
+    // rotate while rendering. Wait until Flow exposes a media UUID in DOM/network
+    // metadata, then identify the new result strictly by set difference vs baseline.
+    const topItemsNow = scan.items || scan.topItems || [];
+    const newItems = topItemsNow.filter(item => item.mediaUuid && item.key
+      && !beforeKeys.includes(item.key));
     // Failed tiles already in the pre-Create UUID baseline are not new results.
     // A newly failed UUID is still detected below and stops the batch safely.
     const candidateItems = newItems.filter(item =>
@@ -817,7 +821,7 @@ async function waitForGenerationAndDownload(page, selectors, { beforeKeys, befor
                   }
                 }
                 await captureTimeout();
-                throw new Error("New video detail opened, but generation did not expose Download media before the wait deadline.");
+                throw new Error("FLOW_SUBMITTED_UNIDENTIFIED: New video detail opened, but generation did not expose Download media before the wait deadline.");
               }
               await page.waitForTimeout(1000);
             }
@@ -836,7 +840,7 @@ async function waitForGenerationAndDownload(page, selectors, { beforeKeys, befor
   if (!newItem || !newKey) {
     await failIfVisible();
     await captureTimeout();
-    throw new Error(`No verified new video detail/download became available within ${timeoutMs}ms. The virtualized media grid was fully swept; completion remains unverified. Do not retry.`);
+    throw new Error(`FLOW_SUBMITTED_UNIDENTIFIED: No verified new video UUID/detail/download became available within ${timeoutMs}ms. Completion remains unverified; do not retry automatically.`);
   }
   const remainingMs = Math.max(1000, deadline - Date.now());
   const downloadButtonLocator = page.locator(selectors.download_media_button);
@@ -844,7 +848,7 @@ async function waitForGenerationAndDownload(page, selectors, { beforeKeys, befor
   catch {
     await failIfVisible();
     await captureTimeout();
-    throw new Error("A new tile was opened but Download media did not become visible before the wait deadline; completion remains unverified.");
+    throw new Error("FLOW_SUBMITTED_UNIDENTIFIED: A new tile was opened but Download media did not become visible before the wait deadline; completion remains unverified.");
   }
   const downloadButton = await exactVisibleLocator(page, selectors.download_media_button, "Download media button");
   const mediaUri = page.url();
@@ -1059,11 +1063,17 @@ async function checkedRadio(page, selector, value, label) {
   if (role !== "radio") throw new Error(`The ${label} selector must match a role=radio element.`);
   const labelText = (await locator.innerText()).replace(/\s+/g, " ").trim();
   if (!labelText.includes(value)) throw new Error(`The ${label} selector text ${JSON.stringify(labelText)} does not match expected value ${JSON.stringify(value)}.`);
-  const checked = await locator.getAttribute("aria-checked");
+  const readChecked = async () => locator.getAttribute("aria-checked").catch(() => null);
+  let checked = await readChecked();
   if (checked !== "true") {
     await locator.click({ timeout: 2500 });
-    const after = await locator.getAttribute("aria-checked");
-    if (after !== "true") throw new Error(`Could not verify ${label}=${value}; aria-checked is ${JSON.stringify(after)}. Stopping safely.`);
+    const deadline = Date.now() + 3000;
+    while (Date.now() < deadline) {
+      checked = await readChecked();
+      if (checked === "true") return;
+      await page.waitForTimeout(150);
+    }
+    throw new Error(`Could not verify ${label}=${value} after 3000ms polling; aria-checked is ${JSON.stringify(checked)}. Stopping safely.`);
   }
 }
 
@@ -2253,7 +2263,16 @@ async function prepare(args, browser, rl) {
         timeoutError = String(error.message || error);
         mediaUri = chosen.page.url();
         if (timeoutError.startsWith("FLOW_GENERATION_FAILED:")) resultStatus = "failed";
-        appendEvent(args.log, { event: resultStatus === "failed" ? "generation_failed_detected" : "generation_wait_unverified", scene_id: scene.scene_id, status: resultStatus === "failed" ? "failed_do_not_retry" : "unknown_do_not_retry", error: timeoutError });
+        else if (timeoutError.startsWith("FLOW_SUBMITTED_UNIDENTIFIED:")) resultStatus = "submitted_unidentified";
+        appendEvent(args.log, {
+          event: resultStatus === "failed" ? "generation_failed_detected"
+            : resultStatus === "submitted_unidentified" ? "submitted_unidentified"
+              : "generation_wait_unverified",
+          scene_id: scene.scene_id,
+          status: resultStatus === "failed" ? "failed_do_not_retry"
+            : resultStatus === "submitted_unidentified" ? "submitted_unidentified_do_not_retry" : "unknown_do_not_retry",
+          error: timeoutError,
+        });
         console.error(`WAIT STOPPED SAFELY: ${timeoutError}`);
       }
       // Detail pages do not expose credits; return to the original project before polling.
@@ -2289,6 +2308,10 @@ async function prepare(args, browser, rl) {
           console.error(`Clip is ready but download failed: ${downloadError}`);
           process.exitCode = 2;
         }
+      } else if (resultStatus === "submitted_unidentified") {
+        console.error("Create was submitted, but no new media UUID could be identified before timeout. Receipt and ledger recorded; do NOT resubmit automatically.");
+        process.exitCode = 2;
+        if (variantCount > 1) args._stopVariants = true;
       } else if (resultStatus === "failed") {
         if (/prominent people|might violate our policies/i.test(String(timeoutError || ""))) {
           console.error("POLICY REFUSAL: Flow flagged this request under its prominent-people policy. The refusal is recorded in the ledger; this batch stops and no automatic retry or reference/prompt substitution will be attempted. Review Flow policy and the content before manually starting a new, policy-compliant attempt.");
