@@ -1167,10 +1167,11 @@ async function loadInputs(args) {
       .trim().replace(/[.!?]+\s*$/, "")
     : rawNormalizedExpression;
   const openEyesGuard = openEyesRequested
-    ? " Eyes remain clearly open throughout the entire shot; she looks directly at the camera and smiles warmly with teeth visible from the first frame to the final frame; natural brief blinks only. No prolonged eye closure or eyes-closed meditation."
+    ? "Eyes remain clearly open throughout the entire shot; she looks directly at the camera and smiles warmly with teeth visible from the first frame to the final frame; natural brief blinks only. No prolonged eye closure or eyes-closed meditation."
     : "";
-  const expressionSection = normalizedExpression
-    ? `\n\nEXPRESSION AND EYE STATE (follow throughout the entire shot): ${normalizedExpression}.${openEyesGuard} Keep this expression and eye state consistent from the first frame to the last; this instruction takes priority over breathing or other subtle motion.`
+  const expressionContent = [normalizedExpression, openEyesGuard].filter(Boolean).join(normalizedExpression ? ". " : "");
+  const expressionSection = expressionContent
+    ? `\n\nEXPRESSION AND EYE STATE (follow throughout the entire shot): ${expressionContent} Keep this expression and eye state consistent from the first frame to the last; this instruction takes priority over breathing or other subtle motion.`
     : "";
   const supportingReferenceImages = referenceImages.filter(imagePath => !faceReferenceImages.includes(imagePath));
   const supportingReferenceSection = supportingReferenceImages.length
