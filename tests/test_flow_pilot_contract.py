@@ -812,7 +812,7 @@ assert.ok(reads >= 6, 'must poll after initial null thumbnail before accepting t
     def test_post_create_uuid_set_difference_ignores_rotating_thumbnail_and_waits_for_completion(self):
         helper = "function findNewCompletedMediaItems" + self.script.split(
             "function findNewCompletedMediaItems", 1
-        )[1].split("\\n\\nasync function waitForGenerationAndDownload", 1)[0]
+        )[1].split("\n\nasync function waitForGenerationAndDownload", 1)[0]
         node_test = helper + r"""
 const assert = await import('node:assert/strict');
 const baseline = ['media:old-a', 'media:old-b', 'media:old-c'];
