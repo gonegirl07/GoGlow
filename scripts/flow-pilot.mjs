@@ -1210,11 +1210,18 @@ async function uploadSceneReferencesUnsafe(page, selectors, referenceImages, ref
     const networkNameUuids = Array.from(new Set(networkAssetRecords
       .filter(record => record.strings.some(value => filenameNeedles.some(needle => needle && value.includes(needle))))
       .map(record => record.uuid)));
-    const networkUuidShortcut = existingCount === 1 && networkNameUuids.length === 1;
-    if (networkUuidShortcut) existingUuids.add(networkNameUuids[0]);
+    const requestedAssetUuid = referenceAssetUuids instanceof Map
+      ? referenceAssetUuids.get(imagePath) : referenceAssetUuids?.[imagePath];
+    // A job-pinned UUID found in Flow's JSON for this exact filename is stronger
+    // evidence than unrelated same-name records in the response. This lets us skip
+    // thumbnail polling even when the JSON also includes older duplicate entries.
+    const pinnedUuidConfirmedByNetwork = Boolean(requestedAssetUuid && networkNameUuids.includes(requestedAssetUuid));
+    const networkUuidShortcut = existingCount === 1
+      && (networkNameUuids.length === 1 || pinnedUuidConfirmedByNetwork);
+    if (networkUuidShortcut) existingUuids.add(pinnedUuidConfirmedByNetwork ? requestedAssetUuid : networkNameUuids[0]);
     // Only poll lazy thumbnail URLs when Flow JSON did not already identify the
     // unique existing card. This avoids a needless 6.75s wait per reference.
-    const thumbnailDeadline = networkUuidShortcut ? Date.now() : Date.now() + 2000;
+    const thumbnailDeadline = networkUuidShortcut ? Date.now() : Date.now() + 7000;
     let thumbnailPolls = 0;
     do {
       if (!networkUuidShortcut) {
@@ -1231,7 +1238,7 @@ async function uploadSceneReferencesUnsafe(page, selectors, referenceImages, ref
     if (networkUuidShortcut) {
       console.log(`Skipped Flow asset thumbnail UUID wait: ${filename}, UUID resolved from unique matching Flow JSON metadata.`);
     } else if (thumbnailPolls > 0) {
-      console.log(`Waited for Flow asset thumbnail UUIDs: ${filename}, polls=${thumbnailPolls}, elapsed_ms=${Math.min(2000, thumbnailPolls * 250)}`);
+      console.log(`Waited for Flow asset thumbnail UUIDs: ${filename}, polls=${thumbnailPolls}, elapsed_ms=${Math.min(7000, thumbnailPolls * 250)}`);
     }
 
     console.log(JSON.stringify({
@@ -1240,8 +1247,6 @@ async function uploadSceneReferencesUnsafe(page, selectors, referenceImages, ref
       existing_uuids_before_upload: Array.from(existingUuids),
       matching_asset_count: existingCount,
     }));
-    const requestedAssetUuid = referenceAssetUuids instanceof Map
-      ? referenceAssetUuids.get(imagePath) : referenceAssetUuids?.[imagePath];
     let reusedExistingUuid = null;
     if (requestedAssetUuid) {
       let requestedFound = false;
