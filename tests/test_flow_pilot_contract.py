@@ -639,10 +639,10 @@ class FlowPilotContractTests(unittest.TestCase):
 
     def test_edit_route_fallback_waits_then_force_clicks_animated_tile(self):
         self.assertIn("await tile.scrollIntoViewIfNeeded({ timeout: 3500 })", self.script)
-        self.assertIn("for (let attempt = 1; attempt <= 3; attempt += 1)", self.script)
+        self.assertIn("for (let attempt = 1; attempt <= 5; attempt += 1)", self.script)
         self.assertIn("await tile.click({ timeout: 4000, force: true });", self.script)
         self.assertIn("timeout: 8000", self.script)
-        self.assertIn("after 3 attempts", self.script)
+        self.assertIn("after 5 attempts", self.script)
 
     def test_asset_uuid_lookup_waits_for_lazy_loaded_thumbnail_and_rejects_ambiguity(self):
         self.assertIn("const thumbnailDeadline = networkUuidShortcut ? Date.now() : Date.now() + 7000;", self.script)
@@ -707,7 +707,7 @@ class FlowPilotContractTests(unittest.TestCase):
             "function appendGenerationLedger", 1
         )[0]
         self.assertIn('page.getByRole("button", { name: /^Videos$/i })', activate)
-        self.assertIn("const buttonCount = await button.count()", activate)
+        self.assertIn("buttonCount = await button.count()", activate)
         self.assertIn("for (let i = 0; i < buttonCount; i += 1)", activate)
         self.assertIn("if (await candidate.isVisible()", activate)
         self.assertIn("not_found_no_tab_switch (tabs=", activate)
@@ -715,16 +715,25 @@ class FlowPilotContractTests(unittest.TestCase):
     def test_baseline_uses_visible_first_row_with_minimum_three_tiles(self):
         self.assertIn("topLimit: 3, selectors", self.script)
         self.assertIn("initialScan.items.length < 3", self.script)
-        self.assertIn("currentScan.items.length < 3", self.script)
         self.assertIn('baseline_strategy: "visible_first_row_min_3"', self.script)
         self.assertIn("topLimit: 1, selectors", self.script)
+        self.assertIn("args._waitInitialThumbnailTokens = initialScan.items.map(item => thumbnailIdentityToken(item.thumbnailSrc)).filter(Boolean);", self.script)
+
+    def test_pre_create_recheck_is_read_only_and_compares_first_thumbnail_token(self):
+        self.assertIn('event: "pre_create_first_tile_identity_recheck"', self.script)
+        self.assertIn("const expectedFirstToken = args._waitInitialThumbnailTokens?.[0];", self.script)
+        self.assertIn("if (currentFirstToken !== expectedFirstToken)", self.script)
+        self.assertIn("read_only_dom_check: true", self.script)
+        self.assertNotIn("const currentScan = await collectAllGeneratedItems(chosen.page, selectors.generated_video_items", self.script)
     def test_media_tile_reidentification_reselects_videos_waits_for_stable_grid_and_logs_tokens(self):
         resolver = self.script.split("const resolveUuidByOpeningTile = async (index, identity = null) =>", 1)[1].split(
             "let stableBottomRounds = 0;", 1
         )[0]
         self.assertIn('await page.goto(gridUrl, { waitUntil: "domcontentloaded", timeout: 12000 })', resolver)
         self.assertIn("const tabResult = await activateVideosTab(page, selectors)", resolver)
-        self.assertIn("for (let gridPoll = 0; gridPoll < 20; gridPoll += 1)", resolver)
+        self.assertIn("for (let gridPoll = 0; gridPoll < 30; gridPoll += 1)", resolver)
+        self.assertIn(".filter(Boolean)).catch(() => [])", resolver)
+        self.assertIn("previousTokens.length >= 3", resolver)
         self.assertIn('event: "media_tile_reidentification"', resolver)
         self.assertIn("expected_thumbnail_token: expectedToken", resolver)
         self.assertIn("visible_first_six_thumbnail_tokens: currentTokens.slice(0, 6)", resolver)
@@ -735,8 +744,10 @@ class FlowPilotContractTests(unittest.TestCase):
         upload_fn = self.script.split("async function uploadSceneReferencesUnsafe", 1)[1].split(
             "async function uploadSceneReferences(", 1
         )[0]
-        self.assertIn("const networkUuidShortcut = existingCount === 1 && networkNameUuids.length === 1;", upload_fn)
-        self.assertIn("if (networkUuidShortcut) existingUuids.add(networkNameUuids[0]);", upload_fn)
+        self.assertIn("const pinnedUuidConfirmedByNetwork = Boolean(requestedAssetUuid && networkNameUuids.includes(requestedAssetUuid));", upload_fn)
+        self.assertIn("const networkUuidShortcut = existingCount === 1", upload_fn)
+        self.assertIn("(networkNameUuids.length === 1 || pinnedUuidConfirmedByNetwork)", upload_fn)
+        self.assertIn("if (networkUuidShortcut) existingUuids.add(pinnedUuidConfirmedByNetwork ? requestedAssetUuid : networkNameUuids[0]);", upload_fn)
         self.assertIn("const thumbnailDeadline = networkUuidShortcut ? Date.now() : Date.now() + 7000;", upload_fn)
         self.assertIn("Skipped Flow asset thumbnail UUID wait:", upload_fn)
 
