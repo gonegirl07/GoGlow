@@ -91,7 +91,7 @@ class FlowPilotContractTests(unittest.TestCase):
         self.assertIn('await page.waitForFunction(selector => !Array.from(document.querySelectorAll(selector))', self.script)
 
     def test_upload_failure_runs_verified_cleanup_in_finally(self):
-        self.assertIn('async function uploadSceneReferences(page, selectors, referenceImages, prompt)', self.script)
+        self.assertIn('async function uploadSceneReferences(page, selectors, referenceImages, prompt, referenceAssetUuids = new Map())', self.script)
         self.assertIn('finally {\n    if (uploadError)', self.script)
         self.assertIn('Upload failure cleanup (finally):', self.script)
         self.assertIn('await closeIngredientsPicker(page, selectors)', self.script)
@@ -270,7 +270,7 @@ class FlowPilotContractTests(unittest.TestCase):
         self.assertIn('reference_images as an array of 1 to 3 local file paths', self.script)
         self.assertIn('Character description must be ASCII/English only', self.script)
         self.assertIn('Scene JSON must contain a non-empty character_description', self.script)
-        self.assertIn('uploadSceneReferences(chosen.page, selectors, referenceImages, prompt)', self.script)
+        self.assertIn('uploadSceneReferences(chosen.page, selectors, referenceImages, prompt, referenceAssetUuids)', self.script)
         self.assertLess(self.script.index('await uploadSceneReferences(chosen.page, selectors, referenceImages, prompt)'), self.script.index('await prompt.fill(scene.prompt'))
         self.assertIn('reference_image_count: referenceImages.length', self.script)
         self.assertIn('ingredient_reference_items', self.script)
@@ -373,7 +373,7 @@ class FlowPilotContractTests(unittest.TestCase):
             "async function main()", 1
         )[0]
         self.assertIn(
-            "const { scene, selectors, referenceImages, faceReferenceImage } = await loadInputs(args);",
+            "const { scene, selectors, referenceImages, faceReferenceImage, referenceAssetUuids } = await loadInputs(args);",
             prepare,
         )
         self.assertIn("face_reference_image: path.basename(faceReferenceImage)", prepare)
