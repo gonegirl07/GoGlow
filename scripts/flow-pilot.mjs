@@ -1851,7 +1851,7 @@ async function prepare(args, browser, rl) {
       }
       args._waitInitialBalance = initialBalance;
       args._waitInitialItemKeys = initialItems;
-      args._waitInitialThumbnailTokens = initialScan.items.map(item => thumbnailIdentityToken(item.thumbnailSrc)).filter(Boolean);
+      args._waitInitialThumbnailTokens = initialScan.items.map(item => item.thumbnailSrc ? thumbnailIdentityToken(item.thumbnailSrc) : null).filter(Boolean);
       if (args._waitInitialThumbnailTokens.length !== initialScan.items.length) {
         throw new Error("First-row baseline requires a loaded thumbnail token for each of the three tiles.");
       }
@@ -1994,6 +1994,7 @@ async function prepare(args, browser, rl) {
       if (!expectedFirstToken) throw new Error("Pre-Create baseline has no first-tile thumbnail token; refusing to click Create.");
       let currentTokens = [];
       let previousTokens = null;
+      let stableCurrentGrid = false;
       for (let poll = 0; poll < 30; poll += 1) {
         currentTokens = await chosen.page.locator(selectors.generated_video_items).evaluateAll(elements =>
           elements.slice(0, 3).map(element => {
@@ -2006,7 +2007,10 @@ async function prepare(args, browser, rl) {
           }).filter(Boolean)).catch(() => []);
         if (currentTokens.length >= 3 && currentTokens.every(Boolean) && previousTokens
           && previousTokens.length >= 3 && currentTokens.length === previousTokens.length
-          && currentTokens.every((token, i) => token === previousTokens[i])) break;
+          && currentTokens.every((token, i) => token === previousTokens[i])) {
+          stableCurrentGrid = true;
+          break;
+        }
         previousTokens = currentTokens;
         await chosen.page.waitForTimeout(250);
       }
@@ -2018,8 +2022,8 @@ async function prepare(args, browser, rl) {
         visible_first_three_thumbnail_tokens: currentTokens,
         read_only_dom_check: true,
       }, null, 2));
-      if (currentTokens.length < 3 || !currentTokens.every(Boolean)) {
-        throw new Error(`Pre-Create thumbnail recheck could not read three loaded tiles (observed ${currentTokens.length}); refusing to click Create.`);
+      if (!stableCurrentGrid || currentTokens.length < 3 || !currentTokens.every(Boolean)) {
+        throw new Error(`Pre-Create thumbnail recheck could not read three stable loaded tiles (observed ${currentTokens.length}); refusing to click Create.`);
       }
       if (currentFirstToken !== expectedFirstToken) {
         throw new Error("Pre-Create first tile thumbnail token differs from the validated baseline; refusing to click Create.");
