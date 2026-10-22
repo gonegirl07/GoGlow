@@ -916,7 +916,7 @@ assert.deepEqual(findNewCompletedMediaItems([
         self.assertIn('await page.keyboard.press("Escape")', self.script)
         self.assertIn("Ingredients picker did not fully unmount", self.script)
         self.assertIn("await resetIngredientsPicker(page, selectors);", self.script)
-        self.assertIn("async function inspectAddToPromptContext(pickerContainer, buttonSelector, tileSelector)", self.script)
+        self.assertIn("async function inspectAddToPromptContext(button)", self.script)
         self.assertIn('event: "ingredients_picker_add_action_identity"', self.script)
         self.assertIn("expected_asset_uuid: expectedPreviewUuid || null", self.script)
         self.assertIn("previewContext.uuids?.includes(expectedPreviewUuid)", self.script)
