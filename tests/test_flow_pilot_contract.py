@@ -615,6 +615,22 @@ class FlowPilotContractTests(unittest.TestCase):
         self.assertIn("visible first row only; no full-grid sweep", self.script)
         self.assertIn("Dry-run baseline scan requires a configured generated_video_items selector", self.script)
 
+    def test_add_to_prompt_waits_for_selected_asset_and_visible_button_before_exact_count(self):
+        upload_fn = self.script.split("async function uploadSceneReferencesUnsafe", 1)[1].split(
+            "async function uploadSceneReferences(", 1
+        )[0]
+        self.assertIn('const addToPromptSelector = selectors.ingredient_add_to_prompt;', upload_fn)
+        self.assertIn('Date.now() - selectionWaitStartedAt < 5000', upload_fn)
+        self.assertIn('selectedAssetAriaSelected === "true" && addToPromptVisibleCount > 0', upload_fn)
+        self.assertIn('event: "reference_asset_selection_ready"', upload_fn)
+        self.assertIn('selected_asset_aria_selected: selectedAssetAriaSelected', upload_fn)
+        self.assertIn('visible Add to prompt buttons=', upload_fn)
+        self.assertIn('const addToPrompt = await exactVisibleLocator(page, addToPromptSelector, "Add to prompt button", 1000);', upload_fn)
+        self.assertLess(
+            upload_fn.index('selectedAssetAriaSelected === "true" && addToPromptVisibleCount > 0'),
+            upload_fn.index('const addToPrompt = await exactVisibleLocator'),
+        )
+
     def test_asset_reuse_checks_all_dom_attributes_and_never_duplicates_unreadable_match(self):
         self.assertIn("async function assetUuidFromLocator(locator)", self.script)
         self.assertIn('"data-asset-id"', self.script)
