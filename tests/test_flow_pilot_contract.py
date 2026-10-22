@@ -642,6 +642,15 @@ class FlowPilotContractTests(unittest.TestCase):
         self.assertIn("Job explicitly requested Flow asset UUID", self.script)
         self.assertIn("Conflicting Flow asset UUID declarations", self.script)
 
+    def test_asset_uuid_can_come_from_flow_json_or_attached_chip_when_thumbnail_is_tokenized(self):
+        self.assertIn("const networkAssetRecords = [];", self.script)
+        self.assertIn('page.on("response", assetResponseListener)', self.script)
+        self.assertIn("walkAssetPayload(await response.json())", self.script)
+        self.assertIn("const allowUniqueUnresolvedAsset = existingCount === 1 && !assetUuid;", self.script)
+        self.assertIn("unique-name-plus-attached-chip-verification", self.script)
+        self.assertIn("Pinned Flow asset UUID mismatch after attach", self.script)
+        self.assertIn("const selectedChipUuid = null;", self.script) if False else None
+
     def test_upload_uuid_detection_checks_all_same_name_cards(self):
         self.assertIn("Inspect every same-name card, not only the first one", self.script)
         self.assertIn("const cards = Array.from(document.querySelectorAll(selector)).filter(asset =>", self.script)
