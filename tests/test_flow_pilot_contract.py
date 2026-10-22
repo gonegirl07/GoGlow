@@ -565,7 +565,7 @@ class FlowPilotContractTests(unittest.TestCase):
         self.assertIn("Always begin at the true top", self.script)
         self.assertIn("topLimit: 3, selectors", self.script)
         self.assertIn("Pre-Create first-row baseline requires at least three visible tiles", self.script)
-        self.assertIn("Top-6 baseline requires six unique, stable media UUIDs/keys", self.script)
+        self.assertIn("First-row baseline requires unique, stable media UUIDs/keys", self.script)
         self.assertIn("topLimit: 1, selectors", self.script)
         self.assertIn("baseline_strategy", self.script)
         self.assertIn("baseline_media_key_count: initialItems.length", self.script)
