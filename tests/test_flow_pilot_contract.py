@@ -303,7 +303,7 @@ class FlowPilotContractTests(unittest.TestCase):
     def test_media_grid_uses_top_six_and_stable_keys_before_tile_identity_comparison(self):
         self.assertIn("async function collectAllGeneratedItems(page, selector", self.script)
         self.assertIn("Flow's media grid may virtualize its DOM", self.script)
-        self.assertIn("const initialScan = await collectAllGeneratedItems", self.script)
+        self.assertIn("let initialScan = await collectAllGeneratedItems", self.script)
         self.assertIn("const videosTabState = await activateVideosTab", self.script)
         self.assertIn('page.getByRole("tab", { name: /^Videos$/i })', self.script)
         self.assertIn("unkeyedItemsDetected", self.script)
