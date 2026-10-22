@@ -90,12 +90,13 @@ class FlowPilotContractTests(unittest.TestCase):
         self.assertIn('Clicked the edge of the Ingredients picker backdrop, but the overlay is still open', self.script)
         self.assertIn('await page.waitForFunction(selector => !Array.from(document.querySelectorAll(selector))', self.script)
 
-    def test_upload_failure_runs_verified_cleanup_in_finally(self):
+    def test_upload_failure_closes_picker_and_leaves_one_cleanup_owner(self):
         self.assertIn('async function uploadSceneReferences(page, selectors, referenceImages, prompt, referenceAssetUuids = new Map())', self.script)
-        self.assertIn('finally {\n    if (uploadError)', self.script)
-        self.assertIn('Upload failure cleanup (finally):', self.script)
-        self.assertIn('await closeIngredientsPicker(page, selectors)', self.script)
-        self.assertIn('await clearPromptContentsVerified(prompt, selectors, 4000)', self.script)
+        upload_wrapper = self.script.split('async function uploadSceneReferences(page, selectors', 1)[1].split('function requiredSelectorConfig', 1)[0]
+        self.assertIn('await closeIngredientsPicker(page, selectors)', upload_wrapper)
+        self.assertIn('outer handler will verify prompt/chip cleanup', upload_wrapper)
+        self.assertNotIn('clearPromptContentsVerified(prompt, selectors, 4000)', upload_wrapper)
+        self.assertIn('await clearPromptVerified(promptForCleanup, selectors, 4000);', self.script)
         self.assertIn('chipCount !== 0', self.script)
 
     def test_deduplicated_upload_can_reuse_a_verifiable_existing_asset(self):
@@ -648,7 +649,12 @@ class FlowPilotContractTests(unittest.TestCase):
         self.assertIn("walkAssetPayload(await response.json())", self.script)
         self.assertIn("const allowUniqueUnresolvedAsset = existingCount === 1 && !assetUuid;", self.script)
         self.assertIn("unique-name-plus-attached-chip-verification", self.script)
+        self.assertIn("beforeAttachChipUuids", self.script)
+        self.assertIn("const newChipUuids = afterAttachChipUuids.filter(uuid => uuid && !beforeAttachChipUuids.includes(uuid));", self.script)
+        self.assertIn("document.querySelectorAll(selector).length > beforeCount", self.script)
         self.assertIn("Pinned Flow asset UUID mismatch after attach", self.script)
+        self.assertIn("newly attached chip UUID", self.script)
+        self.assertIn("Flow asset UUID mismatch after attach", self.script)
 
     def test_upload_uuid_detection_checks_all_same_name_cards(self):
         self.assertIn("Inspect every same-name card, not only the first one", self.script)
