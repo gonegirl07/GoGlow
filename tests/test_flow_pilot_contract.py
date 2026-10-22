@@ -339,7 +339,7 @@ class FlowPilotContractTests(unittest.TestCase):
         self.assertIn("retry opening the account panel once", self.script)
 
     def test_cleanup_does_not_click_clear_when_already_clean(self):
-        self.assertIn("const initialChipCount = await page.locator(selectors.ingredient_reference_items)", self.script)
+        self.assertIn("let initialChipCount = await waitForStableVisibleChipCount(page, selectors.ingredient_reference_items, 2000)", self.script)
         self.assertIn('String(initialValue).trim() === "" && initialChipCount === 0', self.script)
 
 
@@ -653,7 +653,7 @@ class FlowPilotContractTests(unittest.TestCase):
         self.assertNotIn('selectedAssetAriaSelected === "true" && addToPromptVisibleCount', upload_fn)
         self.assertLess(
             upload_fn.index('if (addToPromptVisibleCount === 1)'),
-            upload_fn.index('const addToPrompt = await exactVisibleLocator'),
+            upload_fn.index('const addToPrompt = pickerContainer.locator(addToPromptSelector);'),
         )
 
     def test_first_row_thumbnail_tokens_wait_and_recapture_when_missing(self):
@@ -763,7 +763,8 @@ class FlowPilotContractTests(unittest.TestCase):
         self.assertIn("afterClickChips !== 0", self.script)
         self.assertIn("afterClickValue", self.script)
         self.assertIn("let removeClickError = null;", self.script)
-        self.assertIn("State change, not click return, is decisive", self.script)
+        self.assertIn("const deadline = Date.now() + Math.max(timeout, 3000)", self.script)
+        self.assertIn("if (!(nextCount >= 0 && nextCount < chipCount))", self.script)
 
 
 
