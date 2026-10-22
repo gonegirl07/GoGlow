@@ -737,8 +737,8 @@ async function waitForGenerationAndDownload(page, selectors, { beforeKeys, befor
   while (true) {
     if (Date.now() >= deadline) {
       // A credit debit is strong evidence that Create was accepted even when Flow's
-      // media grid is stale. Give the newly charged generation one extra five-minute
-      // discovery window; never click Create again.
+      // media grid is stale. Give the newly charged generation one short, bounded
+      // discovery extension; never click Create again.
       if (!chargedExtensionUsed && beforeBalance !== null) {
         const currentBalance = await readCreditBalance(page, selectors).catch(() => null);
         if (currentBalance !== null && currentBalance < beforeBalance) {
@@ -1472,7 +1472,7 @@ async function uploadSceneReferencesUnsafe(page, selectors, referenceImages, ref
       readiness_signal: "exactly_one_visible_add_to_prompt_button",
     }));
     if (!referenceSelectionReady) {
-      throw new Error(`Reference asset selection did not expose exactly one visible Add to prompt button within ${selectionWaitTimeoutMs}ms for ${filename}; aria-selected=${JSON.stringify(selectedAssetAriaSelected)}, visible Add to prompt buttons=${addToPromptVisibleCount}, selection_retried=${selectionRetried}. Stopping safely before prompt fill/Create.`);
+      throw new Error(`Reference asset selection did not expose exactly one visible Add to prompt button for ${filename}; configured wait budget=${selectionWaitTimeoutMs}ms, actual elapsed=${Date.now() - selectionWaitStartedAt}ms, aria-selected=${JSON.stringify(selectedAssetAriaSelected)}, visible Add to prompt buttons=${addToPromptVisibleCount}, selection_retried=${selectionRetried}. Stopping safely before prompt fill/Create.`);
     }
     // Count/visibility is authoritative only after the selection state has settled.
     const addToPrompt = await exactVisibleLocator(page, addToPromptSelector, "Add to prompt button", 1000);
@@ -2324,8 +2324,7 @@ async function prepare(args, browser, rl) {
         }
         await chosen.page.waitForTimeout(1000);
       } while (Date.now() < balanceDeadline);
-      if (!submissionEvidence && afterBalance !== null && args._waitInitialBalance !== null
-        && afterBalance >= args._waitInitialBalance && resultStatus !== "failed") {
+      if (!submissionEvidence && resultStatus !== "failed") {
         resultStatus = "create_not_confirmed";
         timeoutError = "CREATE_NOT_CONFIRMED: No new media UUID and no credit decrease were observed after Create; do not resubmit automatically without manual inspection.";
         appendEvent(args.log, { event: "create_not_confirmed", scene_id: scene.scene_id,
