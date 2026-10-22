@@ -592,7 +592,12 @@ class FlowPilotContractTests(unittest.TestCase):
             "let stableBottomRounds = 0;", 1
         )[0]
         self.assertIn('await page.goto(gridUrl, { waitUntil: "domcontentloaded", timeout: 12000 }).catch(() => {});', resolver)
-        self.assertIn('elements.findIndex(element => element.querySelector("img")?.getAttribute("src") === src)', resolver)
+        self.assertIn('const expectedToken = identity?.thumbnailSrc ? thumbnailIdentityToken(identity.thumbnailSrc) : null;', resolver)
+        self.assertIn('return token === expected;', resolver)
+        self.assertIn('await activateVideosTab(page, selectors)', resolver)
+        self.assertIn('visible_first_six_thumbnail_tokens: currentTokens.slice(0, 6)', resolver)
+        self.assertIn('expected_thumbnail_token: expectedToken', resolver)
+        self.assertIn('currentTokens.length >= 6 && previousTokens', resolver)
         self.assertIn("await page.waitForTimeout(1000);", resolver)
         self.assertIn("await tile.click({ timeout: 4000, force: true });", resolver)
         self.assertIn("await page.waitForURL(url => editRoute.test(new URL(url).pathname)", resolver)
@@ -693,6 +698,31 @@ class FlowPilotContractTests(unittest.TestCase):
         self.assertIn("afterClickValue", self.script)
         self.assertIn("let removeClickError = null;", self.script)
         self.assertIn("State change, not click return, is decisive", self.script)
+
+
+
+
+    def test_media_tile_reidentification_reselects_videos_waits_for_stable_grid_and_logs_tokens(self):
+        resolver = self.script.split("const resolveUuidByOpeningTile = async (index, identity = null) =>", 1)[1].split(
+            "let stableBottomRounds = 0;", 1
+        )[0]
+        self.assertIn('await page.goto(gridUrl, { waitUntil: "domcontentloaded", timeout: 12000 })', resolver)
+        self.assertIn("const tabResult = await activateVideosTab(page, selectors)", resolver)
+        self.assertIn("for (let gridPoll = 0; gridPoll < 20; gridPoll += 1)", resolver)
+        self.assertIn('event: "media_tile_reidentification"', resolver)
+        self.assertIn("expected_thumbnail_token: expectedToken", resolver)
+        self.assertIn("visible_first_six_thumbnail_tokens: currentTokens.slice(0, 6)", resolver)
+        self.assertIn("function thumbnailIdentityToken(value)", self.script)
+        self.assertIn(r"source.match(/\/asb\/([^/?#]+)/i)", self.script)
+
+    def test_unique_network_asset_uuid_skips_lazy_thumbnail_wait(self):
+        upload_fn = self.script.split("async function uploadSceneReferencesUnsafe", 1)[1].split(
+            "async function uploadSceneReferences(", 1
+        )[0]
+        self.assertIn("const networkUuidShortcut = existingCount === 1 && networkNameUuids.length === 1;", upload_fn)
+        self.assertIn("if (networkUuidShortcut) existingUuids.add(networkNameUuids[0]);", upload_fn)
+        self.assertIn("const thumbnailDeadline = networkUuidShortcut ? Date.now() : Date.now() + 7000;", upload_fn)
+        self.assertIn("Skipped Flow asset thumbnail UUID wait:", upload_fn)
 
 if __name__ == "__main__":
     unittest.main()
