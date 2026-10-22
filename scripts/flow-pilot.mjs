@@ -703,7 +703,7 @@ function findNewCompletedMediaItems(items, beforeKeys) {
   return (items || []).filter(item => {
     if (!item?.mediaUuid || !item.key || baseline.has(item.key)) return false;
     const state = `${item.state || ""} ${item.text || ""}`;
-    if (item.progress || /\\b(?:generating|generation in progress|processing|in progress|queued|pending)\\b/i.test(state)) return false;
+    if (item.progress || /\b(?:generating|generation in progress|processing|in progress|queued|pending)\b/i.test(state)) return false;
     return true;
   });
 }
