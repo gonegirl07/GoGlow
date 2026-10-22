@@ -369,17 +369,26 @@ function makeGenerationLedgerRecord({ scene, projectId, ledgerProjectId, prompt,
       const referenceImages = scene.reference_images || [];
       const selectedFaceRefs = scene.face_reference_ids || [scene.face_reference_id || referenceImages[0]].filter(Boolean);
       const selectedPaths = new Set(selectedFaceRefs.map(item => path.resolve(String(item))));
+      const otherReferences = referenceImages.filter(item => !selectedPaths.has(path.resolve(String(item))));
+      const faceReferenceIds = selectedFaceRefs.map(item => path.basename(item));
+      const otherReferenceIds = otherReferences.map(item => path.basename(item));
+      // Fingerprint reference image bytes and their roles/order, without storing local paths.
+      const referenceSetKey = createHash("sha256").update(JSON.stringify({
+        face_reference_sha256: selectedFaceRefs.map(item => createHash("sha256").update(fs.readFileSync(item)).digest("hex")),
+        other_reference_sha256: otherReferences.map(item => createHash("sha256").update(fs.readFileSync(item)).digest("hex")),
+      }), "utf8").digest("hex");
       return {
         model_label: scene.model || "Omni 1.1 Flash",
         resolution: scene.resolution || "360p",
         duration_seconds: Number.parseInt(scene.duration || "8s", 10) || 8,
         aspect_ratio: "9:16",
         pose_reference_id: null,
-        face_reference_id: selectedFaceRefs[0] ? path.basename(selectedFaceRefs[0]) : null,
-        face_reference_ids: selectedFaceRefs.map(item => path.basename(item)),
+        face_reference_id: faceReferenceIds[0] || null,
+        face_reference_ids: faceReferenceIds,
         face_description_mode: scene.face_description_mode || "include",
+        reference_set_key: referenceSetKey,
         expression: scene.expression || null,
-        other_reference_ids: referenceImages.filter(item => !selectedPaths.has(path.resolve(String(item)))).map(item => path.basename(item)),
+        other_reference_ids: otherReferenceIds,
       };
     })(),
     prompt: { text: prompt, sha256: createHash("sha256").update(prompt, "utf8").digest("hex"), template_version: null },
@@ -1150,7 +1159,12 @@ async function loadInputs(args) {
   // If the job already says "natural brief blinks only", remove that clause before
   // appending the standard guard so the composed prompt states it exactly once.
   const normalizedExpression = openEyesRequested
-    ? rawNormalizedExpression.replace(/(?:[,;.]?\s*)natural brief blinks only\b/ig, "").trim().replace(/[.!?]+\s*$/, "")
+    ? rawNormalizedExpression
+      // The standard guard below already states this full eye/smile requirement.
+      // Remove equivalent short-form wording as well as the blink clause to avoid duplication.
+      .replace(/(?:[,;.]?\s*)natural brief blinks only\b/ig, "")
+      .replace(/(?:[,;.]?\s*)eyes?\s+(?:stay|remain)\s+open\s*,?\s*(?:gentle|warm)?\s*smile\s+showing\s+teeth\b/ig, "")
+      .trim().replace(/[.!?]+\s*$/, "")
     : rawNormalizedExpression;
   const openEyesGuard = openEyesRequested
     ? " Eyes remain clearly open throughout the entire shot; she looks directly at the camera and smiles warmly with teeth visible from the first frame to the final frame; natural brief blinks only. No prolonged eye closure or eyes-closed meditation."
