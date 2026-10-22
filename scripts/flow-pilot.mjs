@@ -708,7 +708,7 @@ function findNewCompletedMediaItems(items, beforeKeys) {
   });
 }
 
-async function waitForGenerationAndDownload(page, selectors, { beforeKeys, beforeBalance, createClickedAt, uuidCache = new Map(), timeoutMs, downloadDir, sceneId, attemptId, timeoutScreenshot, variantIndex = 1, variantCount = 1 }) {
+async function waitForGenerationAndDownload(page, selectors, { beforeKeys, beforeBalance, createClickedAt, uuidCache = new Map(), timeoutMs, downloadDir, sceneId, attemptId, timeoutScreenshot, onSubmissionEvidence = () => {}, variantIndex = 1, variantCount = 1 }) {
   const itemLocator = page.locator(selectors.generated_video_items);
   let deadline = Date.now() + timeoutMs;
   let chargedExtensionUsed = false;
@@ -769,6 +769,7 @@ async function waitForGenerationAndDownload(page, selectors, { beforeKeys, befor
     // metadata, then identify the new result strictly by set difference vs baseline.
     const topItemsNow = scan.items || scan.topItems || [];
     const newItems = findNewCompletedMediaItems(topItemsNow, beforeKeys);
+    if (newItems.length > 0) onSubmissionEvidence({ kind: "new_media_uuid", keys: newItems.map(item => item.key) });
     // Failed tiles already in the pre-Create UUID baseline are not new results.
     // A newly failed UUID is still detected below and stops the batch safely.
     const candidateItems = newItems.filter(item =>
@@ -1427,10 +1428,15 @@ async function uploadSceneReferencesUnsafe(page, selectors, referenceImages, ref
     const addToPromptSelector = selectors.ingredient_add_to_prompt;
     const addToPromptCandidates = page.locator(addToPromptSelector);
     const selectionWaitStartedAt = Date.now();
+    const selectionWaitTimeoutMs = 8000;
     let selectedAssetAriaSelected = null;
     let addToPromptVisibleCount = 0;
     let referenceSelectionReady = false;
-    while (Date.now() - selectionWaitStartedAt < 5000) {
+    let selectionRetried = false;
+    // The selected asset may be below the picker viewport; bring it into view before
+    // looking for the contextual Add to prompt action.
+    await asset.scrollIntoViewIfNeeded({ timeout: 3000 }).catch(() => {});
+    while (Date.now() - selectionWaitStartedAt < selectionWaitTimeoutMs) {
       selectedAssetAriaSelected = await asset.getAttribute("aria-selected").catch(() => null);
       const candidateCount = await addToPromptCandidates.count().catch(() => 0);
       addToPromptVisibleCount = 0;
@@ -1441,6 +1447,15 @@ async function uploadSceneReferencesUnsafe(page, selectors, referenceImages, ref
         referenceSelectionReady = true;
         break;
       }
+      // aria-selected is absent on some Flow picker builds. If no action appears,
+      // re-scroll and retry selecting the card once rather than waiting on a stale
+      // off-screen selection state.
+      if (!selectionRetried && Date.now() - selectionWaitStartedAt >= 1000
+        && selectedAssetAriaSelected !== "true" && addToPromptVisibleCount === 0) {
+        await asset.scrollIntoViewIfNeeded({ timeout: 2000 }).catch(() => {});
+        await asset.click({ timeout: 2500 }).catch(() => {});
+        selectionRetried = true;
+      }
       await page.waitForTimeout(200);
     }
     console.log(JSON.stringify({
@@ -1449,11 +1464,13 @@ async function uploadSceneReferencesUnsafe(page, selectors, referenceImages, ref
       selected_asset_aria_selected: selectedAssetAriaSelected,
       add_to_prompt_visible_count: addToPromptVisibleCount,
       wait_ms: Date.now() - selectionWaitStartedAt,
+      timeout_ms: selectionWaitTimeoutMs,
+      selection_retried: selectionRetried,
       ready: referenceSelectionReady,
       readiness_signal: "exactly_one_visible_add_to_prompt_button",
     }));
     if (!referenceSelectionReady) {
-      throw new Error(`Reference asset selection did not expose exactly one visible Add to prompt button within 5000ms for ${filename}; aria-selected=${JSON.stringify(selectedAssetAriaSelected)}, visible Add to prompt buttons=${addToPromptVisibleCount}. Stopping safely before prompt fill/Create.`);
+      throw new Error(`Reference asset selection did not expose exactly one visible Add to prompt button within ${selectionWaitTimeoutMs}ms for ${filename}; aria-selected=${JSON.stringify(selectedAssetAriaSelected)}, visible Add to prompt buttons=${addToPromptVisibleCount}, selection_retried=${selectionRetried}. Stopping safely before prompt fill/Create.`);
     }
     // Count/visibility is authoritative only after the selection state has settled.
     const addToPrompt = await exactVisibleLocator(page, addToPromptSelector, "Add to prompt button", 1000);
@@ -2236,9 +2253,9 @@ async function prepare(args, browser, rl) {
     createMayHaveBeenClicked = true; // Conservatively preserve state if the click result is ambiguous.
     await finalButton.click({ timeout: 2500 });
     appendEvent(args.log, { event: "create_click_returned", scene_id: scene.scene_id, model: scene.model,
-      resolution: scene.resolution, status: "submitted_unverified",
-      note: "Click returned; generation completion and credit charge are not inferred." });
-    console.log(`Create click returned once. Completion/credit status is unverified. Receipt: ${path.resolve(args.log)}`);
+      resolution: scene.resolution, status: "click_returned_unconfirmed",
+      note: "The UI click returned; this is not proof that Flow accepted a generation." });
+    console.log(`Create click returned once; submission is NOT confirmed until a new media UUID or credit decrease is observed. Receipt: ${path.resolve(args.log)}`);
     if (args.waitForResult) {
       let resultStatus = "unknown";
       let mediaUri = chosen.page.url();
@@ -2246,6 +2263,7 @@ async function prepare(args, browser, rl) {
       let downloadError = null;
       let timeoutError = null;
       let afterBalance = null;
+      let submissionEvidence = false;
       let attemptNumber = 1;
       args._waitAttemptId = "attempt-" + randomUUID();
       try {
@@ -2261,6 +2279,10 @@ async function prepare(args, browser, rl) {
           sceneId: scene.scene_id,
           attemptId: args._waitAttemptId,
           timeoutScreenshot: `${screenshot}.wait-timeout.png`,
+          onSubmissionEvidence: evidence => {
+            submissionEvidence = true;
+            appendEvent(args.log, { event: "submission_confirmed_by_new_media_uuid", scene_id: scene.scene_id, evidence });
+          },
           variantIndex,
           variantCount,
         });
@@ -2292,9 +2314,22 @@ async function prepare(args, browser, rl) {
       const balanceDeadline = Date.now() + 30000;
       do {
         try { afterBalance = await readCreditBalance(chosen.page, selectors); } catch {}
-        if (afterBalance !== null && args._waitInitialBalance !== null && afterBalance !== args._waitInitialBalance) break;
+        if (afterBalance !== null && args._waitInitialBalance !== null && afterBalance < args._waitInitialBalance) {
+          submissionEvidence = true;
+          appendEvent(args.log, { event: "submission_confirmed_by_credit_decrease", scene_id: scene.scene_id,
+            before_balance: args._waitInitialBalance, after_balance: afterBalance });
+          break;
+        }
         await chosen.page.waitForTimeout(1000);
       } while (Date.now() < balanceDeadline);
+      if (!submissionEvidence && afterBalance !== null && args._waitInitialBalance !== null
+        && afterBalance >= args._waitInitialBalance && resultStatus !== "failed") {
+        resultStatus = "create_not_confirmed";
+        timeoutError = "CREATE_NOT_CONFIRMED: No new media UUID and no credit decrease were observed after Create; do not resubmit automatically without manual inspection.";
+        appendEvent(args.log, { event: "create_not_confirmed", scene_id: scene.scene_id,
+          status: "create_not_confirmed_do_not_retry", before_balance: args._waitInitialBalance, after_balance: afterBalance });
+        console.error(`CREATE NOT CONFIRMED: ${timeoutError}`);
+      }
       const ledgerRecord = makeGenerationLedgerRecord({
         scene, projectId: chosen.projectId, ledgerProjectId: args.ledgerProjectId, prompt: scene.prompt, estimatedCost: creditCost,
         beforeBalance: args._waitInitialBalance ?? null, afterBalance,
@@ -2305,6 +2340,7 @@ async function prepare(args, browser, rl) {
         const ledgerPath = appendGenerationLedger(args.ledgerOutput, ledgerRecord);
         appendEvent(args.log, { event: "generation_ledger_recorded", scene_id: scene.scene_id, attempt_id: ledgerRecord.attempt_id, status: ledgerRecord.result.status, ledger_path: ledgerPath, before_balance: ledgerRecord.credits.before_balance, after_balance: ledgerRecord.credits.after_balance, actual_amount: ledgerRecord.credits.actual_amount, charge_status: ledgerRecord.credits.charge_status, media_uri: ledgerRecord.media.uri, downloaded_file: ledgerRecord.media.downloaded_file });
         console.log(`Generation ledger appended: ${ledgerPath}`);
+      if (resultStatus === "create_not_confirmed") process.exitCode = 2;
       } catch (error) {
         appendEvent(args.log, { event: "generation_ledger_write_failed", scene_id: scene.scene_id, error: String(error) });
         console.error(`CRITICAL: generation completed/unknown but ledger write failed: ${error.message}`);
