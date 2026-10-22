@@ -192,6 +192,22 @@ async function collectAllGeneratedItems(page, selector, { targetKey = null, maxS
     const root = document.scrollingElement || document.documentElement;
     return { kind: "document", initialTop: root.scrollTop, clientHeight: root.clientHeight, scrollHeight: root.scrollHeight };
   }, selector);
+  // Always begin at the true top so the first viewport is the newest/top-of-grid snapshot
+  // and the downward sweep cannot omit tiles above an arbitrary prior scroll position.
+  await page.evaluate(selectorText => {
+    const first = document.querySelector(selectorText);
+    let node = first?.parentElement || null;
+    while (node && node !== document.body) {
+      const style = getComputedStyle(node);
+      if (node.scrollHeight > node.clientHeight + 8 && /(auto|scroll|overlay)/.test(style.overflowY)) {
+        node.scrollTop = 0;
+        return;
+      }
+      node = node.parentElement;
+    }
+    (document.scrollingElement || document.documentElement).scrollTop = 0;
+  }, selector);
+  await page.waitForTimeout(120);
   const all = new Map();
   let stableBottomRounds = 0;
   let reachedBottom = false;
