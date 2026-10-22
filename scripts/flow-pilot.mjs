@@ -278,11 +278,46 @@ async function collectAllGeneratedItems(page, selector, { targetKey = null, maxS
         // Re-enter the project grid and Videos tab for each attempt, then re-find
         // the same card by its thumbnail URL token instead of trusting a virtualized index.
         await page.goto(gridUrl, { waitUntil: "domcontentloaded", timeout: 12000 }).catch(() => {});
-        await activateVideosTab(page, selectors).catch(() => null);
+        const tabResult = await activateVideosTab(page, selectors).catch(error => `error:${error.message}`);
+        // Flow may briefly render All media (or an incomplete grid) after route entry.
+        // Wait for six visible Videos thumbnails and a stable two-snapshot token list.
+        let previousTokens = null;
+        let currentTokens = [];
+        for (let gridPoll = 0; gridPoll < 20; gridPoll += 1) {
+          currentTokens = await page.locator(selector).evaluateAll(elements => elements.slice(0, 6).map(element => {
+            const source = element.querySelector("img")?.getAttribute("src") || "";
+            const asb = source.match(/\\/asb\\/([^/?#]+)/i);
+            if (asb) return `asb:${asb[1]}`;
+            try { return new URL(source, location.href).pathname; }
+            catch { return source.split(/[?#]/, 1)[0]; }
+          })).catch(() => []);
+          if (currentTokens.length >= 6 && previousTokens
+            && currentTokens.length === previousTokens.length
+            && currentTokens.every((token, i) => token === previousTokens[i])) break;
+          previousTokens = currentTokens;
+          await page.waitForTimeout(250);
+        }
+        const expectedToken = identity?.thumbnailSrc ? thumbnailIdentityToken(identity.thumbnailSrc) : null;
+        console.log(JSON.stringify({
+          event: "media_tile_reidentification",
+          attempt,
+          tile_index: index,
+          videos_tab_activation: tabResult,
+          expected_thumbnail_token: expectedToken,
+          visible_first_six_thumbnail_tokens: currentTokens.slice(0, 6),
+          visible_tile_count: await page.locator(selector).count().catch(() => 0),
+        }));
         let currentIndex = -1;
-        if (identity?.thumbnailSrc) {
-          currentIndex = await page.locator(selector).evaluateAll((elements, src) =>
-            elements.findIndex(element => element.querySelector("img")?.getAttribute("src") === src), identity.thumbnailSrc).catch(() => -1);
+        if (expectedToken) {
+          currentIndex = await page.locator(selector).evaluateAll((elements, expected) =>
+            elements.findIndex(element => {
+              const source = element.querySelector("img")?.getAttribute("src") || "";
+              const asb = source.match(/\\/asb\\/([^/?#]+)/i);
+              let token;
+              if (asb) token = `asb:${asb[1]}`;
+              else { try { token = new URL(source, location.href).pathname; } catch { token = source.split(/[?#]/, 1)[0]; } }
+              return token === expected;
+            }), expectedToken).catch(() => -1);
         }
         if (currentIndex < 0 && identity?.text) {
           const normalizedTargetText = String(identity.text).replace(/\\s+/g, " ").trim();
@@ -1028,6 +1063,14 @@ function assetUuidFromUrl(value) {
   return match?.[0]?.toLowerCase() || null;
 }
 
+function thumbnailIdentityToken(value) {
+  const source = String(value || "");
+  const asbToken = source.match(/\\/asb\\/([^/?#]+)/i);
+  if (asbToken) return `asb:${asbToken[1]}`;
+  try { return new URL(source, "https://flow.google.com").pathname; }
+  catch { return source.split(/[?#]/, 1)[0]; }
+}
+
 async function assetUuidFromLocator(locator) {
   const values = await locator.evaluate(element => {
     const collected = [];
@@ -1142,21 +1185,33 @@ async function uploadSceneReferencesUnsafe(page, selectors, referenceImages, ref
     }
     const existingUuids = new Set();
     const existingCount = await matchingAssets.count().catch(() => 0);
-    // Flow lazily upgrades old thumbnail URLs from /asb/<token> to
-    // flow-content/image/<uuid>. Poll matching cards before declaring UUIDs unreadable.
-    const thumbnailDeadline = Date.now() + 7000;
+    // A unique same-name UUID in Flow's JSON is already authoritative enough to
+    // skip the slow /asb/<token> -> UUID thumbnail upgrade for a single card.
+    const filenameNeedles = [filename.toLowerCase(), filenameStem.toLowerCase()];
+    const networkNameUuids = Array.from(new Set(networkAssetRecords
+      .filter(record => record.strings.some(value => filenameNeedles.some(needle => needle && value.includes(needle))))
+      .map(record => record.uuid)));
+    const networkUuidShortcut = existingCount === 1 && networkNameUuids.length === 1;
+    if (networkUuidShortcut) existingUuids.add(networkNameUuids[0]);
+    // Only poll lazy thumbnail URLs when Flow JSON did not already identify the
+    // unique existing card. This avoids a needless 6.75s wait per reference.
+    const thumbnailDeadline = networkUuidShortcut ? Date.now() : Date.now() + 7000;
     let thumbnailPolls = 0;
     do {
-      existingUuids.clear();
-      for (let i = 0; i < existingCount; i += 1) {
-        const uuid = await assetUuidFromLocator(matchingAssets.nth(i));
-        if (uuid) existingUuids.add(uuid);
+      if (!networkUuidShortcut) {
+        existingUuids.clear();
+        for (let i = 0; i < existingCount; i += 1) {
+          const uuid = await assetUuidFromLocator(matchingAssets.nth(i));
+          if (uuid) existingUuids.add(uuid);
+        }
       }
       if (existingUuids.size === existingCount || Date.now() >= thumbnailDeadline) break;
       thumbnailPolls += 1;
       await page.waitForTimeout(250);
     } while (Date.now() < thumbnailDeadline);
-    if (thumbnailPolls > 0) {
+    if (networkUuidShortcut) {
+      console.log(`Skipped Flow asset thumbnail UUID wait: ${filename}, UUID resolved from unique matching Flow JSON metadata.`);
+    } else if (thumbnailPolls > 0) {
       console.log(`Waited for Flow asset thumbnail UUIDs: ${filename}, polls=${thumbnailPolls}, elapsed_ms=${Math.min(7000, thumbnailPolls * 250)}`);
     }
 
