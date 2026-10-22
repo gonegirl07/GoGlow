@@ -1149,9 +1149,13 @@ async function uploadSceneReferencesUnsafe(page, selectors, referenceImages, ref
       for (let i = 0; i < existingCount; i += 1) {
         if (await assetUuidFromLocator(matchingAssets.nth(i)) === requestedAssetUuid) { requestedFound = true; break; }
       }
-      if (!requestedFound) throw new Error(`Job explicitly requested Flow asset UUID ${requestedAssetUuid} for ${filename}, but that UUID was not found among matching library entries. Refusing to upload or guess.`);
+      const responseConfirmsPin = networkAssetRecords.some(record => record.uuid === requestedAssetUuid
+        && record.strings.some(value => value.includes(filename.toLowerCase()) || value.includes(filenameStem.toLowerCase())));
+      if (!requestedFound && !responseConfirmsPin && existingCount !== 1) {
+        throw new Error(`Job explicitly requested Flow asset UUID ${requestedAssetUuid} for ${filename}, but it was not found in DOM or matching Flow JSON metadata; matching_asset_count=${existingCount}. Refusing to guess among ambiguous entries.`);
+      }
       reusedExistingUuid = requestedAssetUuid;
-      console.log(JSON.stringify({ event: "asset_library_reused_explicit_uuid", filename, selected_existing_uuid: reusedExistingUuid }));
+      console.log(JSON.stringify({ event: "asset_library_reused_explicit_uuid", filename, selected_existing_uuid: reusedExistingUuid, identity_source: requestedFound ? "dom" : responseConfirmsPin ? "network" : "unique-name-plus-attached-chip-verification" }));
     } else if (existingCount === 1 && existingUuids.size === 1) {
       // The library already contains one unambiguous asset with this exact local filename.
       // Reuse immediately rather than uploading a duplicate and waiting for Flow's 90s UUID timeout.
@@ -1218,8 +1222,14 @@ async function uploadSceneReferencesUnsafe(page, selectors, referenceImages, ref
       for (let i = 0; i < currentCount; i += 1) {
         if (await assetUuidFromLocator(matchingAssets.nth(i)) === reusedExistingUuid) { reuseIndex = i; break; }
       }
-      if (reuseIndex < 0) throw new Error("Reusable asset UUID disappeared from the library; refusing to select an unverified item.");
-      asset = matchingAssets.nth(reuseIndex);
+      if (reuseIndex < 0) {
+        if (currentCount !== 1) throw new Error("Reusable asset UUID disappeared from the library and matching names are ambiguous; refusing to select an unverified item.");
+        // A single same-name card may have a tokenized /asb thumbnail; the UUID pin
+        // is checked against the attached Ingredients chip immediately after selection.
+        asset = matchingAssets.first();
+      } else {
+        asset = matchingAssets.nth(reuseIndex);
+      }
     }
     const requestedAssetUuidForPin = requestedAssetUuid || null;
     const networkCandidates = networkAssetRecords.filter(record =>
