@@ -768,8 +768,10 @@ async function waitForGenerationAndDownload(page, selectors, { beforeKeys, befor
     // rotate while rendering. Wait until Flow exposes a media UUID in DOM/network
     // metadata, then identify the new result strictly by set difference vs baseline.
     const topItemsNow = scan.items || scan.topItems || [];
+    const baselineKeys = new Set(beforeKeys || []);
+    const newUuidItems = topItemsNow.filter(item => item?.mediaUuid && item.key && !baselineKeys.has(item.key));
+    if (newUuidItems.length > 0) onSubmissionEvidence({ kind: "new_media_uuid", keys: newUuidItems.map(item => item.key) });
     const newItems = findNewCompletedMediaItems(topItemsNow, beforeKeys);
-    if (newItems.length > 0) onSubmissionEvidence({ kind: "new_media_uuid", keys: newItems.map(item => item.key) });
     // Failed tiles already in the pre-Create UUID baseline are not new results.
     // A newly failed UUID is still detected below and stops the batch safely.
     const candidateItems = newItems.filter(item =>
