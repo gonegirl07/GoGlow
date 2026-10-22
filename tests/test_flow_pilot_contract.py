@@ -124,7 +124,7 @@ class FlowPilotContractTests(unittest.TestCase):
     def test_wait_mode_requires_execute_and_bounded_timeout(self):
         self.assertIn('if (args.waitForResult && !args.execute && !args.dryRun)', self.script)
         self.assertIn('--wait without --execute is preflight-only; pass --dry-run --wait explicitly.', self.script)
-        self.assertIn('WAIT SELECTOR PREFLIGHT (read-only; no Create click; Videos tab selected when available; first 6 tiles only; Failed tiles retained only as baseline UUIDs)', self.script)
+        self.assertIn('WAIT SELECTOR PREFLIGHT (read-only; no Create click; Videos tab selected when available; visible first row only; Failed tiles retained only as baseline UUIDs)', self.script)
         self.assertIn('--wait-timeout-ms must be an integer from 30000 to 1800000', self.script)
         self.assertIn('--wait requires a non-empty', self.script)
         self.assertIn('["credit_balance", "generated_video_items", "download_media_button", "download_360p_original_button", "account_panel_open", "account_panel_close"]', self.script)
@@ -308,7 +308,7 @@ class FlowPilotContractTests(unittest.TestCase):
         self.assertIn('page.getByRole("tab", { name: /^Videos$/i })', self.script)
         self.assertIn("unkeyedItemsDetected", self.script)
         self.assertIn("duplicateVisibleKeyDetected", self.script)
-        self.assertIn("Top-6 baseline requires six unique, stable media UUIDs/keys", self.script)
+        self.assertIn("First-row baseline requires unique, stable media UUIDs/keys", self.script)
         self.assertIn("thumbnailSrc || sources[0]", self.script)
 
     def test_generation_failure_is_detected_and_logged_without_retry(self):
@@ -563,8 +563,8 @@ class FlowPilotContractTests(unittest.TestCase):
 
     def test_media_baseline_uses_only_first_six_tiles_and_result_checks_first_tile(self):
         self.assertIn("Always begin at the true top", self.script)
-        self.assertIn("topLimit: 6, selectors", self.script)
-        self.assertIn("Pre-Create top-six baseline requires six visible tiles", self.script)
+        self.assertIn("topLimit: 3, selectors", self.script)
+        self.assertIn("Pre-Create first-row baseline requires at least three visible tiles", self.script)
         self.assertIn("Top-6 baseline requires six unique, stable media UUIDs/keys", self.script)
         self.assertIn("topLimit: 1, selectors", self.script)
         self.assertIn("baseline_strategy", self.script)
@@ -612,7 +612,7 @@ class FlowPilotContractTests(unittest.TestCase):
         self.assertIn("if (args.waitForResult || args.dryRun)", self.script)
         self.assertIn('mode: args.waitForResult ? "wait-preflight" : "dry-run-baseline"', self.script)
         self.assertIn("DRY-RUN MEDIA BASELINE (read-only; no Create click", self.script)
-        self.assertIn("first 6 tiles only; no full-grid sweep", self.script)
+        self.assertIn("visible first row only; no full-grid sweep", self.script)
         self.assertIn("Dry-run baseline scan requires a configured generated_video_items selector", self.script)
 
     def test_asset_reuse_checks_all_dom_attributes_and_never_duplicates_unreadable_match(self):
@@ -679,7 +679,7 @@ class FlowPilotContractTests(unittest.TestCase):
         self.assertIn("baseline_media_inventory_summary", self.script)
         self.assertIn("uuid_count: baselineUuids.length", self.script)
         self.assertIn("uuid_sample_first_5: baselineUuids.slice(0, 5)", self.script)
-        self.assertIn("top_6_tiles_only", self.script)
+        self.assertIn("visible_first_row_min_3", self.script)
         self.assertIn("reached_bottom: initialScan.reachedBottom", self.script)
         self.assertIn("Retrying media UUID lookup for tile index", self.script)
 
@@ -702,6 +702,22 @@ class FlowPilotContractTests(unittest.TestCase):
 
 
 
+    def test_videos_tab_activation_uses_first_visible_exact_button_match(self):
+        activate = self.script.split("async function activateVideosTab", 1)[1].split(
+            "function appendGenerationLedger", 1
+        )[0]
+        self.assertIn('page.getByRole("button", { name: /^Videos$/i })', activate)
+        self.assertIn("const buttonCount = await button.count()", activate)
+        self.assertIn("for (let i = 0; i < buttonCount; i += 1)", activate)
+        self.assertIn("if (await candidate.isVisible()", activate)
+        self.assertIn("not_found_no_tab_switch (tabs=", activate)
+
+    def test_baseline_uses_visible_first_row_with_minimum_three_tiles(self):
+        self.assertIn("topLimit: 3, selectors", self.script)
+        self.assertIn("initialScan.items.length < 3", self.script)
+        self.assertIn("currentScan.items.length < 3", self.script)
+        self.assertIn('baseline_strategy: "visible_first_row_min_3"', self.script)
+        self.assertIn("topLimit: 1, selectors", self.script)
     def test_media_tile_reidentification_reselects_videos_waits_for_stable_grid_and_logs_tokens(self):
         resolver = self.script.split("const resolveUuidByOpeningTile = async (index, identity = null) =>", 1)[1].split(
             "let stableBottomRounds = 0;", 1
