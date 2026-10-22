@@ -1005,24 +1005,40 @@ async function inspectAddToPromptContext(button) {
       const images = Array.from(node.querySelectorAll("img, video, [style*='background-image']")).filter(visible);
       if (!images.length) continue;
       const values = [];
+      const imageSources = [];
       for (const el of [node, ...Array.from(node.querySelectorAll("*"))]) {
-        for (const attr of Array.from(el.attributes || [])) values.push(attr.value);
-        if (el.tagName === "IMG") values.push(el.currentSrc, el.src, el.alt, el.title);
+        for (const attr of Array.from(el.attributes || [])) {
+          values.push(attr.value);
+          if (/^(?:src|data-src|data-original|data-media-id|data-asset-id|aria-label|alt|title)$/i.test(attr.name)) {
+            imageSources.push({ tag: el.tagName.toLowerCase(), attr: attr.name, value: String(attr.value).slice(0, 240) });
+          }
+        }
+        if (el.tagName === "IMG") {
+          values.push(el.currentSrc, el.src, el.alt, el.title);
+          imageSources.push({ tag: "img", attr: "currentSrc", value: String(el.currentSrc || "").slice(0, 240) });
+        }
+        const bg = getComputedStyle(el).backgroundImage;
+        if (bg && bg !== "none") { values.push(bg); imageSources.push({ tag: el.tagName.toLowerCase(), attr: "background-image", value: bg.slice(0, 240) }); }
         values.push(el.innerText || el.textContent || "");
       }
       const uuids = Array.from(new Set(values.flatMap(value => {
         const matches = String(value || "").match(/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/ig);
         return matches || [];
       }).map(uuid => uuid.toLowerCase())));
-      const labels = Array.from(new Set(values.filter(value => /mai-face|ref-3|\.png|\.jpe?g/i.test(String(value || ""))).map(value => String(value).slice(0, 180))));
-      selected = { depth, visible_image_count: images.length, uuids, labels,
+      const previewLabels = Array.from(new Set(values.flatMap(value => {
+        const match = String(value || "").match(/Preview of\\s+([^\\r\\n]+)/i);
+        return match ? [match[1].trim().replace(/["'”’]+$/, "")] : [];
+      })));
+      const labels = Array.from(new Set(values.filter(value => /mai-face|ref-3|\\.png|\\.jpe?g/i.test(String(value || ""))).map(value => String(value).slice(0, 180))));
+      selected = { depth, visible_image_count: images.length, uuids, preview_labels: previewLabels, labels,
+        image_sources: imageSources.slice(0, 12),
         context_tag: node.tagName.toLowerCase(), context_role: node.getAttribute("role"),
-        context_text: String(node.innerText || node.textContent || "").replace(/\s+/g, " ").trim().slice(0, 220) };
-      if (uuids.length || labels.length) break;
+        context_text: String(node.innerText || node.textContent || "").replace(/\\s+/g, " ").trim().slice(0, 220) };
+      if (uuids.length || previewLabels.length || labels.length) break;
     }
-    return selected || { depth: null, visible_image_count: 0, uuids: [], labels: [], context_tag: null, context_role: null, context_text: "" };
+    return selected || { depth: null, visible_image_count: 0, uuids: [], preview_labels: [], labels: [], image_sources: [], context_tag: null, context_role: null, context_text: "" };
   }).catch(error => ({
-    error: error.message, depth: null, visible_image_count: 0, uuids: [], labels: []
+    error: error.message, depth: null, visible_image_count: 0, uuids: [], preview_labels: [], labels: [], image_sources: []
   }));
 }
 
@@ -1636,6 +1652,10 @@ async function uploadSceneReferencesUnsafe(page, selectors, referenceImages, ref
     let addToPromptVisibleCount = 0;
     let referenceSelectionReady = false;
     let selectionRetried = false;
+    let previewContext = null;
+    let previewIdentitySignal = "unverified";
+    const expectedPreviewUuid = (requestedAssetUuidForPin || assetUuid || "").toLowerCase();
+    const targetFilename = filename.split(/[\\/]/).pop().toLowerCase();
     const initialAssetBox = await asset.boundingBox().catch(() => null);
     console.log(JSON.stringify({
       event: "ingredients_picker_target_tile",
@@ -1645,28 +1665,42 @@ async function uploadSceneReferencesUnsafe(page, selectors, referenceImages, ref
       target_tile_aria_selected_before_click: await asset.getAttribute("aria-selected").catch(() => null),
       target_tile_text: (await asset.innerText().catch(() => "")).replace(/\\s+/g, " ").trim().slice(0, 160),
     }));
-    // Start the timer before scrolling/clicking so the reported elapsed time includes
-    // slow picker interactions rather than only the final readiness polling loop.
     await asset.scrollIntoViewIfNeeded({ timeout: 1500 }).catch(() => {});
-    await asset.click({ timeout: 1500 }).catch(() => {});
+    await asset.click({ timeout: 2000 }).catch(() => {});
     while (Date.now() - selectionWaitStartedAt < selectionWaitTimeoutMs) {
       selectedAssetAriaSelected = await asset.getAttribute("aria-selected").catch(() => null);
       const candidateCount = await addToPromptCandidates.count().catch(() => 0);
       addToPromptVisibleCount = 0;
+      let visibleButton = null;
       for (let i = 0; i < candidateCount; i += 1) {
-        if (await addToPromptCandidates.nth(i).isVisible().catch(() => false)) addToPromptVisibleCount += 1;
+        if (await addToPromptCandidates.nth(i).isVisible().catch(() => false)) {
+          addToPromptVisibleCount += 1;
+          visibleButton = addToPromptCandidates.nth(i);
+        }
       }
-      if (addToPromptVisibleCount === 1) {
+      previewContext = addToPromptVisibleCount === 1 && visibleButton
+        ? await inspectAddToPromptContext(visibleButton) : null;
+      const previewLabels = (previewContext?.preview_labels || []).map(label => String(label).trim().toLowerCase());
+      const labelMatches = previewLabels.includes(targetFilename);
+      const uuidMatches = Boolean(expectedPreviewUuid && previewContext?.uuids?.includes(expectedPreviewUuid));
+      previewIdentitySignal = uuidMatches ? "uuid" : labelMatches ? "exact_preview_filename" : "unverified";
+      if (addToPromptVisibleCount === 1 && (selectedAssetAriaSelected === "true" || labelMatches) && previewIdentitySignal !== "unverified") {
         referenceSelectionReady = true;
         break;
       }
-      // Some picker builds omit aria-selected entirely. Retry the exact visible tile
-      // once, then require the contextual Add to prompt action before continuing.
-      if (!selectionRetried && Date.now() - selectionWaitStartedAt >= 1000
-        && selectedAssetAriaSelected !== "true" && addToPromptVisibleCount === 0) {
-        await asset.scrollIntoViewIfNeeded({ timeout: 1000 }).catch(() => {});
-        await asset.click({ timeout: 1500 }).catch(() => {});
+      if (!selectionRetried && Date.now() - selectionWaitStartedAt >= 1200
+        && selectedAssetAriaSelected !== "true" && !labelMatches) {
         selectionRetried = true;
+        await asset.scrollIntoViewIfNeeded({ timeout: 1000 }).catch(() => {});
+        await asset.hover({ timeout: 1200 }).catch(() => {});
+        await asset.click({ position: { x: Math.max(8, Math.floor((initialAssetBox?.width || 40) / 2)), y: Math.max(8, Math.floor((initialAssetBox?.height || 40) / 2)) }, timeout: 1800 }).catch(() => {});
+        if (await asset.getAttribute("aria-selected").catch(() => null) !== "true") {
+          await asset.focus().catch(() => {});
+          await asset.press("Enter", { timeout: 1000 }).catch(() => {});
+          if (await asset.getAttribute("aria-selected").catch(() => null) !== "true") {
+            await asset.press("Space", { timeout: 1000 }).catch(() => {});
+          }
+        }
       }
       await page.waitForTimeout(150);
     }
@@ -1675,34 +1709,39 @@ async function uploadSceneReferencesUnsafe(page, selectors, referenceImages, ref
       filename,
       selected_asset_aria_selected: selectedAssetAriaSelected,
       add_to_prompt_visible_count: addToPromptVisibleCount,
+      preview_labels: previewContext?.preview_labels || [],
+      preview_uuids: previewContext?.uuids || [],
+      preview_identity_signal: previewIdentitySignal,
       wait_ms: Date.now() - selectionWaitStartedAt,
       timeout_ms: selectionWaitTimeoutMs,
       selection_retried: selectionRetried,
       ready: referenceSelectionReady,
-      readiness_signal: "exactly_one_visible_add_to_prompt_button",
+      readiness_signal: "unique_visible_add_button_plus_exact_preview_filename_or_uuid",
     }));
     if (!referenceSelectionReady) {
-      throw new Error(`Reference asset selection did not expose exactly one visible Add to prompt button for ${filename}; configured wait budget=${selectionWaitTimeoutMs}ms, actual elapsed=${Date.now() - selectionWaitStartedAt}ms, aria-selected=${JSON.stringify(selectedAssetAriaSelected)}, visible Add to prompt buttons=${addToPromptVisibleCount}, selection_retried=${selectionRetried}. Stopping safely before prompt fill/Create.`);
+      throw new Error(`Reference selection did not verify the target preview for ${filename}; configured wait budget=${selectionWaitTimeoutMs}ms, actual elapsed=${Date.now() - selectionWaitStartedAt}ms, aria-selected=${JSON.stringify(selectedAssetAriaSelected)}, visible Add to prompt buttons=${addToPromptVisibleCount}, preview labels=${JSON.stringify(previewContext?.preview_labels || [])}, preview UUIDs=${JSON.stringify(previewContext?.uuids || [])}, selection_retried=${selectionRetried}. Stopping before Add/prompt fill/Create.`);
     }
-    // The action can be rendered in a preview pane and remain visible while the
-    // selected library tile changes. Require identity evidence from the preview/action
-    // context itself, not merely a single visible button somewhere in the picker.
     const addToPrompt = pickerContainer.locator(addToPromptSelector);
     if (await addToPrompt.count().catch(() => 0) !== 1 || !(await addToPrompt.isVisible().catch(() => false))) {
       throw new Error("Ingredients picker Add to prompt button was not uniquely visible inside the active picker; stopping before chip attach.");
     }
-    const expectedPreviewUuid = (requestedAssetUuidForPin || assetUuid || "").toLowerCase();
-    const previewContext = await inspectAddToPromptContext(addToPrompt);
+    // Re-read identity from the exact action context immediately before click.
+    previewContext = await inspectAddToPromptContext(addToPrompt);
+    const immediatePreviewLabels = (previewContext?.preview_labels || []).map(label => String(label).trim().toLowerCase());
+    const immediateLabelMatches = immediatePreviewLabels.includes(targetFilename);
+    const immediateUuidMatches = Boolean(expectedPreviewUuid && previewContext?.uuids?.includes(expectedPreviewUuid));
     console.log(JSON.stringify({
       event: "ingredients_picker_add_action_identity",
       filename,
       expected_asset_uuid: expectedPreviewUuid || null,
+      target_filename: targetFilename,
       preview_context: previewContext,
-      identity_verified: Boolean(expectedPreviewUuid && previewContext.uuids?.includes(expectedPreviewUuid)),
+      identity_verified: immediateUuidMatches || immediateLabelMatches,
+      identity_signal: immediateUuidMatches ? "uuid" : immediateLabelMatches ? "exact_preview_filename" : "unverified",
       action_clicked: false,
     }));
-    if (!expectedPreviewUuid || !previewContext.uuids?.includes(expectedPreviewUuid)) {
-      throw new Error(`Cannot verify Add to prompt preview identity for ${filename}; expected UUID=${expectedPreviewUuid || "unavailable"}, preview UUIDs=${(previewContext.uuids || []).join(",") || "none"}. Refusing to click Add to prompt.`);
+    if (!immediateUuidMatches && !immediateLabelMatches) {
+      throw new Error(`Cannot verify Add to prompt preview identity for ${filename}; target filename=${targetFilename}, preview labels=${JSON.stringify(previewContext?.preview_labels || [])}, preview UUIDs=${JSON.stringify(previewContext?.uuids || [])}. Refusing to click Add to prompt.`);
     }
     let attachedAfterClick = false;
     let lastClickError = null;
