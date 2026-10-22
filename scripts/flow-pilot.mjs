@@ -1860,7 +1860,70 @@ async function prepare(args, browser, rl) {
       if (args.waitForResult && initialBalance === null) throw new Error("Could not read an integer credit balance.");
       if (typeof selectors.generated_video_items !== "string" || !selectors.generated_video_items.trim()) throw new Error("Dry-run baseline scan requires a configured generated_video_items selector.");
       const videosTabState = await activateVideosTab(chosen.page, selectors);
+      const waitForFirstRowThumbnailTokens = async (reason, maxWaitMs = 10000) => {
+        const startedAt = Date.now();
+        let snapshot = [];
+        while (Date.now() - startedAt < maxWaitMs) {
+          snapshot = await chosen.page.locator(selectors.generated_video_items).evaluateAll(elements => elements.slice(0, 3).map(element => {
+            const source = element.querySelector("img")?.getAttribute("src") || "";
+            if (!source) return null;
+            const asb = source.match(/\\/asb\\/([^/?#]+)/i);
+            if (asb) return `asb:${asb[1]}`;
+            try {
+              const url = new URL(source, location.href);
+              return /^https?:$/.test(url.protocol) ? url.pathname : null;
+            } catch { return null; }
+          })).catch(() => []);
+          if (snapshot.length >= 3 && snapshot.every(Boolean)) {
+            console.log(JSON.stringify({
+              event: "baseline_thumbnail_tokens_ready",
+              reason,
+              tile_count: snapshot.length,
+              thumbnail_tokens: snapshot,
+              wait_ms: Date.now() - startedAt,
+            }));
+            return snapshot;
+          }
+          await chosen.page.waitForTimeout(250);
+        }
+        console.warn(JSON.stringify({
+          event: "baseline_thumbnail_token_missing_at_capture",
+          reason,
+          tile_count: snapshot.length,
+          thumbnail_tokens: snapshot,
+          missing_indexes: snapshot.map((token, index) => token ? null : index).filter(index => index !== null),
+          wait_ms: Date.now() - startedAt,
+          max_wait_ms: maxWaitMs,
+        }));
+        return snapshot;
+      };
+      await waitForFirstRowThumbnailTokens("before_initial_capture");
       let initialScan = await collectAllGeneratedItems(chosen.page, selectors.generated_video_items, { uuidCache: baselineUuidCache, topLimit: 3, selectors });
+      // If a thumbnail was still missing at capture time, wait and re-capture the row
+      // rather than retrying tile re-identification forever with an expected null token.
+      for (let thumbnailRetry = 1; thumbnailRetry <= 2
+        && initialScan.items.length >= 3
+        && initialScan.items.some(item => !item.thumbnailSrc || !thumbnailIdentityToken(item.thumbnailSrc)); thumbnailRetry += 1) {
+        const missingIndexes = initialScan.items
+          .map((item, index) => !item.thumbnailSrc || !thumbnailIdentityToken(item.thumbnailSrc) ? index : null)
+          .filter(index => index !== null);
+        console.warn(JSON.stringify({
+          event: "baseline_thumbnail_token_missing_at_capture",
+          retry: thumbnailRetry,
+          max_retries: 2,
+          tile_count: initialScan.items.length,
+          uuid_count: initialScan.items.filter(item => item.mediaUuid).length,
+          missing_tile_indexes: missingIndexes,
+          missing_thumbnail_token_indexes: missingIndexes,
+          wait_ms: 500,
+        }));
+        await chosen.page.waitForTimeout(500);
+        await waitForFirstRowThumbnailTokens(`recapture_retry_${thumbnailRetry}`);
+        baselineUuidCache.clear();
+        initialScan = await collectAllGeneratedItems(chosen.page, selectors.generated_video_items, {
+          uuidCache: baselineUuidCache, topLimit: 3, selectors,
+        });
+      }
       // Flow may render the three tile shells before its media UUID metadata arrives.
       // Retry only the all-unresolved case; never accept partial/ambiguous identities.
       for (let baselineRetry = 1; baselineRetry <= 2
