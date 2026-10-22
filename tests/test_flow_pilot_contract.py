@@ -580,5 +580,32 @@ class FlowPilotContractTests(unittest.TestCase):
         self.assertIn("result remains unknown and will not be downloaded", wait_fn)
         self.assertIn("createClickedAt: args._waitCreateClickedAt", self.script)
 
+
+    def test_flow_video_uuid_can_be_resolved_from_edit_route_when_tile_dom_has_no_uuid(self):
+        self.assertIn("const resolveUuidByOpeningTile = async index =>", self.script)
+        self.assertIn('page.waitForFunction(() => /\\\\/edit\\\\/', self.script)
+        self.assertIn('const match = page.url().match(/\\\\/edit\\\\/', self.script)
+        self.assertIn('await page.goBack({ waitUntil: "domcontentloaded", timeout: 10000 })', self.script)
+        self.assertIn("uuidCache.set(item.hint, resolvedUuid)", self.script)
+        self.assertIn("Could not resolve media UUID by opening tile index", self.script)
+
+    def test_dry_run_runs_full_read_only_media_baseline(self):
+        self.assertIn("if (args.waitForResult || args.dryRun)", self.script)
+        self.assertIn('mode: args.waitForResult ? "wait-preflight" : "dry-run-baseline"', self.script)
+        self.assertIn("DRY-RUN MEDIA BASELINE (read-only; no Create click", self.script)
+        self.assertIn("Dry-run baseline scan requires a configured generated_video_items selector", self.script)
+
+    def test_asset_reuse_checks_all_dom_attributes_and_never_duplicates_unreadable_match(self):
+        self.assertIn("async function assetUuidFromLocator(locator)", self.script)
+        self.assertIn('"data-asset-id"', self.script)
+        self.assertIn('"data-media-id"', self.script)
+        self.assertIn("Refusing to upload a duplicate; inspect the asset entry DOM", self.script)
+        self.assertIn("const assetUuid = await assetUuidFromLocator(asset)", self.script)
+
+    def test_clear_prompt_removes_ingredient_chips_and_verifies_each_removal(self):
+        self.assertIn('button[aria-label*="remove" i]', self.script)
+        self.assertIn("chip count did not decrease", self.script)
+        self.assertIn("Remove chips manually before continuing", self.script)
+
 if __name__ == "__main__":
     unittest.main()
