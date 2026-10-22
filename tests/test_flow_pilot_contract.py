@@ -634,7 +634,7 @@ class FlowPilotContractTests(unittest.TestCase):
         self.assertIn('Date.now() - selectionWaitStartedAt < selectionWaitTimeoutMs', upload_fn)
         self.assertIn('await asset.scrollIntoViewIfNeeded({ timeout: 3000 })', upload_fn)
         self.assertIn('selection_retried: selectionRetried', upload_fn)
-        self.assertIn('within ${selectionWaitTimeoutMs}ms', upload_fn)
+        self.assertIn('configured wait budget=${selectionWaitTimeoutMs}ms, actual elapsed=${Date.now() - selectionWaitStartedAt}ms', upload_fn)
         self.assertIn('if (addToPromptVisibleCount === 1)', upload_fn)
         self.assertIn('selected_asset_aria_selected: selectedAssetAriaSelected', upload_fn)
         self.assertIn('readiness_signal: "exactly_one_visible_add_to_prompt_button"', upload_fn)
@@ -818,6 +818,7 @@ assert.ok(reads >= 6, 'must poll after initial null thumbnail before accepting t
         self.assertIn('event: "submission_confirmed_by_new_media_uuid"', self.script)
         self.assertIn('event: "submission_confirmed_by_credit_decrease"', self.script)
         self.assertIn('event: "create_not_confirmed"', self.script)
+        self.assertIn('if (!submissionEvidence && resultStatus !== "failed")', self.script)
         self.assertIn('CREATE_NOT_CONFIRMED:', self.script)
         self.assertIn('resultStatus = "create_not_confirmed"', self.script)
     def test_post_create_uuid_set_difference_ignores_rotating_thumbnail_and_waits_for_completion(self):
