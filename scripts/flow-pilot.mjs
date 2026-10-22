@@ -1008,7 +1008,7 @@ async function resolveVisibleIngredientsPicker(page, selectors, filename, filena
   for (let i = 0; i < count; i += 1) {
     const container = containers.nth(i);
     if (!(await container.isVisible().catch(() => false))) continue;
-    const tiles = container.locator(selectors.ingredient_library_item);
+    const tiles = container.locator(`${selectors.ingredient_library_item}:visible`);
     const tileCount = await tiles.count().catch(() => 0);
     if (!tileCount) continue;
     let exact = tiles.filter({ hasText: filename });
@@ -1039,8 +1039,8 @@ async function resolveVisibleIngredientsPicker(page, selectors, filename, filena
     candidate_containers: candidates.length,
     candidates: candidates.map(c => ({ tile_count: c.tileCount, visible_matching_tiles: c.visibleMatches, tiles: c.diagnostics })),
   }));
-  if (!chosen || chosen.visibleMatches < 1) {
-    throw new Error(`Could not find a visible ${filename} tile inside the open Ingredients picker/dialog; refusing to click a same-name tile elsewhere on the page.`);
+  if (!chosen) {
+    throw new Error(`Could not find a visible Ingredients picker/dialog containing library tiles for ${filename}; refusing to click a same-name tile elsewhere on the page.`);
   }
   return { container: chosen.container, matching: chosen.matching, visibleMatches: chosen.visibleMatches };
 }
@@ -1350,13 +1350,52 @@ async function uploadSceneReferencesUnsafe(page, selectors, referenceImages, ref
     const assetStartedAt = Date.now();
     console.log(`Reference upload started: ${filename}`);
     await openIngredientsPicker(page, selectors);
-    const picker = page.locator(selectors.ingredient_library_item);
     const filenameStem = path.parse(filename).name;
+    const pickerResolution = await resolveVisibleIngredientsPicker(page, selectors, filename, filenameStem);
+    const picker = pickerResolution.container.locator(`${selectors.ingredient_library_item}:visible`);
+    const pickerContainer = pickerResolution.container;
     let matchingAssets = picker.filter({ hasText: filename });
     // Some Flow library cards display the filename without its extension. Fall back
-    // to the stem only when the exact filename has no match; UUID uniqueness still gates reuse.
+    // to the stem only when the exact filename has no visible match.
     if (await matchingAssets.count().catch(() => 0) === 0 && filenameStem !== filename) {
       matchingAssets = picker.filter({ hasText: filenameStem });
+    }
+    // If the picker list does not expose the target yet, use a visible search field
+    // inside this picker only; never search or click a same-name tile in the main grid.
+    if (await matchingAssets.count().catch(() => 0) === 0) {
+      const searchCandidates = pickerContainer.locator('input[type="search"], input[placeholder], input[aria-label]');
+      const searchCount = await searchCandidates.count().catch(() => 0);
+      let searchField = null;
+      for (let i = 0; i < searchCount; i += 1) {
+        const candidate = searchCandidates.nth(i);
+        if (!(await candidate.isVisible().catch(() => false))) continue;
+        const meta = [
+          await candidate.getAttribute("placeholder").catch(() => ""),
+          await candidate.getAttribute("aria-label").catch(() => ""),
+          await candidate.getAttribute("type").catch(() => ""),
+        ].join(" ").toLowerCase();
+        if (/search|find|filter|library|media/.test(meta) || (searchCount === 1 && /^(search)?$/.test(meta.trim()))) {
+          searchField = candidate;
+          break;
+        }
+      }
+      if (searchField) {
+        await searchField.fill(filename, { timeout: 2000 }).catch(() => {});
+        const searchDeadline = Date.now() + 2500;
+        while (Date.now() < searchDeadline) {
+          matchingAssets = picker.filter({ hasText: filename });
+          if (await matchingAssets.count().catch(() => 0) === 0 && filenameStem !== filename) {
+            matchingAssets = picker.filter({ hasText: filenameStem });
+          }
+          if (await matchingAssets.count().catch(() => 0) > 0) break;
+          await page.waitForTimeout(150);
+        }
+        console.log(JSON.stringify({ event: "ingredients_picker_search_fallback", filename,
+          search_field_used: true, visible_matching_tiles: await matchingAssets.count().catch(() => 0) }));
+      } else {
+        console.log(JSON.stringify({ event: "ingredients_picker_search_fallback", filename,
+          search_field_used: false, visible_matching_tiles: 0 }));
+      }
     }
     const existingUuids = new Set();
     const existingCount = await matchingAssets.count().catch(() => 0);
