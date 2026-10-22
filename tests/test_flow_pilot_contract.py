@@ -556,5 +556,25 @@ class FlowPilotContractTests(unittest.TestCase):
         self.assertIn('record.result?.failure?.category === "provider_policy_prominent_people"', self.policy_stats_script)
         self.assertIn("refusal_rate:", self.policy_stats_script)
 
+
+    def test_media_grid_inventory_starts_at_top_and_must_reach_bottom_before_create(self):
+        self.assertIn("Always begin at the true top", self.script)
+        self.assertIn("let reachedBottom = false;", self.script)
+        self.assertIn("if (!initialScan.reachedBottom)", self.script)
+        self.assertIn("if (!currentScan.reachedBottom)", self.script)
+        self.assertIn("baseline_media_key_count: initialItems.length", self.script)
+        self.assertIn("Pre-Create baseline UUID count:", self.script)
+
+    def test_result_must_be_new_top_tile_and_newer_than_create_when_timestamp_exists(self):
+        wait_fn = self.script.split("async function waitForGenerationAndDownload", 1)[1].split(
+            "function createConfirmationReader()", 1
+        )[0]
+        self.assertIn("const topItem = scan.topItems?.[0] || null;", wait_fn)
+        self.assertIn("!beforeKeys.includes(topItem.key)", wait_fn)
+        self.assertIn("const createdAt = element.querySelector(\"time[datetime]\")", self.script)
+        self.assertIn("createdMs <= createMs", wait_fn)
+        self.assertIn("result remains unknown and will not be downloaded", wait_fn)
+        self.assertIn("createClickedAt: args._waitCreateClickedAt", self.script)
+
 if __name__ == "__main__":
     unittest.main()
