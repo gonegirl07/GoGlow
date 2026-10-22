@@ -1751,7 +1751,7 @@ async function prepare(args, browser, rl) {
       // Keep every stable media UUID in the baseline, including Failed tiles, so a
       // later disappearing/refunded tile cannot make another existing card look new.
       // Failed tiles are diagnostics only and never count as usable video candidates.
-      if (!initialScan.topLimited || initialScan.items.length !== 6) throw new Error(`Pre-Create top-tile baseline requires six visible tiles; observed ${initialScan.items.length}. Refusing to Create with an incomplete baseline.`);
+      if (!initialScan.topLimited || initialScan.items.length !== 6) throw new Error(`Pre-Create top-six baseline requires six visible tiles; observed ${initialScan.items.length}. Refusing to Create with an incomplete baseline.`);
       const initialItems = initialScan.items.map(item => item.key);
       const baselineUuids = initialScan.items.map(item => item.mediaUuid).filter(Boolean);
       const failedBaselineItems = initialScan.items.filter(item =>
