@@ -136,7 +136,7 @@ class FlowPilotContractTests(unittest.TestCase):
         self.assertIn('["credit_balance", "generated_video_items", "download_media_button", "download_360p_original_button", "account_panel_open", "account_panel_close"]', self.script)
 
     def test_wait_tracks_new_tile_by_stable_identity_and_never_retries(self):
-        self.assertIn('collectAllGeneratedItems(page, selectors.generated_video_items, { uuidCache, topLimit: 1, selectors })', self.script)
+        self.assertIn('collectAllGeneratedItems(page, selectors.generated_video_items, {\n      uuidCache, topLimit: 3, selectors, skipUuidResolution: true,', self.script)
         self.assertIn('candidateItems.length === 1', self.script)
         self.assertIn('refusing to guess which clip to download', self.script)
         self.assertIn('status: "unknown_do_not_retry"', self.script)
@@ -184,7 +184,7 @@ class FlowPilotContractTests(unittest.TestCase):
 
     def test_virtualized_flow_grid_uses_new_stable_keys_not_tile_count(self):
         self.assertIn("const topItem = scan.topItems?.[0] || null;", self.script)
-        self.assertIn("const newItems = topItem?.mediaUuid && topItem.key && !beforeKeys.includes(topItem.key) ? [topItem] : [];", self.script)
+        self.assertIn("const newItems = findNewCompletedMediaItems(topItemsNow, beforeKeys);", self.script)
         self.assertIn("Normalize media URLs to their stable UUID", self.script)
         self.assertIn("thumbnailSrc || sources[0]", self.script)
         self.assertIn("const mediaUuid = sources.map(uuidFrom).find(Boolean)", self.script)
@@ -232,7 +232,7 @@ class FlowPilotContractTests(unittest.TestCase):
         self.assertIn('"duration"', self.script)
         self.assertLess(self.script.index('exactVisibleLocator(chosen.page, selectors.duration'), self.script.index("await prompt.fill(scene.prompt"))
         self.assertIn('role !== "radio"', self.script)
-        self.assertIn('after !== "true"', self.script)
+        self.assertIn('checked !== "true"', self.script)
 
     def test_model_selection_skips_menu_when_already_selected_and_waits_longer_when_needed(self):
         choose_model = self.script.split("async function chooseModel", 1)[1].split("function assetUuidFromUrl", 1)[0]
@@ -320,7 +320,8 @@ class FlowPilotContractTests(unittest.TestCase):
     def test_generation_failure_is_detected_and_logged_without_retry(self):
         self.assertIn("function isGenerationFailureText(value)", self.script)
         self.assertIn("FLOW_GENERATION_FAILED:", self.script)
-        self.assertIn('event: resultStatus === "failed" ? "generation_failed_detected" : "generation_wait_unverified"', self.script)
+        self.assertIn('event: resultStatus === "failed" ? "generation_failed_detected"', self.script)
+        self.assertIn('resultStatus === "submitted_unidentified" ? "submitted_unidentified"', self.script)
         self.assertIn('resultStatus === "failed" && beforeBalance !== null && afterBalance !== null && beforeBalance === afterBalance ? "not_charged" : "unknown"', self.script)
         self.assertIn('else if (resultStatus === "failed")', self.script)
         self.assertIn("Flow generation failure was detected and recorded in the ledger", self.script)
@@ -425,7 +426,7 @@ class FlowPilotContractTests(unittest.TestCase):
         )[0]
         self.assertIn("beforeBalance", wait_fn)
         self.assertIn("currentBalance < beforeBalance", wait_fn)
-        self.assertIn("deadline = Date.now() + 300000", wait_fn)
+        self.assertIn("deadline = Date.now() + 30000", wait_fn)
         self.assertIn("without resubmitting", wait_fn)
         self.assertIn('page.goBack({ waitUntil: "domcontentloaded", timeout: 10000 })', wait_fn)
         self.assertIn("newItem = null", wait_fn)
@@ -572,7 +573,7 @@ class FlowPilotContractTests(unittest.TestCase):
         self.assertIn("topLimit: 3, selectors", self.script)
         self.assertIn("Pre-Create first-row baseline requires at least three visible tiles", self.script)
         self.assertIn("First-row baseline requires unique, stable media UUIDs/keys", self.script)
-        self.assertIn("topLimit: 1, selectors", self.script)
+        self.assertIn("topLimit: 3, selectors, skipUuidResolution: true", self.script)
         self.assertIn("baseline_strategy", self.script)
         self.assertIn("baseline_media_key_count: initialItems.length", self.script)
         self.assertIn("Pre-Create baseline UUID count:", self.script)
@@ -582,11 +583,12 @@ class FlowPilotContractTests(unittest.TestCase):
         wait_fn = self.script.split("async function waitForGenerationAndDownload", 1)[1].split(
             "function createConfirmationReader()", 1
         )[0]
-        self.assertIn("const topItem = scan.topItems?.[0] || null;", wait_fn)
+        self.assertIn("const topItemsNow = scan.items || scan.topItems || [];", wait_fn)
+        self.assertIn("findNewCompletedMediaItems(topItemsNow, beforeKeys)", wait_fn)
         self.assertIn("mediaUuid: mediaUuid ? mediaUuid.toLowerCase() : null", self.script)
         self.assertIn("!item.key || !item.mediaUuid", self.script)
-        self.assertIn("topItem?.mediaUuid && topItem.key", wait_fn)
-        self.assertIn("!beforeKeys.includes(topItem.key)", wait_fn)
+        self.assertIn("item.mediaUuid && item.key", wait_fn)
+        self.assertIn("!beforeKeys.includes(item.key)", self.script)
         self.assertIn("const createdAt = element.querySelector(\"time[datetime]\")", self.script)
         self.assertIn("createdMs <= createMs", wait_fn)
         self.assertIn("result remains unknown and will not be downloaded", wait_fn)
