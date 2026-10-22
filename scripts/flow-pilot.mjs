@@ -279,18 +279,25 @@ async function collectAllGeneratedItems(page, selector, { targetKey = null, maxS
         await tile.scrollIntoViewIfNeeded({ timeout: 3500 }).catch(() => {});
         await page.waitForTimeout(350 + attempt * 200);
         await tile.click({ timeout: 4000, force: true });
-        await page.waitForFunction(() => /\/edit\/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}(?:[/?#]|$)/i.test(location.pathname), null, { timeout: 8000 });
-        const match = page.url().match(/\/edit\/([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})(?:[/?#]|$)/i);
+        // Read the browser's current URL directly. Flow can serve a cached editor
+        // route without emitting a fresh network response, so response listeners
+        // and page-context waitForFunction are not authoritative for navigation.
+        const editRoute = /\\/edit\\/([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})(?:[/?#]|$)/i;
+        await page.waitForURL(url => editRoute.test(new URL(url).pathname), { timeout: 8000 }).catch(() => {});
+        const currentUrl = page.url();
+        const match = currentUrl.match(editRoute);
         const uuid = match?.[1]?.toLowerCase() || null;
-        await page.goBack({ waitUntil: "domcontentloaded", timeout: 10000 });
-        await page.waitForFunction(pathname => location.pathname === pathname, new URL(gridUrl).pathname, { timeout: 10000 }).catch(() => {});
+        if (currentUrl !== gridUrl || uuid) {
+          await page.goBack({ waitUntil: "domcontentloaded", timeout: 10000 }).catch(() => {});
+          await page.waitForURL(url => new URL(url).pathname === new URL(gridUrl).pathname, { timeout: 10000 }).catch(() => {});
+        }
         await restoreScrollTop(scrollTop);
-        await page.waitForTimeout(150);
+        await page.waitForTimeout(250);
         if (uuid) {
           if (attempt > 1) console.log(`Resolved tile index ${index} UUID after retry ${attempt}: ${uuid}`);
           return uuid;
         }
-        lastError = new Error("edit route contained no UUID");
+        lastError = new Error(`clicked tile did not expose an /edit/<uuid> URL (current URL: ${currentUrl})`);
       } catch (error) {
         lastError = error;
         if (/\/edit\//i.test(page.url())) {
