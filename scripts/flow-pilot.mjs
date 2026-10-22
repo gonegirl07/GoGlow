@@ -234,8 +234,8 @@ async function collectAllGeneratedItems(page, selector, { targetKey = null, maxS
     const scrollTop = await readScrollTop();
     try {
       await page.locator(selector).nth(index).click({ timeout: 3000 });
-      await page.waitForFunction(() => /\\/edit\\/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}(?:[/?#]|$)/i.test(location.pathname), null, { timeout: 4000 });
-      const match = page.url().match(/\\/edit\\/([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})(?:[/?#]|$)/i);
+      await page.waitForFunction(() => /\/edit\/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}(?:[/?#]|$)/i.test(location.pathname), null, { timeout: 4000 });
+      const match = page.url().match(/\/edit\/([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})(?:[/?#]|$)/i);
       const uuid = match?.[1]?.toLowerCase() || null;
       await page.goBack({ waitUntil: "domcontentloaded", timeout: 10000 });
       await page.waitForFunction(pathname => location.pathname === pathname, new URL(gridUrl).pathname, { timeout: 8000 }).catch(() => {});
@@ -243,7 +243,7 @@ async function collectAllGeneratedItems(page, selector, { targetKey = null, maxS
       await page.waitForTimeout(100);
       return uuid;
     } catch (error) {
-      if (/\\/edit\\//i.test(page.url())) {
+      if (/\/edit\//i.test(page.url())) {
         await page.goBack({ waitUntil: "domcontentloaded", timeout: 10000 }).catch(() => {});
         await restoreScrollTop(scrollTop).catch(() => {});
       }
