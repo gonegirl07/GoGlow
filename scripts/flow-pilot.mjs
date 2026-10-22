@@ -1095,7 +1095,7 @@ async function uploadSceneReferencesUnsafe(page, selectors, referenceImages) {
       matching_asset_count: existingCount,
     }));
     let reusedExistingUuid = null;
-    if (existingUuids.size === 1) {
+    if (existingCount === 1 && existingUuids.size === 1) {
       // The library already contains one unambiguous asset with this exact local filename.
       // Reuse immediately rather than uploading a duplicate and waiting for Flow's 90s UUID timeout.
       reusedExistingUuid = Array.from(existingUuids)[0];
@@ -1105,7 +1105,7 @@ async function uploadSceneReferencesUnsafe(page, selectors, referenceImages) {
         selected_existing_uuid: reusedExistingUuid,
         note: "Existing unique library asset found; skipping upload and UUID timeout wait.",
       }));
-    } else if (existingUuids.size > 1) {
+    } else if (existingUuids.size > 1 || existingCount > 1) {
       throw new Error(`Multiple existing library assets match ${filename}; refusing to guess which reference is correct.`);
     } else {
       if (existingCount > 0) throw new Error(`Found ${existingCount} existing Flow library asset(s) matching ${filename}, but could not read a stable UUID from their DOM attributes/URLs. Refusing to upload a duplicate; inspect the asset entry DOM and selector configuration.`);
