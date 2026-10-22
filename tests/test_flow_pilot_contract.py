@@ -809,6 +809,39 @@ assert.ok(reads >= 6, 'must poll after initial null thumbnail before accepting t
         self.assertIn('status: "not_submitted"', self.script)
         self.assertIn('console.error("No generation was submitted.', self.script)
         self.assertIn('if (!createMayHaveBeenClicked)', self.script)
+    def test_post_create_uuid_set_difference_ignores_rotating_thumbnail_and_waits_for_completion(self):
+        helper = "function findNewCompletedMediaItems" + self.script.split(
+            "function findNewCompletedMediaItems", 1
+        )[1].split("\\n\\nasync function waitForGenerationAndDownload", 1)[0]
+        node_test = helper + r"""
+const assert = await import('node:assert/strict');
+const baseline = ['media:old-a', 'media:old-b', 'media:old-c'];
+const rotatingNewTile = {
+  key: 'media:new-uuid', mediaUuid: 'new-uuid', thumbnailSrc: 'asb:rotated-token',
+  state: 'Generating', text: 'Generating', progress: true,
+};
+assert.deepEqual(findNewCompletedMediaItems([rotatingNewTile], baseline), []);
+const completed = { ...rotatingNewTile, state: 'Complete', text: 'Mai seated breathing', progress: false };
+assert.deepEqual(findNewCompletedMediaItems([completed], baseline), [completed]);
+assert.deepEqual(findNewCompletedMediaItems([
+  { key: 'media:old-a', mediaUuid: 'old-a', state: 'Complete', progress: false },
+  completed,
+], baseline), [completed]);
+"""
+        result = subprocess.run(["node", "--input-type=module", "-e", node_test],
+                                capture_output=True, text=True, check=False, timeout=5)
+        self.assertEqual(result.returncode, 0, msg=result.stdout + result.stderr)
+        self.assertIn("skipUuidResolution: true", self.script)
+        self.assertIn("topLimit: 3", self.script)
+        self.assertIn("FLOW_SUBMITTED_UNIDENTIFIED:", self.script)
+        self.assertIn('event: "submitted_unidentified"', self.script)
+        self.assertIn('status: "submitted_unidentified_do_not_retry"', self.script)
+
+    def test_resolution_verification_polls_aria_checked_before_failing(self):
+        self.assertIn("const deadline = Date.now() + 3000;", self.script)
+        self.assertIn("while (Date.now() < deadline)", self.script)
+        self.assertIn("after 3000ms polling", self.script)
+
     def test_media_tile_reidentification_reselects_videos_waits_for_stable_grid_and_logs_tokens(self):
         resolver = self.script.split("const resolveUuidByOpeningTile = async (index, identity = null, rowIdentities = [], expectedTileCount = null) =>", 1)[1].split(
             "let stableBottomRounds = 0;", 1
