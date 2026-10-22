@@ -272,30 +272,40 @@ async function collectAllGeneratedItems(page, selector, { targetKey = null, maxS
   const resolveUuidByOpeningTile = async index => {
     const gridUrl = page.url();
     const scrollTop = await readScrollTop();
-    try {
-      const tile = page.locator(selector).nth(index);
-      await tile.scrollIntoViewIfNeeded({ timeout: 2500 }).catch(() => {});
-      // Grid tiles animate/virtualize during scrolling; wait briefly, then force the
-      // indexed tile click to bypass Playwright's transient "element is not stable" check.
-      // The destination UUID is still verified from the edit route.
-      await page.waitForTimeout(500);
-      await tile.click({ timeout: 3000, force: true });
-      await page.waitForFunction(() => /\/edit\/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}(?:[/?#]|$)/i.test(location.pathname), null, { timeout: 5000 });
-      const match = page.url().match(/\/edit\/([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})(?:[/?#]|$)/i);
-      const uuid = match?.[1]?.toLowerCase() || null;
-      await page.goBack({ waitUntil: "domcontentloaded", timeout: 10000 });
-      await page.waitForFunction(pathname => location.pathname === pathname, new URL(gridUrl).pathname, { timeout: 8000 }).catch(() => {});
-      await restoreScrollTop(scrollTop);
-      await page.waitForTimeout(100);
-      return uuid;
-    } catch (error) {
-      if (/\/edit\//i.test(page.url())) {
-        await page.goBack({ waitUntil: "domcontentloaded", timeout: 10000 }).catch(() => {});
-        await restoreScrollTop(scrollTop).catch(() => {});
+    let lastError = null;
+    for (let attempt = 1; attempt <= 3; attempt += 1) {
+      try {
+        const tile = page.locator(selector).nth(index);
+        await tile.scrollIntoViewIfNeeded({ timeout: 3500 }).catch(() => {});
+        await page.waitForTimeout(350 + attempt * 200);
+        await tile.click({ timeout: 4000, force: true });
+        await page.waitForFunction(() => /\/edit\/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}(?:[/?#]|$)/i.test(location.pathname), null, { timeout: 8000 });
+        const match = page.url().match(/\/edit\/([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})(?:[/?#]|$)/i);
+        const uuid = match?.[1]?.toLowerCase() || null;
+        await page.goBack({ waitUntil: "domcontentloaded", timeout: 10000 });
+        await page.waitForFunction(pathname => location.pathname === pathname, new URL(gridUrl).pathname, { timeout: 10000 }).catch(() => {});
+        await restoreScrollTop(scrollTop);
+        await page.waitForTimeout(150);
+        if (uuid) {
+          if (attempt > 1) console.log(\`Resolved tile index \${index} UUID after retry \${attempt}: \${uuid}\`);
+          return uuid;
+        }
+        lastError = new Error("edit route contained no UUID");
+      } catch (error) {
+        lastError = error;
+        if (/\/edit\//i.test(page.url())) {
+          await page.goBack({ waitUntil: "domcontentloaded", timeout: 10000 }).catch(() => {});
+          await page.waitForFunction(pathname => location.pathname === pathname, new URL(gridUrl).pathname, { timeout: 10000 }).catch(() => {});
+          await restoreScrollTop(scrollTop).catch(() => {});
+        }
+        if (attempt < 3) {
+          console.warn(\`Retrying media UUID lookup for tile index \${index} (attempt \${attempt}/3): \${error.message}\`);
+          await page.waitForTimeout(400 * attempt);
+        }
       }
-      console.warn(`Could not resolve media UUID by opening tile index ${index}: ${error.message}`);
-      return null;
     }
+    console.warn(\`Could not resolve media UUID by opening tile index \${index} after 3 attempts: \${lastError?.message || "unknown error"}\`);
+    return null;
   };
   let stableBottomRounds = 0;
   let reachedBottom = false;
@@ -1339,6 +1349,7 @@ async function loadInputs(args) {
     return resolved;
   });
   if (new Set(referenceImages).size !== referenceImages.length) throw new Error("reference_images must contain distinct file paths.");
+  scene.reference_images = referenceImages;
   const referenceAssetUuids = new Map(inlineAssetUuids);
   const declaredAssetUuids = scene.reference_asset_uuids;
   const declaredEntries = declaredAssetUuids === undefined ? []
@@ -1497,7 +1508,21 @@ async function closeAccountMenuIfOpen(page, selectors, expectedEmail) {
 
 async function verifyAccount(page, selectors, expectedEmail) {
   const selector = selectors.account_button || '[role="button"][aria-label^="Google Account:"]';
-  const account = await exactVisibleLocator(page, selector, "Google account button");
+  let account = null;
+  let lastVisibilityError = null;
+  for (let attempt = 1; attempt <= 3; attempt += 1) {
+    try {
+      account = await exactVisibleLocator(page, selector, "Google account button");
+      break;
+    } catch (error) {
+      lastVisibilityError = error;
+      if (attempt < 3) {
+        await page.keyboard.press("Escape").catch(() => {});
+        await page.waitForTimeout(400 * attempt);
+      }
+    }
+  }
+  if (!account) throw new Error(`Google account button remained unavailable after 3 read-only visibility checks: ${lastVisibilityError?.message || "not visible"}`);
   const label = await account.getAttribute("aria-label") || "";
   const match = label.match(/\(([^()\s]+@[^()\s]+)\)/);
   const observedEmail = match?.[1]?.toLowerCase() ?? null;
@@ -1635,11 +1660,21 @@ async function prepare(args, browser, rl) {
       // Failed tiles are diagnostics only and never count as usable video candidates.
       if (!initialScan.reachedBottom) throw new Error("Pre-Create media inventory did not prove it reached the bottom; refusing to Create with an incomplete baseline.");
       const initialItems = initialScan.items.map(item => item.key);
+      const baselineUuids = initialScan.items.map(item => item.mediaUuid).filter(Boolean);
       const failedBaselineItems = initialScan.items.filter(item =>
-        /\bfailed\b/i.test(`${item.state} ${item.text}`) || isGenerationFailureText(`${item.state} ${item.text}`));
+        /\bfailed\b/i.test(\`\${item.state} \${item.text}\`) || isGenerationFailureText(\`\${item.state} \${item.text}\`));
+      console.log(JSON.stringify({
+        event: "baseline_media_inventory_summary",
+        reached_bottom: initialScan.reachedBottom,
+        tile_count: initialScan.items.length,
+        uuid_count: baselineUuids.length,
+        uuid_sample_first_5: baselineUuids.slice(0, 5),
+        unkeyed_items_detected: initialScan.unkeyedItemsDetected,
+        duplicate_visible_key_detected: initialScan.duplicateVisibleKeyDetected,
+      }, null, 2));
       if (initialScan.unkeyedItemsDetected || initialScan.duplicateVisibleKeyDetected
         || initialItems.some(key => !key) || new Set(initialItems).size !== initialItems.length) {
-        throw new Error("generated_video_items selector must expose a stable media UUID/key for every tile and distinct keys within each viewport across a full virtualized-grid sweep.");
+        throw new Error(\`generated_video_items selector must expose a stable media UUID/key for every tile and distinct keys within each viewport across a full virtualized-grid sweep (tiles=\${initialScan.items.length}, UUIDs=\${baselineUuids.length}, reached_bottom=\${initialScan.reachedBottom}, sample=\${baselineUuids.slice(0, 5).join(",") || "none"}).\`);
       }
       args._waitInitialBalance = initialBalance;
       args._waitInitialItemKeys = initialItems;
