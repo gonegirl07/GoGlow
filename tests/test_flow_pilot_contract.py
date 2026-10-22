@@ -597,7 +597,7 @@ class FlowPilotContractTests(unittest.TestCase):
         self.assertIn('await activateVideosTab(page, selectors)', resolver)
         self.assertIn('visible_first_six_thumbnail_tokens: currentTokens.slice(0, 6)', resolver)
         self.assertIn('expected_thumbnail_token: expectedToken', resolver)
-        self.assertIn('currentTokens.length >= 6 && previousTokens', resolver)
+        self.assertIn('currentTokens.length >= 3 && previousTokens', resolver)
         self.assertIn("await page.waitForTimeout(1000);", resolver)
         self.assertIn("await tile.click({ timeout: 4000, force: true });", resolver)
         self.assertIn("await page.waitForURL(url => editRoute.test(new URL(url).pathname)", resolver)
