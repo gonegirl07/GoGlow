@@ -609,5 +609,33 @@ class FlowPilotContractTests(unittest.TestCase):
         self.assertIn("chip count did not decrease", self.script)
         self.assertIn("Remove chips manually before continuing", self.script)
 
+
+    def test_media_inventory_prefers_flow_json_uuid_records_before_tile_click(self):
+        self.assertIn("const networkMediaRecords = [];", self.script)
+        self.assertIn('page.on("response", networkResponseListener)', self.script)
+        self.assertIn("const resolveUuidFromNetwork = item =>", self.script)
+        self.assertLess(
+            self.script.index("const networkUuid = resolveUuidFromNetwork(item);"),
+            self.script.index("const resolvedUuid = await resolveUuidByOpeningTile(item.index);"),
+        )
+
+    def test_edit_route_fallback_waits_then_force_clicks_animated_tile(self):
+        self.assertIn("await tile.scrollIntoViewIfNeeded({ timeout: 2500 })", self.script)
+        self.assertIn("await page.waitForTimeout(500);", self.script)
+        self.assertIn("await tile.click({ timeout: 3000, force: true });", self.script)
+        self.assertIn("timeout: 5000", self.script)
+
+    def test_asset_uuid_lookup_waits_for_lazy_loaded_thumbnail_and_rejects_ambiguity(self):
+        self.assertIn("const thumbnailDeadline = Date.now() + 7000;", self.script)
+        self.assertIn("flow-content/image/<uuid>", self.script)
+        self.assertIn("if (existingCount === 1 && existingUuids.size === 1)", self.script)
+        self.assertIn("else if (existingUuids.size > 1 || existingCount > 1)", self.script)
+
+    def test_cleanup_uses_observed_empty_state_when_click_times_out(self):
+        self.assertIn("afterClickChips !== 0", self.script)
+        self.assertIn("afterClickValue", self.script)
+        self.assertIn("let removeClickError = null;", self.script)
+        self.assertIn("State change, not click return, is decisive", self.script)
+
 if __name__ == "__main__":
     unittest.main()
