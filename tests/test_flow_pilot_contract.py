@@ -615,21 +615,34 @@ class FlowPilotContractTests(unittest.TestCase):
         self.assertIn("visible first row only; no full-grid sweep", self.script)
         self.assertIn("Dry-run baseline scan requires a configured generated_video_items selector", self.script)
 
-    def test_add_to_prompt_waits_for_selected_asset_and_visible_button_before_exact_count(self):
+    def test_add_to_prompt_readiness_uses_exactly_one_visible_button_not_aria_selected(self):
         upload_fn = self.script.split("async function uploadSceneReferencesUnsafe", 1)[1].split(
             "async function uploadSceneReferences(", 1
         )[0]
         self.assertIn('const addToPromptSelector = selectors.ingredient_add_to_prompt;', upload_fn)
         self.assertIn('Date.now() - selectionWaitStartedAt < 5000', upload_fn)
-        self.assertIn('selectedAssetAriaSelected === "true" && addToPromptVisibleCount > 0', upload_fn)
-        self.assertIn('event: "reference_asset_selection_ready"', upload_fn)
+        self.assertIn('if (addToPromptVisibleCount === 1)', upload_fn)
         self.assertIn('selected_asset_aria_selected: selectedAssetAriaSelected', upload_fn)
+        self.assertIn('readiness_signal: "exactly_one_visible_add_to_prompt_button"', upload_fn)
+        self.assertIn('event: "reference_asset_selection_ready"', upload_fn)
         self.assertIn('visible Add to prompt buttons=', upload_fn)
         self.assertIn('const addToPrompt = await exactVisibleLocator(page, addToPromptSelector, "Add to prompt button", 1000);', upload_fn)
+        self.assertNotIn('selectedAssetAriaSelected === "true" && addToPromptVisibleCount', upload_fn)
         self.assertLess(
-            upload_fn.index('selectedAssetAriaSelected === "true" && addToPromptVisibleCount > 0'),
+            upload_fn.index('if (addToPromptVisibleCount === 1)'),
             upload_fn.index('const addToPrompt = await exactVisibleLocator'),
         )
+
+    def test_baseline_retries_when_tiles_exist_but_all_media_uuids_are_missing(self):
+        preflight = self.script.split('if (args.waitForResult || args.dryRun)', 1)[1].split(
+            '// Only now modify the prompt.', 1
+        )[0]
+        self.assertIn('event: "baseline_uuid_retry"', preflight)
+        self.assertIn('baselineRetry <= 2', preflight)
+        self.assertIn('initialScan.items.length > 0', preflight)
+        self.assertIn('initialScan.items.every(item => !item.mediaUuid)', preflight)
+        self.assertIn('baselineUuidCache.clear()', preflight)
+        self.assertIn('await chosen.page.waitForTimeout(600)', preflight)
 
     def test_asset_reuse_checks_all_dom_attributes_and_never_duplicates_unreadable_match(self):
         self.assertIn("async function assetUuidFromLocator(locator)", self.script)
