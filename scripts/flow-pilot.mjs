@@ -1050,22 +1050,21 @@ async function clearPromptContentsVerified(prompt, selectors, timeout = 2500) {
   const initialHandle = await prompt.elementHandle();
   if (!initialHandle) throw new Error("Prompt textbox disappeared before empty-state verification.");
   const initialValue = await initialHandle.evaluate(element => ("value" in element) ? element.value : (element.innerText || element.textContent || ""));
-  const initialChipCount = await page.locator(selectors.ingredient_reference_items).count().catch(() => -1);
+  let initialChipCount = await waitForStableVisibleChipCount(page, selectors.ingredient_reference_items, 2000);
   if (String(initialValue).trim() === "" && initialChipCount === 0) return;
   const clearButton = await exactVisibleLocator(page, selectors.clear_prompt, "Clear prompt button");
   try {
     await clearButton.click({ timeout: 2500 });
   } catch (clickError) {
     // A timeout can be reported after Flow already handled the click during an animation.
-    // Re-check actual state before deciding cleanup failed.
     await page.waitForTimeout(250);
     const afterClickHandle = await prompt.elementHandle();
     const afterClickValue = afterClickHandle
       ? await afterClickHandle.evaluate(element => ("value" in element) ? element.value : (element.innerText || element.textContent || ""))
       : "__PROMPT_MISSING__";
-    const afterClickChips = await page.locator(selectors.ingredient_reference_items).count().catch(() => -1);
+    const afterClickChips = await waitForStableVisibleChipCount(page, selectors.ingredient_reference_items, 2000);
     if (String(afterClickValue).trim() !== "" || afterClickChips !== 0) {
-      throw new Error(`Clear prompt click did not complete and state is not empty (prompt=${JSON.stringify(String(afterClickValue).trim())}, chips=${afterClickChips}): ${clickError.message}`);
+      throw new Error(`Clear prompt click did not complete and visible state is not empty (prompt=${JSON.stringify(String(afterClickValue).trim())}, visible_chips=${afterClickChips}): ${clickError.message}`);
     }
     return;
   }
@@ -1081,27 +1080,46 @@ async function clearPromptContentsVerified(prompt, selectors, timeout = 2500) {
   }
   const remaining = await handle.evaluate(element => ("value" in element) ? element.value : (element.innerText || element.textContent || ""));
   if (String(remaining).trim() !== "") throw new Error("Clear prompt verification failed; textbox still contains text.");
-  let chipCount = await page.locator(selectors.ingredient_reference_items).count().catch(() => -1);
+
+  // Flow may leave stale, hidden chip nodes mounted during the picker/prompt transition.
+  // Count only visible chips and wait for the count to settle before reporting cleanup failure.
+  let chipCount = await waitForStableVisibleChipCount(page, selectors.ingredient_reference_items, 2000);
   while (chipCount > 0) {
-    const chip = page.locator(selectors.ingredient_reference_items).last();
+    const allChips = page.locator(selectors.ingredient_reference_items);
+    let chip = null;
+    for (let i = (await allChips.count().catch(() => 0)) - 1; i >= 0; i -= 1) {
+      const candidate = allChips.nth(i);
+      if (await candidate.isVisible().catch(() => false)) { chip = candidate; break; }
+    }
+    if (!chip) {
+      chipCount = await waitForStableVisibleChipCount(page, selectors.ingredient_reference_items, 2000);
+      if (chipCount === 0) break;
+      throw new Error(`Visible Ingredients chip count is ${chipCount}, but no visible chip element could be located for cleanup.`);
+    }
     const remove = chip.locator('button[aria-label*="remove" i], button[aria-label*="delete" i], button[aria-label*="close" i], button[title*="remove" i], button[title*="delete" i], [role="button"][aria-label*="remove" i], [role="button"][aria-label*="delete" i]').first();
     if (await remove.count().catch(() => 0) === 0 || !(await remove.isVisible().catch(() => false))) {
-      throw new Error(`Clear prompt removed text but left ${chipCount} Ingredients chip(s), and no verified remove control was found. Remove chips manually before continuing.`);
+      throw new Error(`Clear prompt removed text but left ${chipCount} visible Ingredients chip(s), and no verified visible remove control was found. Remove chips manually before continuing.`);
     }
     let removeClickError = null;
     try { await remove.click({ timeout: 1500 }); } catch (error) { removeClickError = error; }
-    try {
-      // State change, not click return, is decisive if the hover animation times out.
-      await page.waitForFunction(({ selector, expected }) => document.querySelectorAll(selector).length < expected,
-        { selector: selectors.ingredient_reference_items, expected: chipCount }, { timeout: Math.max(timeout, 3000) });
-    } catch {
-      throw new Error(`Ingredients chip count did not decrease from ${chipCount}${removeClickError ? ` after remove click timeout: ${removeClickError.message}` : ""}; stop and inspect Flow manually.`);
+    const deadline = Date.now() + Math.max(timeout, 3000);
+    let nextCount = chipCount;
+    while (Date.now() < deadline) {
+      nextCount = await countVisibleMatches(page, selectors.ingredient_reference_items);
+      if (nextCount >= 0 && nextCount < chipCount) break;
+      await page.waitForTimeout(100);
     }
-    chipCount = await page.locator(selectors.ingredient_reference_items).count().catch(() => -1);
+    if (!(nextCount >= 0 && nextCount < chipCount)) {
+      const stableCount = await waitForStableVisibleChipCount(page, selectors.ingredient_reference_items, 1000);
+      if (!(stableCount >= 0 && stableCount < chipCount)) {
+        throw new Error(`Visible Ingredients chip count did not decrease from ${chipCount}${removeClickError ? ` after remove click timeout: ${removeClickError.message}` : ""}; stop and inspect Flow manually.`);
+      }
+      nextCount = stableCount;
+    }
+    chipCount = await waitForStableVisibleChipCount(page, selectors.ingredient_reference_items, 2000);
   }
-  if (chipCount !== 0) throw new Error(`Clear prompt verification failed; ${chipCount} Ingredients chip(s) remain.`);
+  if (chipCount !== 0) throw new Error(`Clear prompt verification failed; ${chipCount} visible Ingredients chip(s) remain after the DOM settled.`);
 }
-
 async function clearPromptVerified(prompt, selectors, timeout = 2500) {
   await closeIngredientsPicker(prompt.page(), selectors);
   await clearPromptContentsVerified(prompt, selectors, timeout);
