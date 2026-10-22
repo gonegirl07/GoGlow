@@ -991,25 +991,19 @@ async function resetIngredientsPicker(page, selectors) {
   console.log(JSON.stringify({ event: "ingredients_picker_reset_verified", closed: true }));
 }
 
-async function inspectAddToPromptContext(pickerContainer, buttonSelector, tileSelector) {
-  return pickerContainer.evaluate((root, args) => {
-    const uuidPattern = /[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/ig;
+async function inspectAddToPromptContext(button) {
+  return button.evaluate(buttonNode => {
     const visible = node => {
       const style = getComputedStyle(node);
       const rect = node.getBoundingClientRect();
       return style.display !== "none" && style.visibility !== "hidden"
         && Number(style.opacity || 1) > 0 && rect.width > 0 && rect.height > 0;
     };
-    const buttons = Array.from(root.querySelectorAll(args.buttonSelector)).filter(visible);
-    if (buttons.length !== 1) return { error: "visible_button_count_not_one", visible_button_count: buttons.length, uuids: [], labels: [] };
-    const buttonNode = buttons[0];
-    const tileNodes = Array.from(root.querySelectorAll(args.tileSelector));
     let node = buttonNode;
     let selected = null;
-    for (let depth = 0; node && root.contains(node) && depth < 9; depth += 1, node = node.parentElement) {
+    for (let depth = 0; node && depth < 9; depth += 1, node = node.parentElement) {
       const images = Array.from(node.querySelectorAll("img, video, [style*='background-image']")).filter(visible);
-      const tileCount = tileNodes.filter(tile => node === tile || node.contains(tile)).length;
-      if (!images.length || tileCount > 1) continue;
+      if (!images.length) continue;
       const values = [];
       for (const el of [node, ...Array.from(node.querySelectorAll("*"))]) {
         for (const attr of Array.from(el.attributes || [])) values.push(attr.value);
@@ -1021,14 +1015,14 @@ async function inspectAddToPromptContext(pickerContainer, buttonSelector, tileSe
         return matches || [];
       }).map(uuid => uuid.toLowerCase())));
       const labels = Array.from(new Set(values.filter(value => /mai-face|ref-3|\.png|\.jpe?g/i.test(String(value || ""))).map(value => String(value).slice(0, 180))));
-      selected = { depth, tile_count_in_context: tileCount, visible_image_count: images.length, uuids, labels,
+      selected = { depth, visible_image_count: images.length, uuids, labels,
         context_tag: node.tagName.toLowerCase(), context_role: node.getAttribute("role"),
         context_text: String(node.innerText || node.textContent || "").replace(/\s+/g, " ").trim().slice(0, 220) };
       if (uuids.length || labels.length) break;
     }
-    return selected || { depth: null, tile_count_in_context: null, visible_image_count: 0, uuids: [], labels: [], context_tag: null, context_role: null, context_text: "" };
-  }, { buttonSelector, tileSelector }).catch(error => ({
-    error: error.message, depth: null, tile_count_in_context: null, visible_image_count: 0, uuids: [], labels: []
+    return selected || { depth: null, visible_image_count: 0, uuids: [], labels: [], context_tag: null, context_role: null, context_text: "" };
+  }).catch(error => ({
+    error: error.message, depth: null, visible_image_count: 0, uuids: [], labels: []
   }));
 }
 
@@ -1698,7 +1692,7 @@ async function uploadSceneReferencesUnsafe(page, selectors, referenceImages, ref
       throw new Error("Ingredients picker Add to prompt button was not uniquely visible inside the active picker; stopping before chip attach.");
     }
     const expectedPreviewUuid = (requestedAssetUuidForPin || assetUuid || "").toLowerCase();
-    const previewContext = await inspectAddToPromptContext(pickerContainer, addToPromptSelector, selectors.ingredient_library_item);
+    const previewContext = await inspectAddToPromptContext(addToPrompt);
     console.log(JSON.stringify({
       event: "ingredients_picker_add_action_identity",
       filename,
