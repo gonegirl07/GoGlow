@@ -643,16 +643,16 @@ class FlowPilotContractTests(unittest.TestCase):
         self.assertIn('event: "ingredients_picker_search_fallback"', upload_fn)
         self.assertIn('selection_retried: selectionRetried', upload_fn)
         self.assertIn('configured wait budget=${selectionWaitTimeoutMs}ms, actual elapsed=${Date.now() - selectionWaitStartedAt}ms', upload_fn)
-        self.assertIn('if (addToPromptVisibleCount === 1)', upload_fn)
+        self.assertIn('if (addToPromptVisibleCount === 1 && (selectedAssetAriaSelected === "true" || labelMatches)', upload_fn)
         self.assertIn('selected_asset_aria_selected: selectedAssetAriaSelected', upload_fn)
-        self.assertIn('readiness_signal: "exactly_one_visible_add_to_prompt_button"', upload_fn)
+        self.assertIn('readiness_signal: "unique_visible_add_button_plus_exact_preview_filename_or_uuid"', upload_fn)
         self.assertIn('event: "reference_asset_selection_ready"', upload_fn)
         self.assertIn('visible Add to prompt buttons=', upload_fn)
         self.assertIn('const addToPrompt = pickerContainer.locator(addToPromptSelector);', upload_fn)
         self.assertIn('active picker; stopping before chip attach', upload_fn)
         self.assertNotIn('selectedAssetAriaSelected === "true" && addToPromptVisibleCount', upload_fn)
         self.assertLess(
-            upload_fn.index('if (addToPromptVisibleCount === 1)'),
+            upload_fn.index('if (addToPromptVisibleCount === 1 && (selectedAssetAriaSelected === "true" || labelMatches)'),
             upload_fn.index('const addToPrompt = pickerContainer.locator(addToPromptSelector);'),
         )
 
