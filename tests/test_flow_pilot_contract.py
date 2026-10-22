@@ -594,7 +594,7 @@ class FlowPilotContractTests(unittest.TestCase):
 
 
     def test_flow_video_uuid_is_read_directly_from_edit_url_after_tile_click(self):
-        resolver = self.script.split("const resolveUuidByOpeningTile = async (index, identity = null) =>", 1)[1].split(
+        resolver = self.script.split("const resolveUuidByOpeningTile = async (index, identity = null, rowIdentities = [], expectedTileCount = null) =>", 1)[1].split(
             "let stableBottomRounds = 0;", 1
         )[0]
         self.assertIn('await page.goto(gridUrl, { waitUntil: "domcontentloaded", timeout: 12000 }).catch(() => {});', resolver)
@@ -777,7 +777,7 @@ class FlowPilotContractTests(unittest.TestCase):
         self.assertIn("if (!stableCurrentGrid || currentTokens.length < 3", self.script)
         self.assertNotIn("const currentScan = await collectAllGeneratedItems(chosen.page, selectors.generated_video_items", self.script)
     def test_media_tile_reidentification_reselects_videos_waits_for_stable_grid_and_logs_tokens(self):
-        resolver = self.script.split("const resolveUuidByOpeningTile = async (index, identity = null) =>", 1)[1].split(
+        resolver = self.script.split("const resolveUuidByOpeningTile = async (index, identity = null, rowIdentities = [], expectedTileCount = null) =>", 1)[1].split(
             "let stableBottomRounds = 0;", 1
         )[0]
         self.assertIn('await page.goto(gridUrl, { waitUntil: "domcontentloaded", timeout: 12000 })', resolver)
