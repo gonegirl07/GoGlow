@@ -633,6 +633,20 @@ class FlowPilotContractTests(unittest.TestCase):
             upload_fn.index('const addToPrompt = await exactVisibleLocator'),
         )
 
+    def test_first_row_thumbnail_tokens_wait_and_recapture_when_missing(self):
+        preflight = self.script.split('if (args.waitForResult || args.dryRun)', 1)[1].split(
+            '// Only now modify the prompt.', 1
+        )[0]
+        self.assertIn('const waitForFirstRowThumbnailTokens = async (reason, maxWaitMs = 10000)', preflight)
+        self.assertIn('await waitForFirstRowThumbnailTokens("before_initial_capture")', preflight)
+        self.assertIn('event: "baseline_thumbnail_tokens_ready"', preflight)
+        self.assertIn('event: "baseline_thumbnail_token_missing_at_capture"', preflight)
+        self.assertIn('thumbnailRetry <= 2', preflight)
+        self.assertIn('initialScan.items.some(item => !item.thumbnailSrc || !thumbnailIdentityToken(item.thumbnailSrc))', preflight)
+        self.assertIn('missing_thumbnail_token_indexes: missingIndexes', preflight)
+        self.assertIn("await waitForFirstRowThumbnailTokens(`recapture_retry_${thumbnailRetry}`)", preflight)
+        self.assertIn('baselineUuidCache.clear()', preflight)
+
     def test_baseline_retries_when_tiles_exist_but_all_media_uuids_are_missing(self):
         preflight = self.script.split('if (args.waitForResult || args.dryRun)', 1)[1].split(
             '// Only now modify the prompt.', 1
