@@ -239,13 +239,13 @@ async function collectAllGeneratedItems(page, selector, { targetKey = null, maxS
       const createdAt = element.querySelector("time[datetime]")?.getAttribute("datetime")
         || element.getAttribute("data-created-at") || element.getAttribute("data-createdat")
         || element.querySelector("[data-created-at]")?.getAttribute("data-created-at") || null;
-      return { key: String(key).trim(), text, state, progress, index, createdAt };
+      return { key: String(key).trim(), mediaUuid: mediaUuid ? mediaUuid.toLowerCase() : null, text, state, progress, index, createdAt };
     }));
     if (step === 0) topItems = visible.map(item => ({ ...item }));
     const keysThisViewport = new Set();
     for (const item of visible) {
-      if (!item.key) unkeyedItemsDetected = true;
-      else {
+      if (!item.key || !item.mediaUuid) unkeyedItemsDetected = true;
+      if (item.key) {
         if (keysThisViewport.has(item.key)) duplicateVisibleKeyDetected = true;
         keysThisViewport.add(item.key);
         all.set(item.key, { ...item });
@@ -509,7 +509,7 @@ async function waitForGenerationAndDownload(page, selectors, { beforeKeys, befor
     // Require a UUID absent from the full pre-Create inventory AND visible as the first tile
     // at the top of the post-Create Videos grid. Never select a new-looking UUID elsewhere.
     const topItem = scan.topItems?.[0] || null;
-    const newItems = topItem?.key && !beforeKeys.includes(topItem.key) ? [topItem] : [];
+    const newItems = topItem?.mediaUuid && topItem.key && !beforeKeys.includes(topItem.key) ? [topItem] : [];
     // Failed tiles already in the pre-Create UUID baseline are not new results.
     // A newly failed UUID is still detected below and stops the batch safely.
     const candidateItems = newItems.filter(item =>
