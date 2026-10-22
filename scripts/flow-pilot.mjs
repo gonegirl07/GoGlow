@@ -194,6 +194,8 @@ async function collectAllGeneratedItems(page, selector, { targetKey = null, maxS
   }, selector);
   const all = new Map();
   let stableBottomRounds = 0;
+  let reachedBottom = false;
+  let topItems = null;
   let targetIndex = null;
   let unkeyedItemsDetected = false;
   let duplicateVisibleKeyDetected = false;
@@ -218,8 +220,12 @@ async function collectAllGeneratedItems(page, selector, { targetKey = null, maxS
       const state = [element.getAttribute("data-status"), element.getAttribute("data-state"),
         element.getAttribute("aria-label"), element.getAttribute("title")].filter(Boolean).join(" ");
       const progress = Boolean(element.querySelector('[role="progressbar"], progress, [aria-valuenow]'));
-      return { key: String(key).trim(), text, state, progress, index };
+      const createdAt = element.querySelector("time[datetime]")?.getAttribute("datetime")
+        || element.getAttribute("data-created-at") || element.getAttribute("data-createdat")
+        || element.querySelector("[data-created-at]")?.getAttribute("data-created-at") || null;
+      return { key: String(key).trim(), text, state, progress, index, createdAt };
     }));
+    if (step === 0) topItems = visible.map(item => ({ ...item }));
     const keysThisViewport = new Set();
     for (const item of visible) {
       if (!item.key) unkeyedItemsDetected = true;
@@ -246,7 +252,8 @@ async function collectAllGeneratedItems(page, selector, { targetKey = null, maxS
     }, selector);
     const atBottom = metrics.top + metrics.clientHeight >= metrics.scrollHeight - 3;
     if (atBottom) stableBottomRounds += 1; else stableBottomRounds = 0;
-    if (stableBottomRounds >= 2 || step === maxScrolls) break;
+    if (stableBottomRounds >= 2) { reachedBottom = true; break; }
+    if (step === maxScrolls) break;
     await page.evaluate(({ selectorText, amount }) => {
       const first = document.querySelector(selectorText);
       let node = first?.parentElement || null;
@@ -276,7 +283,7 @@ async function collectAllGeneratedItems(page, selector, { targetKey = null, maxS
     }
     (document.scrollingElement || document.documentElement).scrollTop = initialTop;
   }, { selectorText: selector, initialTop: scrollInfo.initialTop });
-  return { items: Array.from(all.values()), targetIndex: null, scrolledToTarget: false, unkeyedItemsDetected, duplicateVisibleKeyDetected };
+  return { items: Array.from(all.values()), topItems: topItems || [], targetIndex: null, scrolledToTarget: false, unkeyedItemsDetected, duplicateVisibleKeyDetected, reachedBottom };
 }
 
 function isGenerationFailureText(value) {
@@ -429,7 +436,7 @@ function makeGenerationLedgerRecord({ scene, projectId, ledgerProjectId, prompt,
   };
 }
 
-async function waitForGenerationAndDownload(page, selectors, { beforeKeys, beforeBalance, timeoutMs, downloadDir, sceneId, attemptId, timeoutScreenshot, variantIndex = 1, variantCount = 1 }) {
+async function waitForGenerationAndDownload(page, selectors, { beforeKeys, beforeBalance, createClickedAt, timeoutMs, downloadDir, sceneId, attemptId, timeoutScreenshot, variantIndex = 1, variantCount = 1 }) {
   const itemLocator = page.locator(selectors.generated_video_items);
   let deadline = Date.now() + timeoutMs;
   let chargedExtensionUsed = false;
@@ -477,10 +484,16 @@ async function waitForGenerationAndDownload(page, selectors, { beforeKeys, befor
     // on every grid poll before comparing the new result against the pre-Create inventory.
     await activateVideosTab(page, selectors).catch(() => "not_found_no_tab_switch");
     await failIfVisible();
-    const scan = await collectAllGeneratedItems(page, selectors.generated_video_items).catch(() => ({ items: [] }));
-    // A result is eligible only when its concrete key was absent from the pre-Create snapshot.
-    // Never promote the first visible tile just because the grid count increased.
-    const newItems = scan.items.filter(item => item.key && !beforeKeys.includes(item.key));
+    const scan = await collectAllGeneratedItems(page, selectors.generated_video_items).catch(() => ({ items: [], topItems: [], reachedBottom: false }));
+    if (!scan.reachedBottom || scan.unkeyedItemsDetected || scan.duplicateVisibleKeyDetected) {
+      console.warn("Media inventory scan is incomplete or ambiguous; refusing to identify/download a clip.");
+      await page.waitForTimeout(1000);
+      continue;
+    }
+    // Require a UUID absent from the full pre-Create inventory AND visible as the first tile
+    // at the top of the post-Create Videos grid. Never select a new-looking UUID elsewhere.
+    const topItem = scan.topItems?.[0] || null;
+    const newItems = topItem?.key && !beforeKeys.includes(topItem.key) ? [topItem] : [];
     // Failed tiles already in the pre-Create UUID baseline are not new results.
     // A newly failed UUID is still detected below and stops the batch safely.
     const candidateItems = newItems.filter(item =>
@@ -495,7 +508,17 @@ async function waitForGenerationAndDownload(page, selectors, { beforeKeys, befor
       throw new Error(`More than one new non-failed Flow video tile appeared after a full virtualized-grid sweep (${candidateItems.length}); refusing to guess which clip to download.`);
     }
     if (candidateItems.length === 1 && !attemptedKeys.has(candidateItems[0].key)) {
-      newKey = candidateItems[0].key;
+      const candidate = candidateItems[0];
+      if (candidate.createdAt) {
+        const createdMs = Date.parse(candidate.createdAt);
+        const createMs = Date.parse(createClickedAt || "");
+        if (!Number.isFinite(createdMs) || !Number.isFinite(createMs) || createdMs <= createMs) {
+          console.warn(`Top tile ${candidate.key} has an unreadable or non-new creation timestamp; result remains unknown and will not be downloaded.`);
+          await page.waitForTimeout(1000);
+          continue;
+        }
+      }
+      newKey = candidate.key;
       attemptedKeys.add(newKey);
       const located = await collectAllGeneratedItems(page, selectors.generated_video_items, { targetKey: newKey }).catch(() => ({ targetIndex: null }));
       if (located.targetIndex !== null) {
@@ -1367,6 +1390,7 @@ async function prepare(args, browser, rl) {
       // Keep every stable media UUID in the baseline, including Failed tiles, so a
       // later disappearing/refunded tile cannot make another existing card look new.
       // Failed tiles are diagnostics only and never count as usable video candidates.
+      if (!initialScan.reachedBottom) throw new Error("Pre-Create media inventory did not prove it reached the bottom; refusing to Create with an incomplete baseline.");
       const initialItems = initialScan.items.map(item => item.key);
       const failedBaselineItems = initialScan.items.filter(item =>
         /\bfailed\b/i.test(`${item.state} ${item.text}`) || isGenerationFailureText(`${item.state} ${item.text}`));
@@ -1384,6 +1408,7 @@ async function prepare(args, browser, rl) {
         existing_video_tile_count: args._waitInitialItemCount,
         ignored_failed_tile_count: failedBaselineItems.length,
         ignored_failed_tile_keys: failedBaselineItems.map(item => item.key),
+        baseline_media_key_count: initialItems.length,
         baseline_media_keys: initialItems,
       }, null, 2));
       console.log(`Phase timing: wait selector preflight completed in ${Date.now() - waitPreflightStartedAt}ms.`);
@@ -1506,13 +1531,17 @@ async function prepare(args, browser, rl) {
       args._waitInitialBalance = currentBalance;
       await activateVideosTab(chosen.page, selectors);
       const currentScan = await collectAllGeneratedItems(chosen.page, selectors.generated_video_items);
+      if (!currentScan.reachedBottom) throw new Error("Pre-Create media inventory did not prove it reached the bottom; refusing to click Create.");
       args._waitInitialItemKeys = currentScan.items.map(item => item.key);
       if (currentScan.unkeyedItemsDetected || currentScan.duplicateVisibleKeyDetected
         || new Set(args._waitInitialItemKeys).size !== args._waitInitialItemKeys.length) {
         throw new Error("Pre-Create media inventory is ambiguous; every tile must have a stable unique key. Refusing to click Create.");
       }
       args._waitInitialItemCount = args._waitInitialItemKeys.length;
+      console.log(`Final pre-Create baseline UUID count: ${args._waitInitialItemKeys.length}.`);
     }
+    args._waitCreateClickedAt = new Date().toISOString();
+    console.log(`Pre-Create baseline UUID count: ${args._waitInitialItemKeys?.length ?? 0}. Create timestamp: ${args._waitCreateClickedAt}`);
     createMayHaveBeenClicked = true; // Conservatively preserve state if the click result is ambiguous.
     await finalButton.click({ timeout: 2500 });
     appendEvent(args.log, { event: "create_click_returned", scene_id: scene.scene_id, model: scene.model,
@@ -1533,6 +1562,7 @@ async function prepare(args, browser, rl) {
         const result = await waitForGenerationAndDownload(chosen.page, selectors, {
           beforeKeys: args._waitInitialItemKeys,
           beforeBalance: args._waitInitialBalance,
+          createClickedAt: args._waitCreateClickedAt,
           beforeCount: args._waitInitialItemCount,
           timeoutMs: args.waitTimeoutMs,
           downloadDir: args.downloadDir,
