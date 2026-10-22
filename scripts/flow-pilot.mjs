@@ -178,7 +178,7 @@ async function generatedItemKeys(page, selector) {
 // union keys from every viewport instead of treating the first rendered batch as
 // the complete project inventory. Restore the initial scroll position unless a
 // target key was requested, in which case leave that tile in view for a safe click.
-async function collectAllGeneratedItems(page, selector, { targetKey = null, maxScrolls = 120 } = {}) {
+async function collectAllGeneratedItems(page, selector, { targetKey = null, maxScrolls = 120, uuidCache = new Map() } = {}) {
   const scrollInfo = await page.evaluate(selectorText => {
     const first = document.querySelector(selectorText);
     let node = first?.parentElement || null;
@@ -209,6 +209,48 @@ async function collectAllGeneratedItems(page, selector, { targetKey = null, maxS
   }, selector);
   await page.waitForTimeout(120);
   const all = new Map();
+  const readScrollTop = async () => page.evaluate(selectorText => {
+    const first = document.querySelector(selectorText);
+    let node = first?.parentElement || null;
+    while (node && node !== document.body) {
+      const style = getComputedStyle(node);
+      if (node.scrollHeight > node.clientHeight + 8 && /(auto|scroll|overlay)/.test(style.overflowY)) return node.scrollTop;
+      node = node.parentElement;
+    }
+    return (document.scrollingElement || document.documentElement).scrollTop;
+  }, selector);
+  const restoreScrollTop = async top => page.evaluate(({ selectorText, top }) => {
+    const first = document.querySelector(selectorText);
+    let node = first?.parentElement || null;
+    while (node && node !== document.body) {
+      const style = getComputedStyle(node);
+      if (node.scrollHeight > node.clientHeight + 8 && /(auto|scroll|overlay)/.test(style.overflowY)) { node.scrollTop = top; return; }
+      node = node.parentElement;
+    }
+    (document.scrollingElement || document.documentElement).scrollTop = top;
+  }, { selectorText: selector, top });
+  const resolveUuidByOpeningTile = async index => {
+    const gridUrl = page.url();
+    const scrollTop = await readScrollTop();
+    try {
+      await page.locator(selector).nth(index).click({ timeout: 3000 });
+      await page.waitForFunction(() => /\\/edit\\/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}(?:[/?#]|$)/i.test(location.pathname), null, { timeout: 4000 });
+      const match = page.url().match(/\\/edit\\/([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})(?:[/?#]|$)/i);
+      const uuid = match?.[1]?.toLowerCase() || null;
+      await page.goBack({ waitUntil: "domcontentloaded", timeout: 10000 });
+      await page.waitForFunction(pathname => location.pathname === pathname, new URL(gridUrl).pathname, { timeout: 8000 }).catch(() => {});
+      await restoreScrollTop(scrollTop);
+      await page.waitForTimeout(100);
+      return uuid;
+    } catch (error) {
+      if (/\\/edit\\//i.test(page.url())) {
+        await page.goBack({ waitUntil: "domcontentloaded", timeout: 10000 }).catch(() => {});
+        await restoreScrollTop(scrollTop).catch(() => {});
+      }
+      console.warn(`Could not resolve media UUID by opening tile index ${index}: ${error.message}`);
+      return null;
+    }
+  };
   let stableBottomRounds = 0;
   let reachedBottom = false;
   let topItems = null;
@@ -231,6 +273,7 @@ async function collectAllGeneratedItems(page, selector, { targetKey = null, maxS
         return matches && matches.length ? matches[matches.length - 1].toLowerCase() : null;
       };
       const mediaUuid = sources.map(uuidFrom).find(Boolean);
+      const hint = [String(element.innerText || element.textContent || "").replace(/\\s+/g, " ").trim(), ...sources].join("|");
       const key = mediaUuid ? `media:${mediaUuid}` : (sources[0] || "");
       const text = String(element.innerText || element.textContent || "").replace(/\s+/g, " ").trim();
       const state = [element.getAttribute("data-status"), element.getAttribute("data-state"),
@@ -239,8 +282,22 @@ async function collectAllGeneratedItems(page, selector, { targetKey = null, maxS
       const createdAt = element.querySelector("time[datetime]")?.getAttribute("datetime")
         || element.getAttribute("data-created-at") || element.getAttribute("data-createdat")
         || element.querySelector("[data-created-at]")?.getAttribute("data-created-at") || null;
-      return { key: String(key).trim(), mediaUuid: mediaUuid ? mediaUuid.toLowerCase() : null, text, state, progress, index, createdAt };
+      return { key: String(key).trim(), mediaUuid: mediaUuid ? mediaUuid.toLowerCase() : null, hint, text, state, progress, index, createdAt };
     }));
+    for (const item of visible) {
+      if (!item.mediaUuid && item.hint && uuidCache.has(item.hint)) {
+        item.mediaUuid = uuidCache.get(item.hint);
+        item.key = item.mediaUuid ? `media:${item.mediaUuid}` : item.key;
+      }
+      if (!item.mediaUuid) {
+        const resolvedUuid = await resolveUuidByOpeningTile(item.index);
+        if (resolvedUuid) {
+          item.mediaUuid = resolvedUuid;
+          item.key = `media:${resolvedUuid}`;
+          if (item.hint) uuidCache.set(item.hint, resolvedUuid);
+        }
+      }
+    }
     if (step === 0) topItems = visible.map(item => ({ ...item }));
     const keysThisViewport = new Set();
     for (const item of visible) {
@@ -723,8 +780,23 @@ async function clearPromptContentsVerified(prompt, selectors, timeout = 2500) {
   }
   const remaining = await handle.evaluate(element => ("value" in element) ? element.value : (element.innerText || element.textContent || ""));
   if (String(remaining).trim() !== "") throw new Error("Clear prompt verification failed; textbox still contains text.");
-  const chipCount = await page.locator(selectors.ingredient_reference_items).count().catch(() => -1);
-  if (chipCount !== 0) throw new Error(`Clear prompt removed text but left ${chipCount} Ingredients chip(s).`);
+  let chipCount = await page.locator(selectors.ingredient_reference_items).count().catch(() => -1);
+  while (chipCount > 0) {
+    const chip = page.locator(selectors.ingredient_reference_items).last();
+    const remove = chip.locator('button[aria-label*="remove" i], button[aria-label*="delete" i], button[aria-label*="close" i], button[title*="remove" i], button[title*="delete" i], [role="button"][aria-label*="remove" i], [role="button"][aria-label*="delete" i]').first();
+    if (await remove.count().catch(() => 0) === 0 || !(await remove.isVisible().catch(() => false))) {
+      throw new Error(`Clear prompt removed text but left ${chipCount} Ingredients chip(s), and no verified remove control was found. Remove chips manually before continuing.`);
+    }
+    await remove.click({ timeout: 2500 });
+    try {
+      await page.waitForFunction(({ selector, expected }) => document.querySelectorAll(selector).length < expected,
+        { selector: selectors.ingredient_reference_items, expected: chipCount }, { timeout });
+    } catch {
+      throw new Error(`Clicked an Ingredients chip remove control but chip count did not decrease from ${chipCount}; stop and inspect Flow manually.`);
+    }
+    chipCount = await page.locator(selectors.ingredient_reference_items).count().catch(() => -1);
+  }
+  if (chipCount !== 0) throw new Error(`Clear prompt verification failed; ${chipCount} Ingredients chip(s) remain.`);
 }
 
 async function clearPromptVerified(prompt, selectors, timeout = 2500) {
@@ -835,8 +907,30 @@ async function chooseModel(page, selectors, model) {
 
 
 function assetUuidFromUrl(value) {
-  const match = String(value || "").match(/[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}/i);
+  const match = String(value || "").match(/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/i);
   return match?.[0]?.toLowerCase() || null;
+}
+
+async function assetUuidFromLocator(locator) {
+  const values = await locator.evaluate(element => {
+    const collected = [];
+    const add = node => {
+      if (!node) return;
+      for (const name of ["href", "src", "id", "data-id", "data-uuid", "data-asset-id", "data-media-id", "aria-label", "title", "alt"]) {
+        const value = node.getAttribute?.(name);
+        if (value) collected.push(value);
+      }
+    };
+    add(element);
+    for (const node of element.querySelectorAll("a[href], img, video, [data-id], [data-uuid], [data-asset-id], [data-media-id]")) add(node);
+    collected.push(element.outerHTML || "");
+    return collected;
+  }).catch(() => []);
+  for (const value of values) {
+    const uuid = assetUuidFromUrl(value);
+    if (uuid) return uuid;
+  }
+  return null;
 }
 
 async function waitForChipImagesReady(page, selectors, timeout = 15000) {
@@ -900,8 +994,7 @@ async function uploadSceneReferencesUnsafe(page, selectors, referenceImages) {
     const existingUuids = new Set();
     const existingCount = await matchingAssets.count().catch(() => 0);
     for (let i = 0; i < existingCount; i += 1) {
-      const src = await matchingAssets.nth(i).locator("img").first().getAttribute("src").catch(() => null);
-      const uuid = assetUuidFromUrl(src);
+      const uuid = await assetUuidFromLocator(matchingAssets.nth(i));
       if (uuid) existingUuids.add(uuid);
     }
 
@@ -925,6 +1018,7 @@ async function uploadSceneReferencesUnsafe(page, selectors, referenceImages) {
     } else if (existingUuids.size > 1) {
       throw new Error(`Multiple existing library assets match ${filename}; refusing to guess which reference is correct.`);
     } else {
+      if (existingCount > 0) throw new Error(`Found ${existingCount} existing Flow library asset(s) matching ${filename}, but could not read a stable UUID from their DOM attributes/URLs. Refusing to upload a duplicate; inspect the asset entry DOM and selector configuration.`);
       const uploadButton = await exactVisibleLocator(page, selectors.ingredient_upload_button, "Upload media button");
       const chooserPromise = page.waitForEvent("filechooser", { timeout: 5000 });
       await uploadButton.click({ timeout: 2500 });
@@ -942,8 +1036,8 @@ async function uploadSceneReferencesUnsafe(page, selectors, referenceImages) {
               || metadata.includes(filename.toLowerCase()) || metadata.includes(filenameStem.toLowerCase());
           });
           if (!newestMatch) return false;
-          const src = newestMatch.querySelector("img")?.getAttribute("src") || "";
-          const match = src.match(/[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}/i);
+          const sources = [newestMatch.outerHTML, ...Array.from(newestMatch.querySelectorAll("a[href], img, video, [data-id], [data-uuid], [data-asset-id], [data-media-id]"), node => [node.getAttribute("href"), node.getAttribute("src"), node.getAttribute("id"), node.getAttribute("data-id"), node.getAttribute("data-uuid"), node.getAttribute("data-asset-id"), node.getAttribute("data-media-id")].filter(Boolean).join(" "))].join(" ");
+          const match = sources.match(/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/i);
           return Boolean(match && !oldUuids.includes(match[0].toLowerCase()));
         }, { selector: selectors.ingredient_library_item, filename, filenameStem, oldUuids: Array.from(existingUuids) }, { timeout: ASSET_READY_TIMEOUT_MS });
         console.log(`Reference UUID ready: ${filename} in ${Date.now() - uuidWaitStartedAt}ms`);
@@ -953,8 +1047,7 @@ async function uploadSceneReferencesUnsafe(page, selectors, referenceImages) {
         for (let i = 0; i < countAfterTimeout; i += 1) {
           const label = await picker.nth(i).innerText().catch(() => "");
           if (!label.toLowerCase().includes(filename.toLowerCase()) && !label.toLowerCase().includes(filenameStem.toLowerCase())) continue;
-          const src = await picker.nth(i).locator("img").first().getAttribute("src").catch(() => null);
-          const uuid = assetUuidFromUrl(src);
+          const uuid = await assetUuidFromLocator(picker.nth(i));
           if (uuid) diagnostics.push(uuid);
         }
         console.warn(JSON.stringify({
@@ -972,14 +1065,12 @@ async function uploadSceneReferencesUnsafe(page, selectors, referenceImages) {
       let reuseIndex = -1;
       const currentCount = await matchingAssets.count().catch(() => 0);
       for (let i = 0; i < currentCount; i += 1) {
-        const src = await matchingAssets.nth(i).locator("img").first().getAttribute("src").catch(() => null);
-        if (assetUuidFromUrl(src) === reusedExistingUuid) { reuseIndex = i; break; }
+        if (await assetUuidFromLocator(matchingAssets.nth(i)) === reusedExistingUuid) { reuseIndex = i; break; }
       }
       if (reuseIndex < 0) throw new Error("Reusable asset UUID disappeared from the library; refusing to select an unverified item.");
       asset = matchingAssets.nth(reuseIndex);
     }
-    const assetSrc = await asset.locator("img").first().getAttribute("src").catch(() => null);
-    const assetUuid = assetUuidFromUrl(assetSrc);
+    const assetUuid = await assetUuidFromLocator(asset);
     if (!assetUuid || (existingUuids.has(assetUuid) && assetUuid !== reusedExistingUuid)) {
       throw new Error("Library entry for " + filename + " did not have a verifiable new UUID or an explicitly identified reusable UUID.");
     }
