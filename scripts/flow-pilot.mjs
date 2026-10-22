@@ -811,6 +811,8 @@ async function uploadSceneReferencesUnsafe(page, selectors, referenceImages) {
 
   for (const imagePath of referenceImages) {
     const filename = path.basename(imagePath);
+    const assetStartedAt = Date.now();
+    console.log(`Reference upload started: ${filename}`);
     await openIngredientsPicker(page, selectors);
     const picker = page.locator(selectors.ingredient_library_item);
     const matchingAssets = picker.filter({ hasText: filename });
@@ -828,6 +830,7 @@ async function uploadSceneReferencesUnsafe(page, selectors, referenceImages) {
     const chooser = await chooserPromise;
     await chooser.setFiles(imagePath);
     let reusedExistingUuid = null;
+    const uuidWaitStartedAt = Date.now();
     try {
       await page.waitForFunction(({ selector, filename, oldUuids }) => {
         // Flow inserts the newest upload at the top. Wait for the first same-name entry's
@@ -839,6 +842,7 @@ async function uploadSceneReferencesUnsafe(page, selectors, referenceImages) {
         const match = src.match(/[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}/i);
         return Boolean(match && !oldUuids.includes(match[0].toLowerCase()));
       }, { selector: selectors.ingredient_library_item, filename, oldUuids: Array.from(existingUuids) }, { timeout: ASSET_READY_TIMEOUT_MS });
+      console.log(`Reference UUID ready: ${filename} in ${Date.now() - uuidWaitStartedAt}ms`);
     } catch {
       const diagnostics = [];
       const countAfterTimeout = await matchingAssets.count().catch(() => 0);
@@ -853,6 +857,7 @@ async function uploadSceneReferencesUnsafe(page, selectors, referenceImages) {
       reusedExistingUuid = diagnostics.find(uuid => existingUuids.has(uuid)) || null;
       console.warn(JSON.stringify({
         event: reusedExistingUuid ? "asset_upload_reused_existing" : "asset_upload_uuid_timeout",
+        elapsed_ms: Date.now() - uuidWaitStartedAt,
         filename,
         timeout_ms: ASSET_READY_TIMEOUT_MS,
         existing_uuids_before_upload: Array.from(existingUuids),
@@ -935,7 +940,7 @@ async function uploadSceneReferencesUnsafe(page, selectors, referenceImages) {
     if (new Set(attachedUuids).size !== attachedUuids.length) throw new Error("Duplicate Ingredients chip UUID detected; refusing to continue.");
     if (!attachedUuids.includes(assetUuid)) throw new Error(`Attached chip identity mismatch for ${filename}: expected asset UUID ${assetUuid}, observed ${attachedUuids.join(", ")}.`);
     expectedUuids.push(assetUuid);
-    console.log(`Verified Ingredients asset ${filename} -> UUID ${assetUuid}`);
+    console.log(`Verified Ingredients asset ${filename} -> UUID ${assetUuid}; total reference step ${Date.now() - assetStartedAt}ms`);
   }
 
   const finalCount = await chips.count();
@@ -1012,7 +1017,7 @@ async function loadInputs(args) {
   scene.framing_helper_applied = scene.framing_helper === false ? false : (scene.framing_helper === true || seatedShot);
   if (scene.framing_helper_applied) {
     scene.prompt = scene.prompt.replace(/\b(?:fills?|occupies?)\s+(?:about\s+)?\d{1,3}\s*(?:percent|%)\s+of\s+(?:the\s+)?frame\s+width\b/gi, "is framed from head to knees");
-    const framingSentence = "Locked-off tripod shot from the first frame: the camera does not move, pan, tilt, dolly, or zoom at any time. Move the camera farther back until the entire seated pose, both knees, and both feet are comfortably inside the frame. Keep the subject centered and occupying no more than the middle 60 percent of the frame width, with generous empty space on the left and right; do not zoom in or crop any part of the seated pose.";
+    const framingSentence = "Wide full-body shot with the person appearing small in the frame. Show the entire yoga mat and surrounding floor with clear empty space on every side, including well beyond both knees and feet. Keep the whole seated pose comfortably inside the frame; do not crop the body or mat. Locked-off tripod shot from the first frame: the camera does not move, pan, tilt, dolly, or zoom at any time.";
     if (!scene.prompt.includes(framingSentence)) scene.prompt = scene.prompt.trim() + " " + framingSentence;
   }
   if (scene.character_description && !/^[\x00-\x7F]+$/.test(scene.character_description)) throw new Error("Character description must be ASCII/English only; non-ASCII characters are blocked before touching Flow.");
@@ -1087,10 +1092,16 @@ async function loadInputs(args) {
     : faceDescriptionMode === "hybrid"
       ? `HYBRID FACE DESCRIPTION (brief matching traits only; reference images remain authoritative): ${scene.character_description.trim().replace(/[.\s]+$/, "")}. Match the reference images and do not add conflicting traits.`
       : `CHARACTER DESCRIPTION (supporting traits only; do not override the face reference): ${scene.character_description}`;
-  const normalizedExpression = scene.expression
+  const rawNormalizedExpression = scene.expression
     ? scene.expression.trim().replace(/[.!?]+\s*$/, "")
     : "";
-  const openEyesGuard = /\b(?:eyes?\s+(?:stay|remain|are|clearly)?\s*open|open eyes)\b/i.test(normalizedExpression)
+  const openEyesRequested = /\b(?:eyes?\s+(?:stay|remain|are|clearly)?\s*open|open eyes)\b/i.test(rawNormalizedExpression);
+  // If the job already says "natural brief blinks only", remove that clause before
+  // appending the standard guard so the composed prompt states it exactly once.
+  const normalizedExpression = openEyesRequested
+    ? rawNormalizedExpression.replace(/(?:[,;.]?\s*)natural brief blinks only\b/ig, "").trim().replace(/[.!?]+\s*$/, "")
+    : rawNormalizedExpression;
+  const openEyesGuard = openEyesRequested
     ? " Eyes stay open from the first frame through the final frame; natural brief blinks only. No prolonged eye closure or eyes-closed meditation."
     : "";
   const expressionSection = normalizedExpression
@@ -1098,9 +1109,10 @@ async function loadInputs(args) {
     : "";
   const supportingReferenceImages = referenceImages.filter(imagePath => !faceReferenceImages.includes(imagePath));
   const supportingReferenceSection = supportingReferenceImages.length
-    ? " Use remaining attached images only as supporting references for clothing, body, or context."
+    ? "Use remaining attached images only as supporting references for clothing, body, or context."
     : "";
-  scene.prompt = `PRIMARY FACE REFERENCE: ${faceAnchorInstructions} Keep the same person throughout the clip.\n\n${characterDescriptionSection}\n\nSCENE: ${scene.prompt.trim()}${expressionSection}\n\n${supportingReferenceSection} Keep the same character, hair, and skin tone throughout. Do not substitute a different person.`;
+  const supportingReferencePrefix = supportingReferenceSection ? `${supportingReferenceSection} ` : "";
+  scene.prompt = `PRIMARY FACE REFERENCE: ${faceAnchorInstructions} Keep the same person throughout the clip.\n\n${characterDescriptionSection}\n\nSCENE: ${scene.prompt.trim()}${expressionSection}\n\n${supportingReferencePrefix}Keep the same character, hair, and skin tone throughout. Do not substitute a different person.`;
   if (!/^[\x00-\x7F]+$/.test(scene.prompt)) throw new Error("Composed prompt must contain ASCII characters only.");
   if (scene.model !== "Omni 1.1 Flash" || scene.resolution !== "360p") {
     throw new Error("Phase 3 pilot is restricted to model='Omni 1.1 Flash' and resolution='360p'.");
@@ -1271,7 +1283,10 @@ async function prepare(args, browser, rl) {
   // Attach and verify the exact per-scene reference images only after closing Settings.
   // If Flow does not expose a unique add button, file input, and visible reference-item selector,
   // stop before filling the prompt or enabling a possible Create action.
+  const referenceUploadStartedAt = Date.now();
+  console.log(`Phase timing: reference upload started (${referenceImages.length} image(s)); asset-ready timeout=${ASSET_READY_TIMEOUT_MS}ms per image.`);
   const attachedReferenceUuids = await uploadSceneReferences(chosen.page, selectors, referenceImages, prompt);
+  console.log(`Phase timing: reference upload completed in ${Date.now() - referenceUploadStartedAt}ms.`);
   if (args.waitForResult) {
     try {
       const initialBalance = await readCreditBalance(chosen.page, selectors);

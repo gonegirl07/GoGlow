@@ -54,8 +54,8 @@ class FlowPilotContractTests(unittest.TestCase):
         self.assertIn("Model selector did not become visible within 5000ms", self.script)
 
     def test_waits_for_model_option_after_opening_model_menu(self):
-        self.assertIn('option.waitFor({ state: "visible", timeout: 5000 })', self.script)
-        self.assertIn("Model option did not become visible within 5000ms", self.script)
+        self.assertIn('option.waitFor({ state: "visible", timeout: 8000 })', self.script)
+        self.assertIn("Model option did not become stably visible within 8000ms", self.script)
 
     def test_dry_run_closes_readline_interface(self):
         self.assertIn("DRY RUN COMPLETE: stopped before clicking Create", self.script)
@@ -189,7 +189,7 @@ class FlowPilotContractTests(unittest.TestCase):
     def test_settings_failures_attempt_overlay_cleanup(self):
         self.assertIn("Settings preparation failed; attempted to close Flow overlays", self.script)
         self.assertIn('keyboard.press("Escape")', self.script)
-        self.assertIn('settings_trigger).click({ timeout: 1500 })', self.script)
+        self.assertIn('settings_trigger).click({ timeout: 4000 })', self.script)
 
     def test_dry_run_clears_prompt_by_default(self):
         self.assertIn("clearAfterDryRun: true", self.script)
@@ -228,9 +228,11 @@ class FlowPilotContractTests(unittest.TestCase):
         self.assertIn("verifiedOption.click({ timeout: 8000 })", choose_model)
 
     def test_preflight_screenshot_failure_is_nonfatal(self):
-        screenshot_block = self.script.split("// A screenshot is diagnostic only", 1)[1].split("const createEnabled", 1)[0]
+        screenshot_block = self.script.split("// A screenshot is diagnostic only", 1)[1].split("} catch (error) {\n    let cleanupStatus;", 1)[0]
         self.assertIn("timeout: 10000", screenshot_block)
         self.assertIn("non-fatal", screenshot_block)
+        self.assertIn("catch (screenshotError)", screenshot_block)
+        self.assertIn("console.warn", screenshot_block)
         self.assertNotIn("throw new Error", screenshot_block)
 
     def test_credit_cost_is_reported_and_overlay_is_closed_before_prompt_fill(self):
@@ -270,7 +272,9 @@ class FlowPilotContractTests(unittest.TestCase):
     def test_hybrid_face_description_and_expression_are_composed_near_prompt_end(self):
         self.assertIn('faceDescriptionMode === "hybrid"', self.script)
         self.assertIn("HYBRID FACE DESCRIPTION (brief matching traits only; reference images remain authoritative)", self.script)
-        self.assertIn("const normalizedExpression = scene.expression", self.script)
+        self.assertIn("const rawNormalizedExpression = scene.expression", self.script)
+        self.assertIn("rawNormalizedExpression.replace(/(?:[,;.]?\\s*)natural brief blinks only\\b/ig", self.script)
+        self.assertIn("const openEyesRequested =", self.script)
         self.assertIn("const expressionSection = normalizedExpression", self.script)
         self.assertIn("EXPRESSION AND EYE STATE (follow throughout the entire shot)", self.script)
         self.assertIn("this instruction takes priority over breathing or other subtle motion", self.script)
@@ -452,13 +456,32 @@ class FlowPilotContractTests(unittest.TestCase):
     def test_supporting_reference_sentence_is_conditional(self):
         self.assertIn('const supportingReferenceImages = referenceImages.filter(imagePath => !faceReferenceImages.includes(imagePath));', self.script)
         self.assertIn('const supportingReferenceSection = supportingReferenceImages.length', self.script)
-        self.assertIn('${supportingReferenceSection} Keep the same character, hair, and skin tone throughout.', self.script)
+        self.assertIn('${supportingReferencePrefix}Keep the same character, hair, and skin tone throughout.', self.script)
+        self.assertIn('const supportingReferencePrefix = supportingReferenceSection ?', self.script)
 
     def test_expression_punctuation_is_normalized_and_open_eyes_guard_is_added(self):
         self.assertIn('scene.expression.trim().replace(/[.!?]+\\s*$/, "")', self.script)
         self.assertIn('Eyes stay open from the first frame through the final frame; natural brief blinks only.', self.script)
+        self.assertIn('Wide full-body shot with the person appearing small in the frame.', self.script)
+        self.assertIn('Show the entire yoga mat and surrounding floor with clear empty space on every side', self.script)
         self.assertIn('No prolonged eye closure or eyes-closed meditation.', self.script)
         self.assertIn('EXPRESSION AND EYE STATE (follow throughout the entire shot): ${normalizedExpression}.', self.script)
+
+
+    def test_open_eyes_guard_does_not_duplicate_natural_blinks_clause(self):
+        self.assertIn('rawNormalizedExpression.replace(/(?:[,;.]?\\s*)natural brief blinks only\\b/ig', self.script)
+        self.assertIn('const openEyesRequested =', self.script)
+        self.assertIn('const openEyesGuard = openEyesRequested', self.script)
+
+    def test_composed_prompt_has_no_leading_space_before_final_character_guard(self):
+        self.assertIn('const supportingReferencePrefix = supportingReferenceSection ?', self.script)
+        self.assertIn('${supportingReferencePrefix}Keep the same character, hair, and skin tone throughout.', self.script)
+
+    def test_reference_upload_emits_phase_timings_to_diagnose_slow_dry_runs(self):
+        self.assertIn('Phase timing: reference upload started', self.script)
+        self.assertIn('Phase timing: reference upload completed in', self.script)
+        self.assertIn('Reference UUID ready:', self.script)
+        self.assertIn('total reference step', self.script)
 
     def test_watermark_status_is_recorded_for_human_qc(self):
         self.assertIn('watermark_status: scene.watermark_status || "not_reviewed"', self.script)
