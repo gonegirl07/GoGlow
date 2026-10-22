@@ -605,7 +605,7 @@ class FlowPilotContractTests(unittest.TestCase):
         self.assertIn('"data-asset-id"', self.script)
         self.assertIn('"data-media-id"', self.script)
         self.assertIn("Refusing to upload a duplicate; inspect the asset entry DOM", self.script)
-        self.assertIn("const assetUuid = await assetUuidFromLocator(asset)", self.script)
+        self.assertIn("let assetUuid = await assetUuidFromLocator(asset)", self.script)
 
     def test_clear_prompt_removes_ingredient_chips_and_verifies_each_removal(self):
         self.assertIn('button[aria-label*="remove" i]', self.script)
@@ -649,7 +649,6 @@ class FlowPilotContractTests(unittest.TestCase):
         self.assertIn("const allowUniqueUnresolvedAsset = existingCount === 1 && !assetUuid;", self.script)
         self.assertIn("unique-name-plus-attached-chip-verification", self.script)
         self.assertIn("Pinned Flow asset UUID mismatch after attach", self.script)
-        self.assertIn("const selectedChipUuid = null;", self.script) if False else None
 
     def test_upload_uuid_detection_checks_all_same_name_cards(self):
         self.assertIn("Inspect every same-name card, not only the first one", self.script)
