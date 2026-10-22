@@ -570,6 +570,9 @@ class FlowPilotContractTests(unittest.TestCase):
             "function createConfirmationReader()", 1
         )[0]
         self.assertIn("const topItem = scan.topItems?.[0] || null;", wait_fn)
+        self.assertIn("mediaUuid: mediaUuid ? mediaUuid.toLowerCase() : null", self.script)
+        self.assertIn("!item.key || !item.mediaUuid", self.script)
+        self.assertIn("topItem?.mediaUuid && topItem.key", wait_fn)
         self.assertIn("!beforeKeys.includes(topItem.key)", wait_fn)
         self.assertIn("const createdAt = element.querySelector(\"time[datetime]\")", self.script)
         self.assertIn("createdMs <= createMs", wait_fn)
