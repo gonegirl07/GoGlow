@@ -770,14 +770,45 @@ class FlowPilotContractTests(unittest.TestCase):
         self.assertIn("topLimit: 1, selectors", self.script)
         self.assertIn("args._waitInitialThumbnailTokens = initialScan.items.map(item => item.thumbnailSrc ? thumbnailIdentityToken(item.thumbnailSrc) : null).filter(Boolean);", self.script)
 
-    def test_pre_create_recheck_is_read_only_and_compares_first_thumbnail_token(self):
+    def test_pre_create_recheck_is_read_only_and_uses_bounded_neighbor_fallback(self):
         self.assertIn('event: "pre_create_first_tile_identity_recheck"', self.script)
         self.assertIn("const expectedFirstToken = args._waitInitialThumbnailTokens?.[0];", self.script)
         self.assertIn("if (currentFirstToken !== expectedFirstToken)", self.script)
         self.assertIn("read_only_dom_check: true", self.script)
-        self.assertIn("let stableCurrentGrid = false;", self.script)
-        self.assertIn("if (!stableCurrentGrid || currentTokens.length < 3", self.script)
+        self.assertIn("waitForPreCreateThumbnailSnapshot", self.script)
+        self.assertIn("accepted_by_neighbor_rule: preCreateSnapshot.acceptedByNeighborRule", self.script)
+        self.assertIn("acceptedByNeighborRule: stableFirstToken && (Number(lastSnapshot.tileCount) || 0) >= 3", self.script)
+        self.assertIn("}, ms => chosen.page.waitForTimeout(ms), 10000);", self.script)
         self.assertNotIn("const currentScan = await collectAllGeneratedItems(chosen.page, selectors.generated_video_items", self.script)
+
+    def test_pre_create_recheck_passes_when_third_thumbnail_loads_after_initial_nulls(self):
+        helper = "async function waitForPreCreateThumbnailSnapshot" + self.script.split(
+            "async function waitForPreCreateThumbnailSnapshot", 1
+        )[1].split("\\n\\nasync function prepare", 1)[0]
+        node_test = helper + r"""
+const assert = await import('node:assert/strict');
+let reads = 0;
+const readSnapshot = async () => {
+  reads += 1;
+  return { tileCount: 3, tokens: ['asb:first', 'asb:middle', reads < 5 ? null : 'asb:third'] };
+};
+const result = await waitForPreCreateThumbnailSnapshot(
+  readSnapshot, ms => new Promise(resolve => setTimeout(resolve, ms)), 10000
+);
+assert.equal(result.fullyStable, true);
+assert.equal(result.acceptedByNeighborRule, false);
+assert.deepEqual(result.tokens, ['asb:first', 'asb:middle', 'asb:third']);
+assert.ok(reads >= 6, 'must poll after initial null thumbnail before accepting the row');
+"""
+        result = subprocess.run(["node", "--input-type=module", "-e", node_test],
+                                capture_output=True, text=True, check=False, timeout=5)
+        self.assertEqual(result.returncode, 0, msg=result.stdout + result.stderr)
+
+    def test_abort_before_create_is_not_logged_as_unknown_submission(self):
+        self.assertIn('event: "submission_aborted_before_create"', self.script)
+        self.assertIn('status: "not_submitted"', self.script)
+        self.assertIn('console.error("No generation was submitted.', self.script)
+        self.assertIn('if (!createMayHaveBeenClicked)', self.script)
     def test_media_tile_reidentification_reselects_videos_waits_for_stable_grid_and_logs_tokens(self):
         resolver = self.script.split("const resolveUuidByOpeningTile = async (index, identity = null, rowIdentities = [], expectedTileCount = null) =>", 1)[1].split(
             "let stableBottomRounds = 0;", 1
