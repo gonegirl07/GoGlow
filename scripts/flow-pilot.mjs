@@ -1842,7 +1842,7 @@ async function prepare(args, browser, rl) {
       args._waitInitialItemCount = initialItems.length - failedBaselineItems.length;
       console.log(args.waitForResult
         ? "WAIT SELECTOR PREFLIGHT (read-only; no Create click; Videos tab selected when available; visible first row only; Failed tiles retained only as baseline UUIDs)"
-        : "DRY-RUN MEDIA BASELINE (read-only; no Create click; Videos tab selected when available; first 6 tiles only; no full-grid sweep)");
+        : "DRY-RUN MEDIA BASELINE (read-only; no Create click; Videos tab selected when available; visible first row only; no full-grid sweep)");
       console.log(JSON.stringify({
         mode: args.waitForResult ? "wait-preflight" : "dry-run-baseline",
         credit_balance: initialBalance,
@@ -1967,12 +1967,12 @@ async function prepare(args, browser, rl) {
       if (currentBalance === null) throw new Error("Credit balance could not be re-read immediately before Create; refusing to click.");
       args._waitInitialBalance = currentBalance;
       await activateVideosTab(chosen.page, selectors);
-      const currentScan = await collectAllGeneratedItems(chosen.page, selectors.generated_video_items, { uuidCache: args._waitUuidCache || new Map(), topLimit: 6, selectors });
-      if (!currentScan.topLimited || currentScan.items.length !== 6) throw new Error(`Pre-Create top-six baseline is incomplete (observed ${currentScan.items.length}); refusing to click Create.`);
+      const currentScan = await collectAllGeneratedItems(chosen.page, selectors.generated_video_items, { uuidCache: args._waitUuidCache || new Map(), topLimit: 3, selectors });
+      if (!currentScan.topLimited || currentScan.items.length < 3) throw new Error(`Pre-Create first-row baseline is incomplete (observed ${currentScan.items.length}); refusing to click Create.`);
       args._waitInitialItemKeys = currentScan.items.map(item => item.key);
       if (currentScan.unkeyedItemsDetected || currentScan.duplicateVisibleKeyDetected
         || currentScan.items.some(item => !item.mediaUuid) || new Set(args._waitInitialItemKeys).size !== args._waitInitialItemKeys.length) {
-        throw new Error("Pre-Create top-six media baseline is ambiguous; all six tiles must have stable unique UUIDs. Refusing to click Create.");
+        throw new Error("Pre-Create first-row media baseline is ambiguous; every visible first-row tile must have a stable unique UUID. Refusing to click Create.");
       }
       args._waitInitialItemCount = args._waitInitialItemKeys.length;
       console.log(`Final pre-Create baseline UUID count: ${args._waitInitialItemKeys.length}.`);
