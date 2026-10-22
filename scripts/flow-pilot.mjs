@@ -964,6 +964,87 @@ async function closeIngredientsPicker(page, selectors) {
   }
 }
 
+function isElementActuallyVisible(element) {
+  if (!element || !element.isConnected) return false;
+  const style = window.getComputedStyle(element);
+  const rect = element.getBoundingClientRect();
+  return style.display !== "none" && style.visibility !== "hidden"
+    && Number(style.opacity || 1) > 0 && rect.width > 0 && rect.height > 0;
+}
+
+async function countVisibleMatches(page, selector) {
+  return page.locator(selector).evaluateAll(nodes => nodes.filter(element => {
+    if (!element.isConnected) return false;
+    const style = window.getComputedStyle(element);
+    const rect = element.getBoundingClientRect();
+    return style.display !== "none" && style.visibility !== "hidden"
+      && Number(style.opacity || 1) > 0 && rect.width > 0 && rect.height > 0;
+  }).length).catch(() => -1);
+}
+
+async function waitForStableVisibleChipCount(page, selector, timeoutMs = 2000) {
+  const deadline = Date.now() + timeoutMs;
+  let previous = null;
+  let stableSince = Date.now();
+  let current = -1;
+  while (Date.now() < deadline) {
+    current = await countVisibleMatches(page, selector);
+    if (current === previous) {
+      if (Date.now() - stableSince >= 300) return current;
+    } else {
+      previous = current;
+      stableSince = Date.now();
+    }
+    await page.waitForTimeout(100);
+  }
+  return current;
+}
+
+async function resolveVisibleIngredientsPicker(page, selectors, filename, filenameStem) {
+  const containerSelector = '[role="dialog"], [aria-modal="true"], .cdk-overlay-pane';
+  const containers = page.locator(containerSelector);
+  const candidates = [];
+  const count = await containers.count().catch(() => 0);
+  for (let i = 0; i < count; i += 1) {
+    const container = containers.nth(i);
+    if (!(await container.isVisible().catch(() => false))) continue;
+    const tiles = container.locator(selectors.ingredient_library_item);
+    const tileCount = await tiles.count().catch(() => 0);
+    if (!tileCount) continue;
+    let exact = tiles.filter({ hasText: filename });
+    let matching = exact;
+    if (await matching.count().catch(() => 0) === 0 && filenameStem !== filename) {
+      matching = tiles.filter({ hasText: filenameStem });
+    }
+    let visibleMatches = 0;
+    const diagnostics = [];
+    const matchCount = await matching.count().catch(() => 0);
+    for (let j = 0; j < matchCount; j += 1) {
+      const tile = matching.nth(j);
+      const visible = await tile.isVisible().catch(() => false);
+      if (visible) visibleMatches += 1;
+      const box = visible ? await tile.boundingBox().catch(() => null) : null;
+      diagnostics.push({
+        index: j, visible, aria_selected: await tile.getAttribute("aria-selected").catch(() => null),
+        box: box ? { x: Math.round(box.x), y: Math.round(box.y), width: Math.round(box.width), height: Math.round(box.height) } : null,
+        text: (await tile.innerText().catch(() => "")).replace(/\s+/g, " ").trim().slice(0, 140),
+      });
+    }
+    candidates.push({ container, matching, tileCount, visibleMatches, diagnostics });
+  }
+  candidates.sort((a, b) => b.visibleMatches - a.visibleMatches);
+  const chosen = candidates[0];
+  console.log(JSON.stringify({
+    event: "ingredients_picker_scoped_inventory", filename,
+    candidate_containers: candidates.length,
+    candidates: candidates.map(c => ({ tile_count: c.tileCount, visible_matching_tiles: c.visibleMatches, tiles: c.diagnostics })),
+  }));
+  if (!chosen || chosen.visibleMatches < 1) {
+    throw new Error(`Could not find a visible ${filename} tile inside the open Ingredients picker/dialog; refusing to click a same-name tile elsewhere on the page.`);
+  }
+  return { container: chosen.container, matching: chosen.matching, visibleMatches: chosen.visibleMatches };
+}
+
 async function clearPromptContentsVerified(prompt, selectors, timeout = 2500) {
   const page = prompt.page();
   const initialHandle = await prompt.elementHandle();
