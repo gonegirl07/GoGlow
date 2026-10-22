@@ -1250,48 +1250,54 @@ async function uploadSceneReferencesUnsafe(page, selectors, referenceImages, ref
     }
     if (reusedExistingUuid) console.warn(`Reusing existing Flow library asset ${filename} -> UUID ${reusedExistingUuid}; inspect its thumbnail during dry-run before any execute.`);
 
-    await asset.click({ timeout: 2500 });
-    let attached = false;
-    const chipsAfterClick = await chips.count().catch(() => -1);
-    for (let i = 0; i < chipsAfterClick; i += 1) {
+    // Snapshot the currently attached chip identities before selecting this asset.
+    // Flow can keep earlier chips mounted while a new chip is added; never verify a
+    // requested asset by scanning all chips and accidentally reading an earlier one.
+    const beforeAttachChipCount = await chips.count();
+    const beforeAttachChipUuids = [];
+    for (let i = 0; i < beforeAttachChipCount; i += 1) {
       const src = await chips.nth(i).locator("img.chip-image").getAttribute("src").catch(() => null);
-      const chipUuid = assetUuidFromUrl(src);
-      if (chipUuid && assetUuid && chipUuid === assetUuid) attached = true;
-      if (chipUuid && !assetUuid) assetUuid = chipUuid;
+      const uuid = assetUuidFromUrl(src);
+      if (!uuid) throw new Error(`Existing Ingredients chip ${i + 1} has no verifiable UUID before attaching ${filename}.`);
+      beforeAttachChipUuids.push(uuid);
     }
-    if (!attached) {
-      const addToPrompt = await exactVisibleLocator(page, selectors.ingredient_add_to_prompt, "Add to prompt button");
-      let attachedAfterClick = false;
-      let lastClickError = null;
-      for (let clickAttempt = 0; clickAttempt < 3; clickAttempt += 1) {
-        try {
-          await addToPrompt.click({ timeout: 6000 });
-          lastClickError = null;
-        } catch (error) {
-          lastClickError = error;
-        }
-        attachedAfterClick = await page.waitForFunction(({ selector, uuid }) => Array.from(document.querySelectorAll(selector)).some(chip => {
-          const src = chip.querySelector("img.chip-image")?.getAttribute("src") || "";
-          return uuid ? src.toLowerCase().includes(uuid) : Boolean(src);
-        }), { selector: selectors.ingredient_reference_items, uuid: assetUuid }, { timeout: 2500 }).then(() => true).catch(() => false);
-        if (attachedAfterClick) break;
-        if (clickAttempt < 2) await page.waitForTimeout(350);
+    await asset.click({ timeout: 2500 });
+    const addToPrompt = await exactVisibleLocator(page, selectors.ingredient_add_to_prompt, "Add to prompt button");
+    let attachedAfterClick = false;
+    let lastClickError = null;
+    for (let clickAttempt = 0; clickAttempt < 3; clickAttempt += 1) {
+      try {
+        await addToPrompt.click({ timeout: 6000 });
+        lastClickError = null;
+      } catch (error) {
+        lastClickError = error;
       }
-      if (!attachedAfterClick) {
-        await closeIngredientsPicker(page, selectors);
-        const detail = lastClickError ? ` Last click error: ${lastClickError.message}` : "";
-        throw new Error(`Add to prompt did not attach asset ${filename} after 3 verified click attempts.${detail}`);
-      }
+      attachedAfterClick = await page.waitForFunction(({ selector, beforeCount }) =>
+        document.querySelectorAll(selector).length > beforeCount,
+        { selector: selectors.ingredient_reference_items, beforeCount: beforeAttachChipCount },
+        { timeout: 2500 }).then(() => true).catch(() => false);
+      if (attachedAfterClick) break;
+      if (clickAttempt < 2) await page.waitForTimeout(350);
     }
-    // Resolve the durable identity from the newly attached chip when thumbnail DOM
-    // and list responses do not expose it. The UUID pin, if supplied, is still enforced.
+    if (!attachedAfterClick) {
+      await closeIngredientsPicker(page, selectors);
+      const detail = lastClickError ? ` Last click error: ${lastClickError.message}` : "";
+      throw new Error(`Add to prompt did not add a new Ingredients chip for ${filename} after 3 verified click attempts.${detail}`);
+    }
+    // Identify the newly attached chip by set difference against the pre-click
+    // snapshot. This works whether Flow appends or prepends chips in its UI.
     const attachedChipCount = await chips.count();
-    let selectedChipUuid = null;
+    if (attachedChipCount !== beforeAttachChipCount + 1) {
+      await closeIngredientsPicker(page, selectors);
+      throw new Error(`Attaching ${filename} should add exactly one Ingredients chip; before=${beforeAttachChipCount}, after=${attachedChipCount}. Stopping before prompt fill/Create.`);
+    }
+    const afterAttachChipUuids = [];
     for (let i = 0; i < attachedChipCount; i += 1) {
       const src = await chips.nth(i).locator("img.chip-image").getAttribute("src").catch(() => null);
-      const candidate = assetUuidFromUrl(src);
-      if (candidate && (!assetUuid || candidate === assetUuid)) selectedChipUuid = candidate;
+      afterAttachChipUuids.push(assetUuidFromUrl(src));
     }
+    const newChipUuids = afterAttachChipUuids.filter(uuid => uuid && !beforeAttachChipUuids.includes(uuid));
+    const selectedChipUuid = newChipUuids.length === 1 ? newChipUuids[0] : null;
     if (!selectedChipUuid) {
       await closeIngredientsPicker(page, selectors);
       throw new Error(`Selected asset ${filename} was attached, but neither its library metadata nor Ingredients chip exposed a stable UUID. Stopping before prompt fill/Create.`);
@@ -1324,30 +1330,19 @@ async function uploadSceneReferencesUnsafe(page, selectors, referenceImages, ref
 }
 
 async function uploadSceneReferences(page, selectors, referenceImages, prompt, referenceAssetUuids = new Map()) {
-  let uploadError = null;
   try {
     return await uploadSceneReferencesUnsafe(page, selectors, referenceImages, referenceAssetUuids);
   } catch (error) {
-    uploadError = error;
-    throw error;
-  } finally {
-    if (uploadError) {
-      const cleanup = [];
-      try {
-        await closeIngredientsPicker(page, selectors);
-        cleanup.push("picker closed and verified");
-      } catch (closeError) {
-        cleanup.push(`picker closure FAILED: ${closeError.message}`);
-      }
-      try {
-        // Attempt clearing even if backdrop closure verification failed; report either failure explicitly.
-        await clearPromptContentsVerified(prompt, selectors, 4000);
-        cleanup.push("prompt and Ingredients chips cleared and verified");
-      } catch (clearError) {
-        cleanup.push(`prompt/chip cleanup FAILED: ${clearError.message}`);
-      }
-      console.error(`Upload failure cleanup (finally): ${cleanup.join("; ")}`);
+    // Close the picker here, but leave prompt/chip cleanup to the single outer
+    // pre-submit failure handler. That avoids contradictory "cleanup failed" and
+    // "cleanup succeeded" messages from two independent cleanup attempts.
+    try {
+      await closeIngredientsPicker(page, selectors);
+      console.error("Upload failure: Ingredients picker closed and verified; outer handler will verify prompt/chip cleanup.");
+    } catch (closeError) {
+      console.error(`Upload failure: picker closure FAILED: ${closeError.message}; outer handler will still attempt prompt/chip cleanup.`);
     }
+    throw error;
   }
 }
 
