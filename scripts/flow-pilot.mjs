@@ -991,20 +991,18 @@ async function resetIngredientsPicker(page, selectors) {
   console.log(JSON.stringify({ event: "ingredients_picker_reset_verified", closed: true }));
 }
 
-async function inspectAddToPromptContext(button, pickerContainer, tileSelector) {
-  return button.evaluate((buttonNode, args) => {
+async function inspectAddToPromptContext(pickerContainer, buttonSelector, tileSelector) {
+  return pickerContainer.evaluate((root, args) => {
     const uuidPattern = /[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/ig;
-    const uuidFrom = value => {
-      const matches = String(value || "").match(uuidPattern);
-      return matches ? matches[matches.length - 1].toLowerCase() : null;
-    };
     const visible = node => {
       const style = getComputedStyle(node);
       const rect = node.getBoundingClientRect();
       return style.display !== "none" && style.visibility !== "hidden"
         && Number(style.opacity || 1) > 0 && rect.width > 0 && rect.height > 0;
     };
-    const root = args.pickerContainer;
+    const buttons = Array.from(root.querySelectorAll(args.buttonSelector)).filter(visible);
+    if (buttons.length !== 1) return { error: "visible_button_count_not_one", visible_button_count: buttons.length, uuids: [], labels: [] };
+    const buttonNode = buttons[0];
     const tileNodes = Array.from(root.querySelectorAll(args.tileSelector));
     let node = buttonNode;
     let selected = null;
@@ -1013,20 +1011,23 @@ async function inspectAddToPromptContext(button, pickerContainer, tileSelector) 
       const tileCount = tileNodes.filter(tile => node === tile || node.contains(tile)).length;
       if (!images.length || tileCount > 1) continue;
       const values = [];
-      const add = value => { if (value) values.push(String(value)); };
       for (const el of [node, ...Array.from(node.querySelectorAll("*"))]) {
-        for (const attr of Array.from(el.attributes || [])) add(attr.value);
-        if (el.tagName === "IMG") { add(el.currentSrc); add(el.src); add(el.alt); add(el.title); }
-        add(el.innerText || el.textContent || "");
+        for (const attr of Array.from(el.attributes || [])) values.push(attr.value);
+        if (el.tagName === "IMG") values.push(el.currentSrc, el.src, el.alt, el.title);
+        values.push(el.innerText || el.textContent || "");
       }
-      const uuids = Array.from(new Set(values.flatMap(value => Array.from(value.matchAll(uuidPattern), match => match[0].toLowerCase()))));
-      const labels = Array.from(new Set(values.filter(value => /mai-face|ref-3|\.png|\.jpe?g/i.test(value)).map(value => value.slice(0, 180))));
+      const uuids = Array.from(new Set(values.flatMap(value => {
+        const matches = String(value || "").match(/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/ig);
+        return matches || [];
+      }).map(uuid => uuid.toLowerCase())));
+      const labels = Array.from(new Set(values.filter(value => /mai-face|ref-3|\\.png|\\.jpe?g/i.test(String(value || ""))).map(value => String(value).slice(0, 180))));
       selected = { depth, tile_count_in_context: tileCount, visible_image_count: images.length, uuids, labels,
-        context_tag: node.tagName.toLowerCase(), context_role: node.getAttribute("role"), context_text: String(node.innerText || node.textContent || "").replace(/\\s+/g, " ").trim().slice(0, 220) };
+        context_tag: node.tagName.toLowerCase(), context_role: node.getAttribute("role"),
+        context_text: String(node.innerText || node.textContent || "").replace(/\\s+/g, " ").trim().slice(0, 220) };
       if (uuids.length || labels.length) break;
     }
     return selected || { depth: null, tile_count_in_context: null, visible_image_count: 0, uuids: [], labels: [], context_tag: null, context_role: null, context_text: "" };
-  }, { pickerContainer: await pickerContainer.elementHandle(), tileSelector }).catch(error => ({
+  }, { buttonSelector, tileSelector }).catch(error => ({
     error: error.message, depth: null, tile_count_in_context: null, visible_image_count: 0, uuids: [], labels: []
   }));
 }
@@ -1697,7 +1698,7 @@ async function uploadSceneReferencesUnsafe(page, selectors, referenceImages, ref
       throw new Error("Ingredients picker Add to prompt button was not uniquely visible inside the active picker; stopping before chip attach.");
     }
     const expectedPreviewUuid = (requestedAssetUuidForPin || assetUuid || "").toLowerCase();
-    const previewContext = await inspectAddToPromptContext(addToPrompt, pickerContainer, selectors.ingredient_library_item);
+    const previewContext = await inspectAddToPromptContext(pickerContainer, addToPromptSelector, selectors.ingredient_library_item);
     console.log(JSON.stringify({
       event: "ingredients_picker_add_action_identity",
       filename,
