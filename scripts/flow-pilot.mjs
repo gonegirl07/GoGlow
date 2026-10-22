@@ -286,7 +286,7 @@ async function collectAllGeneratedItems(page, selector, { targetKey = null, maxS
         for (let gridPoll = 0; gridPoll < 20; gridPoll += 1) {
           currentTokens = await page.locator(selector).evaluateAll(elements => elements.slice(0, 6).map(element => {
             const source = element.querySelector("img")?.getAttribute("src") || "";
-            const asb = source.match(/\\/asb\\/([^/?#]+)/i);
+            const asb = source.match(/\/asb\/([^/?#]+)/i);
             if (asb) return `asb:${asb[1]}`;
             try { return new URL(source, location.href).pathname; }
             catch { return source.split(/[?#]/, 1)[0]; }
@@ -312,7 +312,7 @@ async function collectAllGeneratedItems(page, selector, { targetKey = null, maxS
           currentIndex = await page.locator(selector).evaluateAll((elements, expected) =>
             elements.findIndex(element => {
               const source = element.querySelector("img")?.getAttribute("src") || "";
-              const asb = source.match(/\\/asb\\/([^/?#]+)/i);
+              const asb = source.match(/\/asb\/([^/?#]+)/i);
               let token;
               if (asb) token = `asb:${asb[1]}`;
               else { try { token = new URL(source, location.href).pathname; } catch { token = source.split(/[?#]/, 1)[0]; } }
@@ -1065,7 +1065,7 @@ function assetUuidFromUrl(value) {
 
 function thumbnailIdentityToken(value) {
   const source = String(value || "");
-  const asbToken = source.match(/\\/asb\\/([^/?#]+)/i);
+  const asbToken = source.match(/\/asb\/([^/?#]+)/i);
   if (asbToken) return `asb:${asbToken[1]}`;
   try { return new URL(source, "https://flow.google.com").pathname; }
   catch { return source.split(/[?#]/, 1)[0]; }
