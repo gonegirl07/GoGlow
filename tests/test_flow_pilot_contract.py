@@ -583,8 +583,8 @@ class FlowPilotContractTests(unittest.TestCase):
 
     def test_flow_video_uuid_can_be_resolved_from_edit_route_when_tile_dom_has_no_uuid(self):
         self.assertIn("const resolveUuidByOpeningTile = async index =>", self.script)
-        self.assertIn('page.waitForFunction(() => /\\\\/edit\\\\/', self.script)
-        self.assertIn('const match = page.url().match(/\\\\/edit\\\\/', self.script)
+        self.assertIn(r'page.waitForFunction(() => /\\/edit\\/', self.script)
+        self.assertIn(r'const match = page.url().match(/\\/edit\\/', self.script)
         self.assertIn('await page.goBack({ waitUntil: "domcontentloaded", timeout: 10000 })', self.script)
         self.assertIn("uuidCache.set(item.hint, resolvedUuid)", self.script)
         self.assertIn("Could not resolve media UUID by opening tile index", self.script)
