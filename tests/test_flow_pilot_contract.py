@@ -253,7 +253,8 @@ class FlowPilotContractTests(unittest.TestCase):
     def test_hybrid_face_description_and_expression_are_composed_near_prompt_end(self):
         self.assertIn('faceDescriptionMode === "hybrid"', self.script)
         self.assertIn("HYBRID FACE DESCRIPTION (brief matching traits only; reference images remain authoritative)", self.script)
-        self.assertIn("const expressionSection = scene.expression", self.script)
+        self.assertIn("const normalizedExpression = scene.expression", self.script)
+        self.assertIn("const expressionSection = normalizedExpression", self.script)
         self.assertIn("EXPRESSION AND EYE STATE (follow throughout the entire shot)", self.script)
         self.assertIn("this instruction takes priority over breathing or other subtle motion", self.script)
         self.assertIn("Expression must be ASCII/English only", self.script)
