@@ -717,13 +717,15 @@ class FlowPilotContractTests(unittest.TestCase):
         self.assertIn("initialScan.items.length < 3", self.script)
         self.assertIn('baseline_strategy: "visible_first_row_min_3"', self.script)
         self.assertIn("topLimit: 1, selectors", self.script)
-        self.assertIn("args._waitInitialThumbnailTokens = initialScan.items.map(item => thumbnailIdentityToken(item.thumbnailSrc)).filter(Boolean);", self.script)
+        self.assertIn("args._waitInitialThumbnailTokens = initialScan.items.map(item => item.thumbnailSrc ? thumbnailIdentityToken(item.thumbnailSrc) : null).filter(Boolean);", self.script)
 
     def test_pre_create_recheck_is_read_only_and_compares_first_thumbnail_token(self):
         self.assertIn('event: "pre_create_first_tile_identity_recheck"', self.script)
         self.assertIn("const expectedFirstToken = args._waitInitialThumbnailTokens?.[0];", self.script)
         self.assertIn("if (currentFirstToken !== expectedFirstToken)", self.script)
         self.assertIn("read_only_dom_check: true", self.script)
+        self.assertIn("let stableCurrentGrid = false;", self.script)
+        self.assertIn("if (!stableCurrentGrid || currentTokens.length < 3", self.script)
         self.assertNotIn("const currentScan = await collectAllGeneratedItems(chosen.page, selectors.generated_video_items", self.script)
     def test_media_tile_reidentification_reselects_videos_waits_for_stable_grid_and_logs_tokens(self):
         resolver = self.script.split("const resolveUuidByOpeningTile = async (index, identity = null) =>", 1)[1].split(
