@@ -273,7 +273,7 @@ async function collectAllGeneratedItems(page, selector, { targetKey = null, maxS
     const gridUrl = page.url();
     const scrollTop = await readScrollTop();
     let lastError = null;
-    for (let attempt = 1; attempt <= 3; attempt += 1) {
+    for (let attempt = 1; attempt <= 5; attempt += 1) {
       try {
         // Re-enter the project grid and Videos tab for each attempt, then re-find
         // the same card by its thumbnail URL token instead of trusting a virtualized index.
@@ -283,16 +283,19 @@ async function collectAllGeneratedItems(page, selector, { targetKey = null, maxS
         // Wait for at least three visible first-row thumbnails and a stable two-snapshot token list.
         let previousTokens = null;
         let currentTokens = [];
-        for (let gridPoll = 0; gridPoll < 20; gridPoll += 1) {
+        // Do not treat three empty/lazy image elements as a stable grid. Require
+        // at least three non-empty thumbnail URL tokens in two consecutive snapshots.
+        for (let gridPoll = 0; gridPoll < 30; gridPoll += 1) {
           currentTokens = await page.locator(selector).evaluateAll(elements => elements.slice(0, 6).map(element => {
             const source = element.querySelector("img")?.getAttribute("src") || "";
-            const asb = source.match(/\/asb\/([^/?#]+)/i);
+            if (!source) return "";
+            const asb = source.match(/\\/asb\\/([^/?#]+)/i);
             if (asb) return `asb:${asb[1]}`;
             try { return new URL(source, location.href).pathname; }
             catch { return source.split(/[?#]/, 1)[0]; }
-          })).catch(() => []);
-          if (currentTokens.length >= 3 && previousTokens
-            && currentTokens.length === previousTokens.length
+          }).filter(Boolean)).catch(() => []);
+          if (currentTokens.length >= 3 && currentTokens.every(Boolean) && previousTokens
+            && previousTokens.length >= 3 && currentTokens.length === previousTokens.length
             && currentTokens.every((token, i) => token === previousTokens[i])) break;
           previousTokens = currentTokens;
           await page.waitForTimeout(250);
@@ -358,13 +361,13 @@ async function collectAllGeneratedItems(page, selector, { targetKey = null, maxS
           await page.waitForFunction(pathname => location.pathname === pathname, new URL(gridUrl).pathname, { timeout: 10000 }).catch(() => {});
           await restoreScrollTop(scrollTop).catch(() => {});
         }
-        if (attempt < 3) {
-          console.warn(`Retrying media UUID lookup for tile index ${index} (attempt ${attempt}/3): ${error.message}`);
+        if (attempt < 5) {
+          console.warn(`Retrying media UUID lookup for tile index ${index} (attempt ${attempt}/5): ${error.message}`);
           await page.waitForTimeout(400 * attempt);
         }
       }
     }
-    console.warn(`Could not resolve media UUID by opening tile index ${index} after 3 attempts: ${lastError?.message || "unknown error"}`);
+    console.warn(`Could not resolve media UUID by opening tile index ${index} after 5 attempts: ${lastError?.message || "unknown error"}`);
     return null;
   };
   let stableBottomRounds = 0;
@@ -1848,6 +1851,10 @@ async function prepare(args, browser, rl) {
       }
       args._waitInitialBalance = initialBalance;
       args._waitInitialItemKeys = initialItems;
+      args._waitInitialThumbnailTokens = initialScan.items.map(item => thumbnailIdentityToken(item.thumbnailSrc)).filter(Boolean);
+      if (args._waitInitialThumbnailTokens.length !== initialScan.items.length) {
+        throw new Error("First-row baseline requires a loaded thumbnail token for each of the three tiles.");
+      }
       args._waitUuidCache = baselineUuidCache;
       args._waitInitialItemCount = initialItems.length - failedBaselineItems.length;
       console.log(args.waitForResult
@@ -1980,16 +1987,45 @@ async function prepare(args, browser, rl) {
       const currentBalance = await readCreditBalance(chosen.page, selectors);
       if (currentBalance === null) throw new Error("Credit balance could not be re-read immediately before Create; refusing to click.");
       args._waitInitialBalance = currentBalance;
-      await activateVideosTab(chosen.page, selectors);
-      const currentScan = await collectAllGeneratedItems(chosen.page, selectors.generated_video_items, { uuidCache: args._waitUuidCache || new Map(), topLimit: 3, selectors });
-      if (!currentScan.topLimited || currentScan.items.length < 3) throw new Error(`Pre-Create first-row baseline is incomplete (observed ${currentScan.items.length}); refusing to click Create.`);
-      args._waitInitialItemKeys = currentScan.items.map(item => item.key);
-      if (currentScan.unkeyedItemsDetected || currentScan.duplicateVisibleKeyDetected
-        || currentScan.items.some(item => !item.mediaUuid) || new Set(args._waitInitialItemKeys).size !== args._waitInitialItemKeys.length) {
-        throw new Error("Pre-Create first-row media baseline is ambiguous; every visible first-row tile must have a stable unique UUID. Refusing to click Create.");
+      // Read-only pre-Create recheck: do not open tiles or resolve UUIDs again.
+      // The Ingredients/prompt UI can change the visible grid; re-opening a tile can
+      // also discard attached chips. Compare the first thumbnail token to the baseline.
+      const expectedFirstToken = args._waitInitialThumbnailTokens?.[0];
+      if (!expectedFirstToken) throw new Error("Pre-Create baseline has no first-tile thumbnail token; refusing to click Create.");
+      let currentTokens = [];
+      let previousTokens = null;
+      for (let poll = 0; poll < 30; poll += 1) {
+        currentTokens = await chosen.page.locator(selectors.generated_video_items).evaluateAll(elements =>
+          elements.slice(0, 3).map(element => {
+            const source = element.querySelector("img")?.getAttribute("src") || "";
+            if (!source) return "";
+            const asb = source.match(/\\/asb\\/([^/?#]+)/i);
+            if (asb) return `asb:${asb[1]}`;
+            try { return new URL(source, location.href).pathname; }
+            catch { return source.split(/[?#]/, 1)[0]; }
+          }).filter(Boolean)).catch(() => []);
+        if (currentTokens.length >= 3 && currentTokens.every(Boolean) && previousTokens
+          && previousTokens.length >= 3 && currentTokens.length === previousTokens.length
+          && currentTokens.every((token, i) => token === previousTokens[i])) break;
+        previousTokens = currentTokens;
+        await chosen.page.waitForTimeout(250);
+      }
+      const currentFirstToken = currentTokens[0] || null;
+      console.log(JSON.stringify({
+        event: "pre_create_first_tile_identity_recheck",
+        expected_first_thumbnail_token: expectedFirstToken,
+        current_first_thumbnail_token: currentFirstToken,
+        visible_first_three_thumbnail_tokens: currentTokens,
+        read_only_dom_check: true,
+      }, null, 2));
+      if (currentTokens.length < 3 || !currentTokens.every(Boolean)) {
+        throw new Error(`Pre-Create thumbnail recheck could not read three loaded tiles (observed ${currentTokens.length}); refusing to click Create.`);
+      }
+      if (currentFirstToken !== expectedFirstToken) {
+        throw new Error("Pre-Create first tile thumbnail token differs from the validated baseline; refusing to click Create.");
       }
       args._waitInitialItemCount = args._waitInitialItemKeys.length;
-      console.log(`Final pre-Create baseline UUID count: ${args._waitInitialItemKeys.length}.`);
+      console.log(`Pre-Create first tile token matches baseline; preserving ${args._waitInitialItemKeys.length} baseline UUIDs.`);
     }
     args._waitCreateClickedAt = new Date().toISOString();
     console.log(`Pre-Create baseline UUID count: ${args._waitInitialItemKeys?.length ?? 0}. Create timestamp: ${args._waitCreateClickedAt}`);
