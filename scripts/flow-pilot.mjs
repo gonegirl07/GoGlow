@@ -1620,7 +1620,10 @@ async function uploadSceneReferencesUnsafe(page, selectors, referenceImages, ref
       throw new Error(`Reference asset selection did not expose exactly one visible Add to prompt button for ${filename}; configured wait budget=${selectionWaitTimeoutMs}ms, actual elapsed=${Date.now() - selectionWaitStartedAt}ms, aria-selected=${JSON.stringify(selectedAssetAriaSelected)}, visible Add to prompt buttons=${addToPromptVisibleCount}, selection_retried=${selectionRetried}. Stopping safely before prompt fill/Create.`);
     }
     // Count/visibility is authoritative only after the selection state has settled.
-    const addToPrompt = await exactVisibleLocator(page, addToPromptSelector, "Add to prompt button", 1000);
+    const addToPrompt = pickerContainer.locator(addToPromptSelector);
+    if (await addToPrompt.count().catch(() => 0) !== 1 || !(await addToPrompt.isVisible().catch(() => false))) {
+      throw new Error("Ingredients picker Add to prompt button was not uniquely visible inside the active picker; stopping before chip attach.");
+    }
     let attachedAfterClick = false;
     let lastClickError = null;
     for (let clickAttempt = 0; clickAttempt < 3; clickAttempt += 1) {
