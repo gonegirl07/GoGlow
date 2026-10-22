@@ -158,14 +158,19 @@ async function readCreditBalance(page, selectors) {
 
 async function generatedItemKeys(page, selector) {
   return page.locator(selector).evaluateAll(elements => elements.map(element => {
-    // Prefer a concrete media link/source; generic data-testid values can be shared by every tile.
-    const key = element.getAttribute("href")
-      || element.querySelector("a[href]")?.getAttribute("href")
-      || element.querySelector("video")?.getAttribute("src")
-      || element.getAttribute("data-id")
-      || element.querySelector("img")?.getAttribute("src")
-      || "";
-    return String(key).trim();
+    const sources = [
+      element.getAttribute("href"),
+      element.querySelector("a[href]")?.getAttribute("href"),
+      element.querySelector("video")?.getAttribute("src"),
+      element.getAttribute("data-id"),
+      element.querySelector("img")?.getAttribute("src"),
+    ].filter(Boolean).map(String);
+    const uuidFrom = value => {
+      const matches = value.match(/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/ig);
+      return matches && matches.length ? matches[matches.length - 1].toLowerCase() : null;
+    };
+    const mediaUuid = sources.map(uuidFrom).find(Boolean);
+    return mediaUuid ? `media:${mediaUuid}` : String(sources[0] || "").trim();
   }));
 }
 
@@ -194,13 +199,21 @@ async function collectAllGeneratedItems(page, selector, { targetKey = null, maxS
   let duplicateVisibleKeyDetected = false;
   for (let step = 0; step <= maxScrolls; step += 1) {
     const visible = await page.locator(selector).evaluateAll(elements => elements.map((element, index) => {
-      // Prefer a concrete media link/source; generic data-testid values can be shared by every tile.
-      const key = element.getAttribute("href")
-        || element.querySelector("a[href]")?.getAttribute("href")
-        || element.querySelector("video")?.getAttribute("src")
-        || element.getAttribute("data-id")
-        || element.querySelector("img")?.getAttribute("src")
-        || "";
+      // Normalize media URLs to their stable UUID so deleted/Failed tiles and URL-shape
+      // changes cannot make the same video look like a newly-created item.
+      const sources = [
+        element.getAttribute("href"),
+        element.querySelector("a[href]")?.getAttribute("href"),
+        element.querySelector("video")?.getAttribute("src"),
+        element.getAttribute("data-id"),
+        element.querySelector("img")?.getAttribute("src"),
+      ].filter(Boolean).map(String);
+      const uuidFrom = value => {
+        const matches = value.match(/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/ig);
+        return matches && matches.length ? matches[matches.length - 1].toLowerCase() : null;
+      };
+      const mediaUuid = sources.map(uuidFrom).find(Boolean);
+      const key = mediaUuid ? `media:${mediaUuid}` : (sources[0] || "");
       const text = String(element.innerText || element.textContent || "").replace(/\s+/g, " ").trim();
       const state = [element.getAttribute("data-status"), element.getAttribute("data-state"),
         element.getAttribute("aria-label"), element.getAttribute("title")].filter(Boolean).join(" ");
@@ -459,15 +472,18 @@ async function waitForGenerationAndDownload(page, selectors, { beforeKeys, befor
     // A result is eligible only when its concrete key was absent from the pre-Create snapshot.
     // Never promote the first visible tile just because the grid count increased.
     const newItems = scan.items.filter(item => item.key && !beforeKeys.includes(item.key));
-    const candidateItems = newItems;
+    // Failed tiles already in the pre-Create UUID baseline are not new results.
+    // A newly failed UUID is still detected below and stops the batch safely.
+    const candidateItems = newItems.filter(item =>
+      !(/\bfailed\b/i.test(`${item.state} ${item.text}`) || isGenerationFailureText(`${item.state} ${item.text}`)));
     const failedTile = newItems.find(item =>
       /\bfailed\b/i.test(`${item.state} ${item.text}`)
       || isGenerationFailureText(`${item.state} ${item.text}`));
     if (failedTile) {
       throw new Error(`FLOW_GENERATION_FAILED: new Flow tile ${failedTile.key} reports failure: ${failedTile.text || failedTile.state}`);
     }
-    if (newItems.length > 1) {
-      throw new Error(`More than one new Flow video tile appeared after a full virtualized-grid sweep (${newItems.length}); refusing to guess which clip to download.`);
+    if (candidateItems.length > 1) {
+      throw new Error(`More than one new non-failed Flow video tile appeared after a full virtualized-grid sweep (${candidateItems.length}); refusing to guess which clip to download.`);
     }
     if (candidateItems.length === 1 && !attemptedKeys.has(candidateItems[0].key)) {
       newKey = candidateItems[0].key;
@@ -1052,7 +1068,7 @@ async function loadInputs(args) {
   scene.framing_helper_applied = scene.framing_helper === false ? false : (scene.framing_helper === true || seatedShot);
   if (scene.framing_helper_applied) {
     scene.prompt = scene.prompt.replace(/\b(?:fills?|occupies?)\s+(?:about\s+)?\d{1,3}\s*(?:percent|%)\s+of\s+(?:the\s+)?frame\s+width\b/gi, "is framed from head to knees");
-    const framingSentence = "Wide full-body shot with the person appearing small in the frame. Show the entire yoga mat and surrounding floor with clear empty space on every side, including well beyond both knees and feet. Keep the whole seated pose comfortably inside the frame; do not crop the body or mat. Locked-off tripod shot from the first frame: the camera does not move, pan, tilt, dolly, or zoom at any time.";
+    const framingSentence = "Medium-wide full-body shot. The person and yoga mat fill most of the frame while keeping the entire head, both knees, feet, and mat visible with a modest, clear margin on every side. Keep the face large enough for facial features to remain readable; do not leave excessive empty floor or make the person appear small. Do not crop the body or mat. Locked-off tripod shot from the first frame: the camera does not move, pan, tilt, dolly, or zoom at any time.";
     if (!scene.prompt.includes(framingSentence)) scene.prompt = scene.prompt.trim() + " " + framingSentence;
   }
   if (scene.character_description && !/^[\x00-\x7F]+$/.test(scene.character_description)) throw new Error("Character description must be ASCII/English only; non-ASCII characters are blocked before touching Flow.");
@@ -1137,7 +1153,7 @@ async function loadInputs(args) {
     ? rawNormalizedExpression.replace(/(?:[,;.]?\s*)natural brief blinks only\b/ig, "").trim().replace(/[.!?]+\s*$/, "")
     : rawNormalizedExpression;
   const openEyesGuard = openEyesRequested
-    ? " Eyes stay open from the first frame through the final frame; natural brief blinks only. No prolonged eye closure or eyes-closed meditation."
+    ? " Eyes remain clearly open throughout the entire shot; she looks directly at the camera and smiles warmly with teeth visible from the first frame to the final frame; natural brief blinks only. No prolonged eye closure or eyes-closed meditation."
     : "";
   const expressionSection = normalizedExpression
     ? `\n\nEXPRESSION AND EYE STATE (follow throughout the entire shot): ${normalizedExpression}.${openEyesGuard} Keep this expression and eye state consistent from the first frame to the last; this instruction takes priority over breathing or other subtle motion.`
@@ -1333,16 +1349,28 @@ async function prepare(args, browser, rl) {
       if (initialBalance === null) throw new Error("Could not read an integer credit balance.");
       const videosTabState = await activateVideosTab(chosen.page, selectors);
       const initialScan = await collectAllGeneratedItems(chosen.page, selectors.generated_video_items);
+      // Keep every stable media UUID in the baseline, including Failed tiles, so a
+      // later disappearing/refunded tile cannot make another existing card look new.
+      // Failed tiles are diagnostics only and never count as usable video candidates.
       const initialItems = initialScan.items.map(item => item.key);
+      const failedBaselineItems = initialScan.items.filter(item =>
+        /\bfailed\b/i.test(`${item.state} ${item.text}`) || isGenerationFailureText(`${item.state} ${item.text}`));
       if (initialScan.unkeyedItemsDetected || initialScan.duplicateVisibleKeyDetected
         || initialItems.some(key => !key) || new Set(initialItems).size !== initialItems.length) {
-        throw new Error("generated_video_items selector must expose a stable key for every tile and distinct keys within each viewport across a full virtualized-grid sweep.");
+        throw new Error("generated_video_items selector must expose a stable media UUID/key for every tile and distinct keys within each viewport across a full virtualized-grid sweep.");
       }
       args._waitInitialBalance = initialBalance;
       args._waitInitialItemKeys = initialItems;
-      args._waitInitialItemCount = initialItems.length;
-      console.log("WAIT SELECTOR PREFLIGHT (read-only; no Create click; Videos tab selected when available; virtualized grid swept)");
-      console.log(JSON.stringify({ credit_balance: initialBalance, videos_tab_state: videosTabState, existing_video_tile_count: initialItems.length, existing_video_tile_keys: initialItems }, null, 2));
+      args._waitInitialItemCount = initialItems.length - failedBaselineItems.length;
+      console.log("WAIT SELECTOR PREFLIGHT (read-only; no Create click; Videos tab selected when available; virtualized grid swept; Failed tiles retained only as baseline UUIDs)");
+      console.log(JSON.stringify({
+        credit_balance: initialBalance,
+        videos_tab_state: videosTabState,
+        existing_video_tile_count: args._waitInitialItemCount,
+        ignored_failed_tile_count: failedBaselineItems.length,
+        ignored_failed_tile_keys: failedBaselineItems.map(item => item.key),
+        baseline_media_keys: initialItems,
+      }, null, 2));
       console.log(`Phase timing: wait selector preflight completed in ${Date.now() - waitPreflightStartedAt}ms.`);
     } catch (error) {
       let cleanup = "Prompt/Ingredients cleanup was not verified.";

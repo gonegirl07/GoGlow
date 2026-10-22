@@ -175,7 +175,11 @@ class FlowPilotContractTests(unittest.TestCase):
 
     def test_virtualized_flow_grid_uses_new_stable_keys_not_tile_count(self):
         self.assertIn("const newItems = scan.items.filter(item => item.key && !beforeKeys.includes(item.key))", self.script)
-        self.assertIn("Prefer a concrete media link/source; generic data-testid values can be shared by every tile.", self.script)
+        self.assertIn("Normalize media URLs to their stable UUID", self.script)
+        self.assertIn("const mediaUuid = sources.map(uuidFrom).find(Boolean)", self.script)
+        self.assertIn("baseline_media_keys: initialItems", self.script)
+        self.assertIn("ignored_failed_tile_keys: failedBaselineItems.map(item => item.key)", self.script)
+        self.assertIn("const candidateItems = newItems.filter(item =>", self.script)
         self.assertIn("async function collectAllGeneratedItems(page, selector", self.script)
         self.assertNotIn("count > beforeCount", self.script)
 
@@ -451,9 +455,10 @@ class FlowPilotContractTests(unittest.TestCase):
     def test_seated_shots_get_head_to_knees_framing_and_wide_knee_margins(self):
         self.assertIn('scene.framing_helper_applied', self.script)
         self.assertIn('Locked-off tripod shot from the first frame: the camera does not move, pan, tilt, dolly, or zoom at any time', self.script)
-        self.assertIn('Wide full-body shot with the person appearing small in the frame.', self.script)
-        self.assertIn('Show the entire yoga mat and surrounding floor with clear empty space on every side', self.script)
-        self.assertIn('Keep the whole seated pose comfortably inside the frame; do not crop the body or mat.', self.script)
+        self.assertIn('Medium-wide full-body shot.', self.script)
+        self.assertIn('The person and yoga mat fill most of the frame', self.script)
+        self.assertIn('Keep the face large enough for facial features to remain readable', self.script)
+        self.assertIn('Do not crop the body or mat.', self.script)
         self.assertIn('is framed from head to knees', self.script)
         self.assertIn('scene.framing_helper === false ? false', self.script)
 
@@ -465,9 +470,9 @@ class FlowPilotContractTests(unittest.TestCase):
 
     def test_expression_punctuation_is_normalized_and_open_eyes_guard_is_added(self):
         self.assertIn('scene.expression.trim().replace(/[.!?]+\\s*$/, "")', self.script)
-        self.assertIn('Eyes stay open from the first frame through the final frame; natural brief blinks only.', self.script)
-        self.assertIn('Wide full-body shot with the person appearing small in the frame.', self.script)
-        self.assertIn('Show the entire yoga mat and surrounding floor with clear empty space on every side', self.script)
+        self.assertIn('Eyes remain clearly open throughout the entire shot; she looks directly at the camera and smiles warmly with teeth visible from the first frame to the final frame; natural brief blinks only.', self.script)
+        self.assertIn('Medium-wide full-body shot.', self.script)
+        self.assertIn('The person and yoga mat fill most of the frame', self.script)
         self.assertIn('No prolonged eye closure or eyes-closed meditation.', self.script)
         self.assertIn('EXPRESSION AND EYE STATE (follow throughout the entire shot): ${normalizedExpression}.', self.script)
 
