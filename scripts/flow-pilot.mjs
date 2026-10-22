@@ -233,9 +233,15 @@ async function collectAllGeneratedItems(page, selector, { targetKey = null, maxS
     const gridUrl = page.url();
     const scrollTop = await readScrollTop();
     try {
-      await page.locator(selector).nth(index).click({ timeout: 3000 });
-      await page.waitForFunction(() => /\/edit\/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}(?:[/?#]|$)/i.test(location.pathname), null, { timeout: 4000 });
-      const match = page.url().match(/\/edit\/([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})(?:[/?#]|$)/i);
+      const tile = page.locator(selector).nth(index);
+      await tile.scrollIntoViewIfNeeded({ timeout: 2500 }).catch(() => {});
+      // Grid tiles animate/virtualize during scrolling; wait briefly, then force the
+      // indexed tile click to bypass Playwright's transient "element is not stable" check.
+      // The destination UUID is still verified from the edit route.
+      await page.waitForTimeout(500);
+      await tile.click({ timeout: 3000, force: true });
+      await page.waitForFunction(() => /\\/edit\\/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}(?:[/?#]|$)/i.test(location.pathname), null, { timeout: 5000 });
+      const match = page.url().match(/\\/edit\\/([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})(?:[/?#]|$)/i);
       const uuid = match?.[1]?.toLowerCase() || null;
       await page.goBack({ waitUntil: "domcontentloaded", timeout: 10000 });
       await page.waitForFunction(pathname => location.pathname === pathname, new URL(gridUrl).pathname, { timeout: 8000 }).catch(() => {});
@@ -767,7 +773,22 @@ async function clearPromptContentsVerified(prompt, selectors, timeout = 2500) {
   const initialChipCount = await page.locator(selectors.ingredient_reference_items).count().catch(() => -1);
   if (String(initialValue).trim() === "" && initialChipCount === 0) return;
   const clearButton = await exactVisibleLocator(page, selectors.clear_prompt, "Clear prompt button");
-  await clearButton.click({ timeout: 2500 });
+  try {
+    await clearButton.click({ timeout: 2500 });
+  } catch (clickError) {
+    // A timeout can be reported after Flow already handled the click during an animation.
+    // Re-check actual state before deciding cleanup failed.
+    await page.waitForTimeout(250);
+    const afterClickHandle = await prompt.elementHandle();
+    const afterClickValue = afterClickHandle
+      ? await afterClickHandle.evaluate(element => ("value" in element) ? element.value : (element.innerText || element.textContent || ""))
+      : "__PROMPT_MISSING__";
+    const afterClickChips = await page.locator(selectors.ingredient_reference_items).count().catch(() => -1);
+    if (String(afterClickValue).trim() !== "" || afterClickChips !== 0) {
+      throw new Error(`Clear prompt click did not complete and state is not empty (prompt=${JSON.stringify(String(afterClickValue).trim())}, chips=${afterClickChips}): ${clickError.message}`);
+    }
+    return;
+  }
   const handle = await prompt.elementHandle();
   if (!handle) throw new Error("Prompt textbox disappeared before empty-state verification.");
   try {
@@ -787,12 +808,14 @@ async function clearPromptContentsVerified(prompt, selectors, timeout = 2500) {
     if (await remove.count().catch(() => 0) === 0 || !(await remove.isVisible().catch(() => false))) {
       throw new Error(`Clear prompt removed text but left ${chipCount} Ingredients chip(s), and no verified remove control was found. Remove chips manually before continuing.`);
     }
-    await remove.click({ timeout: 2500 });
+    let removeClickError = null;
+    try { await remove.click({ timeout: 1500 }); } catch (error) { removeClickError = error; }
     try {
+      // State change, not click return, is decisive if the hover animation times out.
       await page.waitForFunction(({ selector, expected }) => document.querySelectorAll(selector).length < expected,
-        { selector: selectors.ingredient_reference_items, expected: chipCount }, { timeout });
+        { selector: selectors.ingredient_reference_items, expected: chipCount }, { timeout: Math.max(timeout, 3000) });
     } catch {
-      throw new Error(`Clicked an Ingredients chip remove control but chip count did not decrease from ${chipCount}; stop and inspect Flow manually.`);
+      throw new Error(`Ingredients chip count did not decrease from ${chipCount}${removeClickError ? ` after remove click timeout: ${removeClickError.message}` : ""}; stop and inspect Flow manually.`);
     }
     chipCount = await page.locator(selectors.ingredient_reference_items).count().catch(() => -1);
   }
@@ -995,9 +1018,22 @@ async function uploadSceneReferencesUnsafe(page, selectors, referenceImages) {
     }
     const existingUuids = new Set();
     const existingCount = await matchingAssets.count().catch(() => 0);
-    for (let i = 0; i < existingCount; i += 1) {
-      const uuid = await assetUuidFromLocator(matchingAssets.nth(i));
-      if (uuid) existingUuids.add(uuid);
+    // Flow lazily upgrades old thumbnail URLs from /asb/<token> to
+    // flow-content/image/<uuid>. Poll matching cards before declaring UUIDs unreadable.
+    const thumbnailDeadline = Date.now() + 7000;
+    let thumbnailPolls = 0;
+    do {
+      existingUuids.clear();
+      for (let i = 0; i < existingCount; i += 1) {
+        const uuid = await assetUuidFromLocator(matchingAssets.nth(i));
+        if (uuid) existingUuids.add(uuid);
+      }
+      if (existingUuids.size === existingCount || Date.now() >= thumbnailDeadline) break;
+      thumbnailPolls += 1;
+      await page.waitForTimeout(250);
+    } while (Date.now() < thumbnailDeadline);
+    if (thumbnailPolls > 0) {
+      console.log(`Waited for Flow asset thumbnail UUIDs: ${filename}, polls=${thumbnailPolls}, elapsed_ms=${Math.min(7000, thumbnailPolls * 250)}`);
     }
 
     console.log(JSON.stringify({
