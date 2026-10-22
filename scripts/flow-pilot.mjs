@@ -1197,7 +1197,9 @@ async function prepare(args, browser, rl) {
   let createMayHaveBeenClicked = false;
   try {
   console.log(`Selected existing tab [${chosen.index}] context=${chosen.contextIndex}\nTitle: ${chosen.title}\nURL: ${chosen.url}\nProject ID: ${chosen.projectId || "legacy Flow route"}`);
+  const accountStartedAt = Date.now();
   const account = await verifyAccount(chosen.page, selectors, args.expectedEmail);
+  console.log(`Phase timing: account verification completed in ${Date.now() - accountStartedAt}ms.`);
   console.log(`Verified account email from page DOM: ${account.observedEmail}`);
   if (!args._accountConfirmed) {
     await askExact(
@@ -1212,6 +1214,7 @@ async function prepare(args, browser, rl) {
   const create = await exactVisibleLocator(chosen.page, selectors.create, "Create button");
   const settings = await exactVisibleLocator(chosen.page, selectors.settings_trigger, "settings trigger");
 
+  const settingsStartedAt = Date.now();
   // Normalize the settings overlay state. If its controls are already visible, toggle it
   // closed first. A separate account-menu overlay is not dismissed blindly; stop safely.
   const modelAlreadyVisible = await chosen.page.locator(selectors.model).count() === 1
@@ -1274,6 +1277,7 @@ async function prepare(args, browser, rl) {
     }
     throw new Error(`Settings preparation failed; attempted to close Flow overlays before stopping: ${error.message}`);
   }
+  console.log(`Phase timing: settings preparation completed in ${Date.now() - settingsStartedAt}ms.`);
   if (chosen.page.url() !== originalUrl || !isFlowUrl(chosen.page.url())) {
     throw new Error("Flow tab URL changed unexpectedly while preparing. Stopping before Create.");
   }
@@ -1288,6 +1292,7 @@ async function prepare(args, browser, rl) {
   const attachedReferenceUuids = await uploadSceneReferences(chosen.page, selectors, referenceImages, prompt);
   console.log(`Phase timing: reference upload completed in ${Date.now() - referenceUploadStartedAt}ms.`);
   if (args.waitForResult) {
+    const waitPreflightStartedAt = Date.now();
     try {
       const initialBalance = await readCreditBalance(chosen.page, selectors);
       if (initialBalance === null) throw new Error("Could not read an integer credit balance.");
@@ -1303,6 +1308,7 @@ async function prepare(args, browser, rl) {
       args._waitInitialItemCount = initialItems.length;
       console.log("WAIT SELECTOR PREFLIGHT (read-only; no Create click; Videos tab selected when available; virtualized grid swept)");
       console.log(JSON.stringify({ credit_balance: initialBalance, videos_tab_state: videosTabState, existing_video_tile_count: initialItems.length, existing_video_tile_keys: initialItems }, null, 2));
+      console.log(`Phase timing: wait selector preflight completed in ${Date.now() - waitPreflightStartedAt}ms.`);
     } catch (error) {
       let cleanup = "Prompt/Ingredients cleanup was not verified.";
       try {
@@ -1317,6 +1323,7 @@ async function prepare(args, browser, rl) {
 
   // Only now modify the prompt. If fill fails, attempt to clear it before returning an error.
   const screenshot = path.resolve(args.screenshot || `flow-pilot-${scene.scene_id.replace(/[^a-zA-Z0-9_-]/g, "_")}-${args.execute ? "execute" : "dry-run"}.png`);
+  const promptFillStartedAt = Date.now();
   try {
     await prompt.fill(scene.prompt, { timeout: 2500 });
     await waitForCreateEnabled(chosen.page, create, 5000);
@@ -1338,6 +1345,7 @@ async function prepare(args, browser, rl) {
     }
     throw new Error(`Dry-run preparation failed after prompt fill: ${error.message}. ${cleanupStatus}`);
   }
+  console.log(`Phase timing: prompt fill, readiness checks and screenshot completed in ${Date.now() - promptFillStartedAt}ms.`);
   const createEnabled = await create.isEnabled().catch(() => false);
   console.log("\nREADY-TO-CREATE CHECK (reference images were attached and verified before this check)");
   console.log(JSON.stringify({
