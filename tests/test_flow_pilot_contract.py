@@ -183,7 +183,7 @@ class FlowPilotContractTests(unittest.TestCase):
         self.assertIn("Refusing to overwrite an existing scene/attempt download", self.script)
 
     def test_virtualized_flow_grid_uses_new_stable_keys_not_tile_count(self):
-        self.assertIn("const topItem = scan.topItems?.[0] || null;", self.script)
+        self.assertIn("const topItemsNow = scan.items || scan.topItems || [];", self.script)
         self.assertIn("const newItems = findNewCompletedMediaItems(topItemsNow, beforeKeys);", self.script)
         self.assertIn("Normalize media URLs to their stable UUID", self.script)
         self.assertIn("thumbnailSrc || sources[0]", self.script)
@@ -588,7 +588,7 @@ class FlowPilotContractTests(unittest.TestCase):
         self.assertIn("mediaUuid: mediaUuid ? mediaUuid.toLowerCase() : null", self.script)
         self.assertIn("!item.key || !item.mediaUuid", self.script)
         self.assertIn("!item?.mediaUuid || !item.key", self.script)
-        self.assertIn("!beforeKeys.includes(item.key)", self.script)
+        self.assertIn("baseline.has(item.key)", self.script)
         self.assertIn("const createdAt = element.querySelector(\"time[datetime]\")", self.script)
         self.assertIn("createdMs <= createMs", wait_fn)
         self.assertIn("result remains unknown and will not be downloaded", wait_fn)
@@ -836,7 +836,7 @@ assert.deepEqual(findNewCompletedMediaItems([
         self.assertIn("topLimit: 3", self.script)
         self.assertIn("FLOW_SUBMITTED_UNIDENTIFIED:", self.script)
         self.assertIn('resultStatus === "submitted_unidentified" ? "submitted_unidentified"', self.script)
-        self.assertIn('status: "submitted_unidentified_do_not_retry"', self.script)
+        self.assertIn('resultStatus === "submitted_unidentified" ? "submitted_unidentified_do_not_retry"', self.script)
 
     def test_resolution_verification_polls_aria_checked_before_failing(self):
         self.assertIn("const deadline = Date.now() + 3000;", self.script)
