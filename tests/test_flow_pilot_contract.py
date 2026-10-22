@@ -175,7 +175,8 @@ class FlowPilotContractTests(unittest.TestCase):
         self.assertIn("Refusing to overwrite an existing scene/attempt download", self.script)
 
     def test_virtualized_flow_grid_uses_new_stable_keys_not_tile_count(self):
-        self.assertIn("const newItems = scan.items.filter(item => item.key && !beforeKeys.includes(item.key))", self.script)
+        self.assertIn("const topItem = scan.topItems?.[0] || null;", self.script)
+        self.assertIn("const newItems = topItem?.mediaUuid && topItem.key && !beforeKeys.includes(topItem.key) ? [topItem] : [];", self.script)
         self.assertIn("Normalize media URLs to their stable UUID", self.script)
         self.assertIn("const mediaUuid = sources.map(uuidFrom).find(Boolean)", self.script)
         self.assertIn("baseline_media_keys: initialItems", self.script)
