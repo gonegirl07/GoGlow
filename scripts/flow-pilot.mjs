@@ -353,10 +353,11 @@ async function collectAllGeneratedItems(page, selector, { targetKey = null, maxS
         const matches = value.match(/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/ig);
         return matches && matches.length ? matches[matches.length - 1].toLowerCase() : null;
       };
+      const thumbnailSrc = element.querySelector("img")?.getAttribute("src") || null;
       const mediaUuid = sources.map(uuidFrom).find(Boolean);
-      const hint = [String(element.innerText || element.textContent || "").replace(/\s+/g, " ").trim(), ...sources].join("|");
-      const key = mediaUuid ? `media:${mediaUuid}` : (sources[0] || "");
       const text = String(element.innerText || element.textContent || "").replace(/\s+/g, " ").trim();
+      const hint = [text, ...sources].join("|");
+      const key = mediaUuid ? `media:${mediaUuid}` : (thumbnailSrc || sources[0] || "");
       const state = [element.getAttribute("data-status"), element.getAttribute("data-state"),
         element.getAttribute("aria-label"), element.getAttribute("title")].filter(Boolean).join(" ");
       const progress = Boolean(element.querySelector('[role="progressbar"], progress, [aria-valuenow]'));
@@ -1757,7 +1758,8 @@ async function prepare(args, browser, rl) {
         /\bfailed\b/i.test(`${item.state} ${item.text}`) || isGenerationFailureText(`${item.state} ${item.text}`));
       console.log(JSON.stringify({
         event: "baseline_media_inventory_summary",
-        baseline_strategy: "top_6_tiles_only",\n        reached_bottom: initialScan.reachedBottom,
+        baseline_strategy: "top_6_tiles_only",
+        reached_bottom: initialScan.reachedBottom,
         tile_count: initialScan.items.length,
         uuid_count: baselineUuids.length,
         uuid_sample_first_5: baselineUuids.slice(0, 5),
@@ -1773,7 +1775,7 @@ async function prepare(args, browser, rl) {
       args._waitUuidCache = baselineUuidCache;
       args._waitInitialItemCount = initialItems.length - failedBaselineItems.length;
       console.log(args.waitForResult
-        ? "WAIT SELECTOR PREFLIGHT (read-only; no Create click; Videos tab selected when available; virtualized grid swept; Failed tiles retained only as baseline UUIDs)"
+        ? "WAIT SELECTOR PREFLIGHT (read-only; no Create click; Videos tab selected when available; first 6 tiles only; Failed tiles retained only as baseline UUIDs)"
         : "DRY-RUN MEDIA BASELINE (read-only; no Create click; Videos tab selected when available; first 6 tiles only; no full-grid sweep)");
       console.log(JSON.stringify({
         mode: args.waitForResult ? "wait-preflight" : "dry-run-baseline",
