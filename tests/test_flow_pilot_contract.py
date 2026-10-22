@@ -128,7 +128,7 @@ class FlowPilotContractTests(unittest.TestCase):
         self.assertIn('["credit_balance", "generated_video_items", "download_media_button", "download_360p_original_button", "account_panel_open", "account_panel_close"]', self.script)
 
     def test_wait_tracks_new_tile_by_stable_identity_and_never_retries(self):
-        self.assertIn('collectAllGeneratedItems(page, selectors.generated_video_items)', self.script)
+        self.assertIn('collectAllGeneratedItems(page, selectors.generated_video_items, { uuidCache })', self.script)
         self.assertIn('candidateItems.length === 1', self.script)
         self.assertIn('refusing to guess which clip to download', self.script)
         self.assertIn('status: "unknown_do_not_retry"', self.script)
