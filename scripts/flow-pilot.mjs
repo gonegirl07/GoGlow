@@ -509,27 +509,35 @@ async function activateVideosTab(page, selectors) {
     return "configured_selector";
   }
   const roleTab = page.getByRole("tab", { name: /^Videos$/i });
-  const tabCount = await roleTab.count().catch(() => 0);
-  for (let i = 0; i < tabCount; i += 1) {
-    const candidate = roleTab.nth(i);
-    if (await candidate.isVisible().catch(() => false)) {
-      await candidate.click({ timeout: 3000 });
-      await page.waitForTimeout(300);
-      return "role=tab";
-    }
-  }
-  // Flow's sidebar may expose Videos as a button, and responsive layouts can
-  // leave duplicate hidden buttons in the DOM. Click the first visible exact match.
   const button = page.getByRole("button", { name: /^Videos$/i });
-  const buttonCount = await button.count().catch(() => 0);
-  for (let i = 0; i < buttonCount; i += 1) {
-    const candidate = button.nth(i);
-    if (await candidate.isVisible().catch(() => false)) {
-      await candidate.click({ timeout: 3000 });
-      await page.waitForTimeout(300);
-      return "role=button";
+  // Flow can briefly expose neither role while the project sidebar is mounting.
+  // Poll exact role/name matches for up to 7 seconds rather than failing on the first snapshot.
+  const deadline = Date.now() + 7000;
+  let tabCount = 0;
+  let buttonCount = 0;
+  do {
+    tabCount = await roleTab.count().catch(() => 0);
+    for (let i = 0; i < tabCount; i += 1) {
+      const candidate = roleTab.nth(i);
+      if (await candidate.isVisible().catch(() => false)) {
+        await candidate.click({ timeout: 3000 });
+        await page.waitForTimeout(300);
+        return "role=tab";
+      }
     }
-  }
+    // Flow's sidebar may expose Videos as a button, and responsive layouts can
+    // leave duplicate hidden buttons in the DOM. Click the first visible exact match.
+    buttonCount = await button.count().catch(() => 0);
+    for (let i = 0; i < buttonCount; i += 1) {
+      const candidate = button.nth(i);
+      if (await candidate.isVisible().catch(() => false)) {
+        await candidate.click({ timeout: 3000 });
+        await page.waitForTimeout(300);
+        return "role=button";
+      }
+    }
+    if (Date.now() < deadline) await page.waitForTimeout(250);
+  } while (Date.now() < deadline);
   return "not_found_no_tab_switch (tabs=" + tabCount + ", buttons=" + buttonCount + ")";
 }
 
@@ -1206,7 +1214,7 @@ async function uploadSceneReferencesUnsafe(page, selectors, referenceImages, ref
     if (networkUuidShortcut) existingUuids.add(networkNameUuids[0]);
     // Only poll lazy thumbnail URLs when Flow JSON did not already identify the
     // unique existing card. This avoids a needless 6.75s wait per reference.
-    const thumbnailDeadline = networkUuidShortcut ? Date.now() : Date.now() + 7000;
+    const thumbnailDeadline = networkUuidShortcut ? Date.now() : Date.now() + 2000;
     let thumbnailPolls = 0;
     do {
       if (!networkUuidShortcut) {
@@ -1223,7 +1231,7 @@ async function uploadSceneReferencesUnsafe(page, selectors, referenceImages, ref
     if (networkUuidShortcut) {
       console.log(`Skipped Flow asset thumbnail UUID wait: ${filename}, UUID resolved from unique matching Flow JSON metadata.`);
     } else if (thumbnailPolls > 0) {
-      console.log(`Waited for Flow asset thumbnail UUIDs: ${filename}, polls=${thumbnailPolls}, elapsed_ms=${Math.min(7000, thumbnailPolls * 250)}`);
+      console.log(`Waited for Flow asset thumbnail UUIDs: ${filename}, polls=${thumbnailPolls}, elapsed_ms=${Math.min(2000, thumbnailPolls * 250)}`);
     }
 
     console.log(JSON.stringify({
@@ -1801,10 +1809,6 @@ async function prepare(args, browser, rl) {
   // Attach and verify the exact per-scene reference images only after closing Settings.
   // If Flow does not expose a unique add button, file input, and visible reference-item selector,
   // stop before filling the prompt or enabling a possible Create action.
-  const referenceUploadStartedAt = Date.now();
-  console.log(`Phase timing: reference upload started (${referenceImages.length} image(s)); asset-ready timeout=${ASSET_READY_TIMEOUT_MS}ms per image.`);
-  const attachedReferenceUuids = await uploadSceneReferences(chosen.page, selectors, referenceImages, prompt, referenceAssetUuids);
-  console.log(`Phase timing: reference upload completed in ${Date.now() - referenceUploadStartedAt}ms.`);
   if (args.waitForResult || args.dryRun) {
     const waitPreflightStartedAt = Date.now();
     const baselineUuidCache = new Map();
@@ -1828,6 +1832,7 @@ async function prepare(args, browser, rl) {
         reached_bottom: initialScan.reachedBottom,
         tile_count: initialScan.items.length,
         uuid_count: baselineUuids.length,
+        baseline_media_uuids: baselineUuids,
         uuid_sample_first_5: baselineUuids.slice(0, 5),
         unkeyed_items_detected: initialScan.unkeyedItemsDetected,
         duplicate_visible_key_detected: initialScan.duplicateVisibleKeyDetected,
@@ -1861,6 +1866,10 @@ async function prepare(args, browser, rl) {
     }
   }
 
+  const referenceUploadStartedAt = Date.now();
+  console.log(`Phase timing: reference upload started (${referenceImages.length} image(s)); asset-ready timeout=${ASSET_READY_TIMEOUT_MS}ms per image.`);
+  const attachedReferenceUuids = await uploadSceneReferences(chosen.page, selectors, referenceImages, prompt, referenceAssetUuids);
+  console.log(`Phase timing: reference upload completed in ${Date.now() - referenceUploadStartedAt}ms.`);
   // Only now modify the prompt. If fill fails, attempt to clear it before returning an error.
   const screenshot = path.resolve(args.screenshot || `flow-pilot-${scene.scene_id.replace(/[^a-zA-Z0-9_-]/g, "_")}-${args.execute ? "execute" : "dry-run"}.png`);
   const promptFillStartedAt = Date.now();
