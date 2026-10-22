@@ -795,7 +795,7 @@ async function waitForGenerationAndDownload(page, selectors, { beforeKeys, befor
       }
       newKey = candidate.key;
       attemptedKeys.add(newKey);
-      const located = await collectAllGeneratedItems(page, selectors.generated_video_items, { targetKey: newKey }).catch(() => ({ targetIndex: null }));
+      const located = await collectAllGeneratedItems(page, selectors.generated_video_items, { targetKey: newKey, topLimit: 3, selectors, skipUuidResolution: true }).catch(() => ({ targetIndex: null }));
       if (located.targetIndex !== null) {
         newItem = itemLocator.nth(located.targetIndex);
         await newItem.click({ timeout: 5000 });
