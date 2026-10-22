@@ -1683,7 +1683,8 @@ async function uploadSceneReferencesUnsafe(page, selectors, referenceImages, ref
           aria_selected: tile.getAttribute("aria-selected"),
           box: { x: Math.round(r.x), y: Math.round(r.y), width: Math.round(r.width), height: Math.round(r.height) },
           text: String(tile.innerText || tile.textContent || "").replace(/\s+/g, " ").trim().slice(0, 120) }; }),
-        detail_pane: pane.filter(item => item.has_preview_label || item.visible_add_button_count > 0),\n      picker_container_diagnostics: pane,
+        detail_pane: pane.filter(item => item.has_preview_label || item.visible_add_button_count > 0),
+      picker_container_diagnostics: pane,
         click_hit_inside_matching_tile: Boolean(hit && tiles.some(tile => tile === hit || tile.contains(hit))),
         click_hit_tag: hit?.tagName?.toLowerCase() || null,
         click_hit_text: String(hit?.innerText || hit?.textContent || "").replace(/\s+/g, " ").trim().slice(0, 100)
