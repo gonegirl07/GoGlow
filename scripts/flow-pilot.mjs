@@ -994,22 +994,22 @@ async function resetIngredientsPicker(page, selectors) {
 async function inspectAddToPromptContext(button) {
   return button.evaluate(buttonNode => {
     const visible = node => {
-      const style = getComputedStyle(node);
-      const rect = node.getBoundingClientRect();
-      return style.display !== "none" && style.visibility !== "hidden"
+      const style = getComputedStyle(node), rect = node.getBoundingClientRect();
+      return node.isConnected && style.display !== "none" && style.visibility !== "hidden"
         && Number(style.opacity || 1) > 0 && rect.width > 0 && rect.height > 0;
     };
+    const contexts = [];
     let node = buttonNode;
-    let selected = null;
-    for (let depth = 0; node && depth < 9; depth += 1, node = node.parentElement) {
-      const images = Array.from(node.querySelectorAll("img, video, [style*='background-image']")).filter(visible);
-      if (!images.length) continue;
+    for (let depth = 0; node && depth < 12; depth += 1, node = node.parentElement) {
+      const elements = [node, ...Array.from(node.querySelectorAll("*"))];
+      const images = elements.filter(el => /^(IMG|VIDEO)$/.test(el.tagName) || el.matches("[style*='background-image']"))
+        .filter(visible);
       const values = [];
       const imageSources = [];
-      for (const el of [node, ...Array.from(node.querySelectorAll("*"))]) {
+      for (const el of elements) {
         for (const attr of Array.from(el.attributes || [])) {
           values.push(attr.value);
-          if (/^(?:src|data-src|data-original|data-media-id|data-asset-id|aria-label|alt|title)$/i.test(attr.name)) {
+          if (/^(src|data-src|data-original|data-media-id|data-asset-id|aria-label|alt|title)$/i.test(attr.name)) {
             imageSources.push({ tag: el.tagName.toLowerCase(), attr: attr.name, value: String(attr.value).slice(0, 240) });
           }
         }
@@ -1021,25 +1021,27 @@ async function inspectAddToPromptContext(button) {
         if (bg && bg !== "none") { values.push(bg); imageSources.push({ tag: el.tagName.toLowerCase(), attr: "background-image", value: bg.slice(0, 240) }); }
         values.push(el.innerText || el.textContent || "");
       }
-      const uuids = Array.from(new Set(values.flatMap(value => {
-        const matches = String(value || "").match(/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/ig);
-        return matches || [];
-      }).map(uuid => uuid.toLowerCase())));
+      const uuids = Array.from(new Set(values.flatMap(value => String(value || "").match(/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/ig) || []).map(v => v.toLowerCase())));
       const previewLabels = Array.from(new Set(values.flatMap(value => {
         const match = String(value || "").match(/Preview of\s+(.+?\.(?:png|jpe?g|webp|gif|avif))/i);
         return match ? [match[1].trim().replace(/["'”’]+$/, "")] : [];
       })));
-      const labels = Array.from(new Set(values.filter(value => /mai-face|ref-3|\.png|\.jpe?g/i.test(String(value || ""))).map(value => String(value).slice(0, 180))));
-      selected = { depth, visible_image_count: images.length, uuids, preview_labels: previewLabels, labels,
-        image_sources: imageSources.slice(0, 12),
-        context_tag: node.tagName.toLowerCase(), context_role: node.getAttribute("role"),
-        context_text: String(node.innerText || node.textContent || "").replace(/\s+/g, " ").trim().slice(0, 220) };
-      if (uuids.length || previewLabels.length || labels.length) break;
+      const text = String(node.innerText || node.textContent || "").replace(/\s+/g, " ").trim();
+      contexts.push({
+        depth, visible_image_count: images.length, uuids, preview_labels: previewLabels,
+        labels: Array.from(new Set(values.filter(v => /mai-face|ref-3|\.png|\.jpe?g/i.test(String(v || ""))).map(v => String(v).slice(0, 180)))).slice(0, 12),
+        image_sources: imageSources.slice(0, 12), context_tag: node.tagName.toLowerCase(),
+        context_role: node.getAttribute("role"), context_text: text.slice(0, 260)
+      });
+      // Prefer the actual preview's explicit filename, not a broad ancestor containing
+      // the picker navigation and stale card thumbnails.
+      if (previewLabels.length) return contexts[contexts.length - 1];
     }
-    return selected || { depth: null, visible_image_count: 0, uuids: [], preview_labels: [], labels: [], image_sources: [], context_tag: null, context_role: null, context_text: "" };
-  }).catch(error => ({
-    error: error.message, depth: null, visible_image_count: 0, uuids: [], preview_labels: [], labels: [], image_sources: []
-  }));
+    return contexts.sort((a, b) => {
+      const score = c => (c.uuids.length ? 4 : 0) + (c.labels.length ? 2 : 0) + (c.visible_image_count ? 1 : 0);
+      return score(b) - score(a) || a.depth - b.depth;
+    })[0] || { depth: null, visible_image_count: 0, uuids: [], preview_labels: [], labels: [], image_sources: [], context_tag: null, context_role: null, context_text: "" };
+  }).catch(error => ({ error: error.message, depth: null, visible_image_count: 0, uuids: [], preview_labels: [], labels: [], image_sources: [] }));
 }
 
 function isElementActuallyVisible(element) {
@@ -1667,18 +1669,24 @@ async function uploadSceneReferencesUnsafe(page, selectors, referenceImages, ref
       const containers = Array.from(document.querySelectorAll(containerSelector)).filter(visible);
       const tiles = containers.flatMap(container => Array.from(container.querySelectorAll(tileSelector)).filter(visible)
         .filter(tile => String(tile.innerText || tile.textContent || "").toLowerCase().includes(filename.toLowerCase())));
-      const pane = containers.map(container => ({ role: container.getAttribute("role"), text: String(container.innerText || "").replace(/\\s+/g, " ").trim().slice(0, 160) }));
+      const pane = containers.map(container => {
+          const text = String(container.innerText || "").replace(/\s+/g, " ").trim();
+          const hasPreview = /Preview of\s+.+\.(?:png|jpe?g|webp|gif|avif)/i.test(text);
+          const addButtons = Array.from(container.querySelectorAll("button,[role='button']")).filter(visible)
+            .filter(el => /add to prompt/i.test(String(el.innerText || el.getAttribute("aria-label") || ""))).length;
+          return { role: container.getAttribute("role"), has_preview_label: hasPreview, visible_add_button_count: addButtons, text: text.slice(0, 180) };
+        });
       const hit = Number.isFinite(x) && Number.isFinite(y) ? document.elementFromPoint(x, y) : null;
       return {
         visible_picker_count: containers.length, matching_visible_tile_count: tiles.length,
         matching_tiles: tiles.slice(0, 4).map(tile => { const r = tile.getBoundingClientRect(); return {
           aria_selected: tile.getAttribute("aria-selected"),
           box: { x: Math.round(r.x), y: Math.round(r.y), width: Math.round(r.width), height: Math.round(r.height) },
-          text: String(tile.innerText || tile.textContent || "").replace(/\\s+/g, " ").trim().slice(0, 120) }; }),
-        detail_pane: pane,
+          text: String(tile.innerText || tile.textContent || "").replace(/\s+/g, " ").trim().slice(0, 120) }; }),
+        detail_pane: pane.filter(item => item.has_preview_label || item.visible_add_button_count > 0),\n      picker_container_diagnostics: pane,
         click_hit_inside_matching_tile: Boolean(hit && tiles.some(tile => tile === hit || tile.contains(hit))),
         click_hit_tag: hit?.tagName?.toLowerCase() || null,
-        click_hit_text: String(hit?.innerText || hit?.textContent || "").replace(/\\s+/g, " ").trim().slice(0, 100)
+        click_hit_text: String(hit?.innerText || hit?.textContent || "").replace(/\s+/g, " ").trim().slice(0, 100)
       };
     }, { containerSelector: pickerContainerSelector, tileSelector: selectors.ingredient_library_item, filename,
       x: tileBox ? tileBox.x + tileBox.width / 2 : null, y: tileBox ? tileBox.y + tileBox.height / 2 : null })
@@ -1703,7 +1711,7 @@ async function uploadSceneReferencesUnsafe(page, selectors, referenceImages, ref
       matching_tile_count: await matchingAssets.count().catch(() => 0),
       target_tile_box: initialAssetBox ? { x: Math.round(initialAssetBox.x), y: Math.round(initialAssetBox.y), width: Math.round(initialAssetBox.width), height: Math.round(initialAssetBox.height) } : null,
       target_tile_aria_selected_before_click: await activeAsset.getAttribute("aria-selected", { timeout: 300 }).catch(() => null),
-      target_tile_text: (await activeAsset.innerText({ timeout: 300 }).catch(() => "")).replace(/\\s+/g, " ").trim().slice(0, 160),
+      target_tile_text: (await activeAsset.innerText({ timeout: 300 }).catch(() => "")).replace(/\s+/g, " ").trim().slice(0, 160),
     }));
     await activeAsset.scrollIntoViewIfNeeded({ timeout: 400 }).catch(() => {});
     let current = await freshTile();
@@ -1713,7 +1721,26 @@ async function uploadSceneReferencesUnsafe(page, selectors, referenceImages, ref
     }
     activeAsset = current.tile;
     const firstBox = await activeAsset.boundingBox({ timeout: 300 }).catch(() => null);
-    if (firstBox) await activeAsset.click({ position: { x: Math.max(2, Math.floor(firstBox.width / 2)), y: Math.max(2, Math.floor(firstBox.height / 2)) }, timeout: 700 }).catch(() => {});
+    if (firstBox) {
+      const center = { x: firstBox.x + firstBox.width / 2, y: firstBox.y + firstBox.height / 2 };
+      const targetMeta = await page.evaluate(({ x, y }) => {
+        const hit = document.elementFromPoint(x, y);
+        const interactive = hit?.closest('[role="option"],[role="button"],button,[tabindex]');
+        return { hit_tag: hit?.tagName?.toLowerCase() || null, hit_text: String(hit?.innerText || hit?.textContent || "").replace(/\s+/g, " ").trim().slice(0, 100),
+          interactive_tag: interactive?.tagName?.toLowerCase() || null, interactive_role: interactive?.getAttribute("role") || null,
+          interactive_tabindex: interactive?.getAttribute("tabindex") || null, interactive_text: String(interactive?.innerText || interactive?.textContent || "").replace(/\s+/g, " ").trim().slice(0, 140),
+          interactive_is_inside_tile: Boolean(interactive && hit && (interactive === hit || interactive.contains(hit))) };
+      }, center).catch(() => ({}));
+      console.log(JSON.stringify({ event: "ingredients_picker_click_target", step: "initial", filename, ...targetMeta }));
+      const clickableAncestor = activeAsset.locator('xpath=ancestor-or-self::*[@role="option" or @role="button" or self::button or @tabindex][1]').first();
+      const ancestorCount = await clickableAncestor.count().catch(() => 0);
+      if (ancestorCount === 1 && await clickableAncestor.isVisible({ timeout: 200 }).catch(() => false)) {
+        const ancestorBox = await clickableAncestor.boundingBox({ timeout: 200 }).catch(() => null);
+        if (ancestorBox) await clickableAncestor.click({ position: { x: Math.floor(ancestorBox.width / 2), y: Math.floor(ancestorBox.height / 2) }, timeout: 600 }).catch(() => {});
+      } else {
+        await activeAsset.click({ position: { x: Math.max(2, Math.floor(firstBox.width / 2)), y: Math.max(2, Math.floor(firstBox.height / 2)) }, timeout: 600 }).catch(() => {});
+      }
+    }
     console.log(JSON.stringify({ event: "ingredients_picker_step_diagnostics", step: "after_initial_click", ...(await readPickerDiagnostics(firstBox)) }));
     while (Date.now() < selectionDeadline) {
       current = await freshTile();
@@ -1750,12 +1777,20 @@ async function uploadSceneReferencesUnsafe(page, selectors, referenceImages, ref
         const currentBox = await activeAsset.boundingBox({ timeout: 200 }).catch(() => null);
         if (!currentBox) break;
         const point = { x: Math.floor(currentBox.width / 2), y: Math.floor(currentBox.height / 2) };
+        const ancestor = activeAsset.locator('xpath=ancestor-or-self::*[@role="option" or @role="button" or self::button or @tabindex][1]').first();
+        const ancestorCount = await ancestor.count().catch(() => 0);
         const hitTest = await page.evaluate(({ x, y, tileSelector, filename }) => {
           const hit = document.elementFromPoint(x, y);
           const tiles = Array.from(document.querySelectorAll(tileSelector)).filter(tile => String(tile.innerText || tile.textContent || "").toLowerCase().includes(filename.toLowerCase()));
           return Boolean(hit && tiles.some(tile => tile === hit || tile.contains(hit)));
         }, { x: currentBox.x + point.x, y: currentBox.y + point.y, tileSelector: selectors.ingredient_library_item, filename }).catch(() => false);
-        if (hitTest) await activeAsset.click({ position: point, timeout: 500 }).catch(() => {});
+        if (hitTest && ancestorCount === 1 && await ancestor.isVisible({ timeout: 150 }).catch(() => false)) {
+          const ancestorBox = await ancestor.boundingBox({ timeout: 150 }).catch(() => null);
+          if (ancestorBox) await ancestor.click({ position: { x: Math.floor(ancestorBox.width / 2), y: Math.floor(ancestorBox.height / 2) }, timeout: 500 }).catch(() => {});
+        } else if (hitTest) {
+          await activeAsset.click({ position: point, timeout: 500 }).catch(() => {});
+        }
+        console.log(JSON.stringify({ event: "ingredients_picker_click_target", step: "retry", filename, clicked_interactive_ancestor: ancestorCount === 1, ...await readPickerDiagnostics(currentBox) }));
         console.log(JSON.stringify({ event: "ingredients_picker_step_diagnostics", step: "after_retry_click", hit_test_inside_tile: hitTest, ...(await readPickerDiagnostics(currentBox)) }));
       }
       await page.waitForTimeout(Math.min(100, Math.max(0, selectionDeadline - Date.now())));
