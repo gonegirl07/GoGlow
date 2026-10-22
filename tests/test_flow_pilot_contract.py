@@ -587,7 +587,7 @@ class FlowPilotContractTests(unittest.TestCase):
         self.assertIn("findNewCompletedMediaItems(topItemsNow, beforeKeys)", wait_fn)
         self.assertIn("mediaUuid: mediaUuid ? mediaUuid.toLowerCase() : null", self.script)
         self.assertIn("!item.key || !item.mediaUuid", self.script)
-        self.assertIn("item.mediaUuid && item.key", wait_fn)
+        self.assertIn("!item?.mediaUuid || !item.key", self.script)
         self.assertIn("!beforeKeys.includes(item.key)", self.script)
         self.assertIn("const createdAt = element.querySelector(\"time[datetime]\")", self.script)
         self.assertIn("createdMs <= createMs", wait_fn)
@@ -836,7 +836,7 @@ assert.deepEqual(findNewCompletedMediaItems([
         self.assertIn("skipUuidResolution: true", self.script)
         self.assertIn("topLimit: 3", self.script)
         self.assertIn("FLOW_SUBMITTED_UNIDENTIFIED:", self.script)
-        self.assertIn('event: "submitted_unidentified"', self.script)
+        self.assertIn('resultStatus === "submitted_unidentified" ? "submitted_unidentified"', self.script)
         self.assertIn('status: "submitted_unidentified_do_not_retry"', self.script)
 
     def test_resolution_verification_polls_aria_checked_before_failing(self):
