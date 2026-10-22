@@ -299,7 +299,7 @@ class FlowPilotContractTests(unittest.TestCase):
         self.assertIn("reference_set_key: referenceSetKey", self.script)
         self.assertIn("other_reference_ids: otherReferenceIds", self.script)
 
-    def test_virtualized_media_grid_is_swept_before_tile_identity_comparison(self):
+    def test_media_grid_uses_top_six_and_stable_keys_before_tile_identity_comparison(self):
         self.assertIn("async function collectAllGeneratedItems(page, selector", self.script)
         self.assertIn("Flow's media grid may virtualize its DOM", self.script)
         self.assertIn("const initialScan = await collectAllGeneratedItems", self.script)
@@ -307,8 +307,8 @@ class FlowPilotContractTests(unittest.TestCase):
         self.assertIn('page.getByRole("tab", { name: /^Videos$/i })', self.script)
         self.assertIn("unkeyedItemsDetected", self.script)
         self.assertIn("duplicateVisibleKeyDetected", self.script)
-        self.assertIn("Pre-Create media inventory is ambiguous", self.script)
-        self.assertIn("full virtualized-grid sweep", self.script)
+        self.assertIn("Top-6 baseline requires six unique, stable media UUIDs/keys", self.script)
+        self.assertIn("thumbnailSrc || sources[0]", self.script)
 
     def test_generation_failure_is_detected_and_logged_without_retry(self):
         self.assertIn("function isGenerationFailureText(value)", self.script)
