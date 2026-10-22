@@ -509,7 +509,7 @@ function makeGenerationLedgerRecord({ scene, projectId, ledgerProjectId, prompt,
   };
 }
 
-async function waitForGenerationAndDownload(page, selectors, { beforeKeys, beforeBalance, createClickedAt, timeoutMs, downloadDir, sceneId, attemptId, timeoutScreenshot, variantIndex = 1, variantCount = 1 }) {
+async function waitForGenerationAndDownload(page, selectors, { beforeKeys, beforeBalance, createClickedAt, uuidCache = new Map(), timeoutMs, downloadDir, sceneId, attemptId, timeoutScreenshot, variantIndex = 1, variantCount = 1 }) {
   const itemLocator = page.locator(selectors.generated_video_items);
   let deadline = Date.now() + timeoutMs;
   let chargedExtensionUsed = false;
@@ -557,7 +557,7 @@ async function waitForGenerationAndDownload(page, selectors, { beforeKeys, befor
     // on every grid poll before comparing the new result against the pre-Create inventory.
     await activateVideosTab(page, selectors).catch(() => "not_found_no_tab_switch");
     await failIfVisible();
-    const scan = await collectAllGeneratedItems(page, selectors.generated_video_items).catch(() => ({ items: [], topItems: [], reachedBottom: false }));
+    const scan = await collectAllGeneratedItems(page, selectors.generated_video_items, { uuidCache }).catch(() => ({ items: [], topItems: [], reachedBottom: false }));
     if (!scan.reachedBottom || scan.unkeyedItemsDetected || scan.duplicateVisibleKeyDetected) {
       console.warn("Media inventory scan is incomplete or ambiguous; refusing to identify/download a clip.");
       await page.waitForTimeout(1000);
@@ -923,7 +923,9 @@ async function assetUuidFromLocator(locator) {
     };
     add(element);
     for (const node of element.querySelectorAll("a[href], img, video, [data-id], [data-uuid], [data-asset-id], [data-media-id]")) add(node);
-    collected.push(element.outerHTML || "");
+    for (const node of [element, ...element.querySelectorAll("*")]) {
+      for (const attribute of Array.from(node.attributes || [])) collected.push(attribute.value);
+    }
     return collected;
   }).catch(() => []);
   for (const value of values) {
@@ -1036,7 +1038,7 @@ async function uploadSceneReferencesUnsafe(page, selectors, referenceImages) {
               || metadata.includes(filename.toLowerCase()) || metadata.includes(filenameStem.toLowerCase());
           });
           if (!newestMatch) return false;
-          const sources = [newestMatch.outerHTML, ...Array.from(newestMatch.querySelectorAll("a[href], img, video, [data-id], [data-uuid], [data-asset-id], [data-media-id]"), node => [node.getAttribute("href"), node.getAttribute("src"), node.getAttribute("id"), node.getAttribute("data-id"), node.getAttribute("data-uuid"), node.getAttribute("data-asset-id"), node.getAttribute("data-media-id")].filter(Boolean).join(" "))].join(" ");
+          const sources = [newestMatch, ...Array.from(newestMatch.querySelectorAll("*"))].flatMap(node => Array.from(node.attributes || [], attribute => attribute.value)).join(" ");
           const match = sources.match(/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/i);
           return Boolean(match && !oldUuids.includes(match[0].toLowerCase()));
         }, { selector: selectors.ingredient_library_item, filename, filenameStem, oldUuids: Array.from(existingUuids) }, { timeout: ASSET_READY_TIMEOUT_MS });
@@ -1487,13 +1489,15 @@ async function prepare(args, browser, rl) {
   console.log(`Phase timing: reference upload started (${referenceImages.length} image(s)); asset-ready timeout=${ASSET_READY_TIMEOUT_MS}ms per image.`);
   const attachedReferenceUuids = await uploadSceneReferences(chosen.page, selectors, referenceImages, prompt);
   console.log(`Phase timing: reference upload completed in ${Date.now() - referenceUploadStartedAt}ms.`);
-  if (args.waitForResult) {
+  if (args.waitForResult || args.dryRun) {
     const waitPreflightStartedAt = Date.now();
+    const baselineUuidCache = new Map();
     try {
-      const initialBalance = await readCreditBalance(chosen.page, selectors);
-      if (initialBalance === null) throw new Error("Could not read an integer credit balance.");
+      const initialBalance = args.waitForResult ? await readCreditBalance(chosen.page, selectors) : null;
+      if (args.waitForResult && initialBalance === null) throw new Error("Could not read an integer credit balance.");
+      if (typeof selectors.generated_video_items !== "string" || !selectors.generated_video_items.trim()) throw new Error("Dry-run baseline scan requires a configured generated_video_items selector.");
       const videosTabState = await activateVideosTab(chosen.page, selectors);
-      const initialScan = await collectAllGeneratedItems(chosen.page, selectors.generated_video_items);
+      const initialScan = await collectAllGeneratedItems(chosen.page, selectors.generated_video_items, { uuidCache: baselineUuidCache });
       // Keep every stable media UUID in the baseline, including Failed tiles, so a
       // later disappearing/refunded tile cannot make another existing card look new.
       // Failed tiles are diagnostics only and never count as usable video candidates.
@@ -1507,9 +1511,13 @@ async function prepare(args, browser, rl) {
       }
       args._waitInitialBalance = initialBalance;
       args._waitInitialItemKeys = initialItems;
+      args._waitUuidCache = baselineUuidCache;
       args._waitInitialItemCount = initialItems.length - failedBaselineItems.length;
-      console.log("WAIT SELECTOR PREFLIGHT (read-only; no Create click; Videos tab selected when available; virtualized grid swept; Failed tiles retained only as baseline UUIDs)");
+      console.log(args.waitForResult
+        ? "WAIT SELECTOR PREFLIGHT (read-only; no Create click; Videos tab selected when available; virtualized grid swept; Failed tiles retained only as baseline UUIDs)"
+        : "DRY-RUN MEDIA BASELINE (read-only; no Create click; Videos tab selected when available; full grid swept)");
       console.log(JSON.stringify({
+        mode: args.waitForResult ? "wait-preflight" : "dry-run-baseline",
         credit_balance: initialBalance,
         videos_tab_state: videosTabState,
         existing_video_tile_count: args._waitInitialItemCount,
@@ -1637,7 +1645,7 @@ async function prepare(args, browser, rl) {
       if (currentBalance === null) throw new Error("Credit balance could not be re-read immediately before Create; refusing to click.");
       args._waitInitialBalance = currentBalance;
       await activateVideosTab(chosen.page, selectors);
-      const currentScan = await collectAllGeneratedItems(chosen.page, selectors.generated_video_items);
+      const currentScan = await collectAllGeneratedItems(chosen.page, selectors.generated_video_items, { uuidCache: args._waitUuidCache || new Map() });
       if (!currentScan.reachedBottom) throw new Error("Pre-Create media inventory did not prove it reached the bottom; refusing to click Create.");
       args._waitInitialItemKeys = currentScan.items.map(item => item.key);
       if (currentScan.unkeyedItemsDetected || currentScan.duplicateVisibleKeyDetected
@@ -1670,6 +1678,7 @@ async function prepare(args, browser, rl) {
           beforeKeys: args._waitInitialItemKeys,
           beforeBalance: args._waitInitialBalance,
           createClickedAt: args._waitCreateClickedAt,
+          uuidCache: args._waitUuidCache || new Map(),
           beforeCount: args._waitInitialItemCount,
           timeoutMs: args.waitTimeoutMs,
           downloadDir: args.downloadDir,
