@@ -121,7 +121,7 @@ class FlowPilotContractTests(unittest.TestCase):
     def test_wait_mode_requires_execute_and_bounded_timeout(self):
         self.assertIn('if (args.waitForResult && !args.execute && !args.dryRun)', self.script)
         self.assertIn('--wait without --execute is preflight-only; pass --dry-run --wait explicitly.', self.script)
-        self.assertIn('WAIT SELECTOR PREFLIGHT (read-only; no Create click; Videos tab selected when available; virtualized grid swept)', self.script)
+        self.assertIn('WAIT SELECTOR PREFLIGHT (read-only; no Create click; Videos tab selected when available; virtualized grid swept; Failed tiles retained only as baseline UUIDs)', self.script)
         self.assertIn('--wait-timeout-ms must be an integer from 30000 to 1800000', self.script)
         self.assertIn('--wait requires a non-empty', self.script)
         self.assertIn('["credit_balance", "generated_video_items", "download_media_button", "download_360p_original_button", "account_panel_open", "account_panel_close"]', self.script)
@@ -535,6 +535,15 @@ class FlowPilotContractTests(unittest.TestCase):
         self.assertNotIn("primary face identity anchor", self.script)
         self.assertNotIn("overall likeness", self.script)
         self.assertNotIn("Preserve the selected face identity", self.script)
+
+    def test_ledger_records_reference_set_fingerprint_for_policy_analysis(self):
+        self.assertIn("const referenceSetKey = createHash(\"sha256\").update(JSON.stringify({", self.script)
+        self.assertIn("reference_set_key: referenceSetKey", self.script)
+        self.assertIn('prompt: { text: prompt, sha256: createHash("sha256").update(prompt, "utf8").digest("hex")', self.script)
+
+    def test_expression_guard_removes_duplicate_short_eye_smile_clause(self):
+        self.assertIn(r'eyes?\s+(?:stay|remain)\s+open', self.script)
+        self.assertIn("standard guard below already states this full eye/smile requirement", self.script)
 
 if __name__ == "__main__":
     unittest.main()
