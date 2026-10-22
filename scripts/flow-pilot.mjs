@@ -209,6 +209,46 @@ async function collectAllGeneratedItems(page, selector, { targetKey = null, maxS
   }, selector);
   await page.waitForTimeout(120);
   const all = new Map();
+  // Observe Flow's own JSON responses while the virtualized grid is swept. Some builds
+  // expose the media UUID in list payloads before it appears in thumbnail DOM attributes.
+  const networkMediaRecords = [];
+  const normalizeLabel = value => String(value || "").toLowerCase().replace(/\\s+/g, " ").trim();
+  const walkNetworkPayload = (value, depth = 0) => {
+    if (!value || typeof value !== "object" || depth > 12) return;
+    if (Array.isArray(value)) {
+      for (const child of value) walkNetworkPayload(child, depth + 1);
+      return;
+    }
+    const values = Object.entries(value);
+    const uuidFields = values.filter(([key]) => /^(?:uuid|mediauuid|videoid|mediaid|assetid|id)$/i.test(key));
+    const uuid = uuidFields.map(([, item]) => assetUuidFromUrl(item)).find(Boolean)
+      || values.map(([, item]) => typeof item === "string" ? assetUuidFromUrl(item) : null).find(Boolean);
+    if (uuid) {
+      const labels = values.filter(([key, item]) => typeof item === "string"
+        && /title|name|prompt|description|label|text|created/i.test(key))
+        .map(([, item]) => normalizeLabel(item)).filter(item => item.length >= 4);
+      networkMediaRecords.push({ uuid, labels });
+    }
+    for (const [, child] of values) if (child && typeof child === "object") walkNetworkPayload(child, depth + 1);
+  };
+  const networkResponseListener = async response => {
+    try {
+      const url = response.url();
+      if (!/flow\\.google|googleusercontent|flow-content/i.test(url)) return;
+      const headers = await response.allHeaders();
+      if (!/json/i.test(headers["content-type"] || "")) return;
+      walkNetworkPayload(await response.json());
+    } catch { /* A consumed/streaming response is not authoritative; DOM fallback remains. */ }
+  };
+  page.on("response", networkResponseListener);
+  const resolveUuidFromNetwork = item => {
+    const tileText = normalizeLabel(item.text);
+    if (!tileText) return null;
+    const matches = networkMediaRecords.filter(record => record.labels.some(label =>
+      label === tileText || (label.length >= 8 && (tileText.includes(label) || label.includes(tileText)))));
+    const uuids = Array.from(new Set(matches.map(record => record.uuid)));
+    return uuids.length === 1 ? uuids[0] : null;
+  };
   const readScrollTop = async () => page.evaluate(selectorText => {
     const first = document.querySelector(selectorText);
     let node = first?.parentElement || null;
@@ -296,6 +336,14 @@ async function collectAllGeneratedItems(page, selector, { targetKey = null, maxS
         item.key = item.mediaUuid ? `media:${item.mediaUuid}` : item.key;
       }
       if (!item.mediaUuid) {
+        const networkUuid = resolveUuidFromNetwork(item);
+        if (networkUuid) {
+          item.mediaUuid = networkUuid;
+          item.key = `media:${networkUuid}`;
+          if (item.hint) uuidCache.set(item.hint, networkUuid);
+        }
+      }
+      if (!item.mediaUuid) {
         const resolvedUuid = await resolveUuidByOpeningTile(item.index);
         if (resolvedUuid) {
           item.mediaUuid = resolvedUuid;
@@ -315,7 +363,10 @@ async function collectAllGeneratedItems(page, selector, { targetKey = null, maxS
       }
       if (targetKey && item.key === targetKey) targetIndex = item.index;
     }
-    if (targetIndex !== null) return { items: Array.from(all.values()), targetIndex, scrolledToTarget: true, unkeyedItemsDetected, duplicateVisibleKeyDetected };
+    if (targetIndex !== null) {
+      page.off("response", networkResponseListener);
+      return { items: Array.from(all.values()), targetIndex, scrolledToTarget: true, unkeyedItemsDetected, duplicateVisibleKeyDetected };
+    }
     const metrics = await page.evaluate((selectorText) => {
       const first = document.querySelector(selectorText);
       let node = first?.parentElement || null;
@@ -362,6 +413,7 @@ async function collectAllGeneratedItems(page, selector, { targetKey = null, maxS
     }
     (document.scrollingElement || document.documentElement).scrollTop = initialTop;
   }, { selectorText: selector, initialTop: scrollInfo.initialTop });
+  page.off("response", networkResponseListener);
   return { items: Array.from(all.values()), topItems: topItems || [], targetIndex: null, scrolledToTarget: false, unkeyedItemsDetected, duplicateVisibleKeyDetected, reachedBottom };
 }
 
