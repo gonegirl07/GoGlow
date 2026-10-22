@@ -216,10 +216,25 @@ class FlowPilotContractTests(unittest.TestCase):
         self.assertIn('role !== "radio"', self.script)
         self.assertIn('after !== "true"', self.script)
 
+    def test_model_selection_skips_menu_when_already_selected_and_waits_longer_when_needed(self):
+        choose_model = self.script.split("async function chooseModel", 1)[1].split("function assetUuidFromUrl", 1)[0]
+        self.assertIn("currentText.includes(model)", choose_model)
+        self.assertIn("skipping model menu interaction", choose_model)
+        self.assertIn("trigger.click({ timeout: 8000 })", choose_model)
+        self.assertIn('option.waitFor({ state: "visible", timeout: 8000 })', choose_model)
+        self.assertIn("await page.waitForTimeout(250)", choose_model)
+        self.assertIn("verifiedOption.click({ timeout: 8000 })", choose_model)
+
+    def test_preflight_screenshot_failure_is_nonfatal(self):
+        screenshot_block = self.script.split("// A screenshot is diagnostic only", 1)[1].split("const createEnabled", 1)[0]
+        self.assertIn("timeout: 10000", screenshot_block)
+        self.assertIn("non-fatal", screenshot_block)
+        self.assertNotIn("throw new Error", screenshot_block)
+
     def test_credit_cost_is_reported_and_overlay_is_closed_before_prompt_fill(self):
         self.assertIn("Generating will use", self.script)
         self.assertIn("estimated_credit_cost", self.script)
-        self.assertIn("settingsAgain.click({ timeout: 2500 })", self.script)
+        self.assertIn("settingsAgain.click({ timeout: 8000 })", self.script)
         self.assertLess(self.script.index("settingsAgain.click"), self.script.index("await prompt.fill(scene.prompt"))
 
     def test_ambiguous_submission_is_logged_without_retry(self):
@@ -426,8 +441,9 @@ class FlowPilotContractTests(unittest.TestCase):
     def test_seated_shots_get_head_to_knees_framing_and_wide_knee_margins(self):
         self.assertIn('scene.framing_helper_applied', self.script)
         self.assertIn('Locked-off tripod shot from the first frame: the camera does not move, pan, tilt, dolly, or zoom at any time', self.script)
-        self.assertIn('head-to-knees span occupying about 70 percent of the frame height', self.script)
-        self.assertIn('Leave clear space on both sides of both knees; keep both knees fully inside the frame', self.script)
+        self.assertIn('no more than the middle 60 percent of the frame width', self.script)
+        self.assertIn('Move the camera farther back until the entire seated pose, both knees, and both feet are comfortably inside the frame', self.script)
+        self.assertIn('do not zoom in or crop any part of the seated pose', self.script)
         self.assertIn('is framed from head to knees', self.script)
         self.assertIn('scene.framing_helper === false ? false', self.script)
 
@@ -438,7 +454,7 @@ class FlowPilotContractTests(unittest.TestCase):
 
     def test_expression_punctuation_is_normalized_and_open_eyes_guard_is_added(self):
         self.assertIn('scene.expression.trim().replace(/[.!?]+\\s*$/, "")', self.script)
-        self.assertIn('Eyes stay open throughout the clip; natural brief blinks only.', self.script)
+        self.assertIn('Eyes stay open from the first frame through the final frame; natural brief blinks only.', self.script)
         self.assertIn('No prolonged eye closure or eyes-closed meditation.', self.script)
         self.assertIn('EXPRESSION AND EYE STATE (follow throughout the entire shot): ${normalizedExpression}.', self.script)
 

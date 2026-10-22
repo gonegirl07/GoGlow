@@ -715,22 +715,31 @@ async function checkedRadio(page, selector, value, label) {
 }
 
 async function chooseModel(page, selectors, model) {
-  const trigger = await exactVisibleLocator(page, selectors.model, "model selector");
-  await trigger.click({ timeout: 2500 });
+  const trigger = await exactVisibleLocator(page, selectors.model, "model selector", 6000);
+  const currentText = (await trigger.innerText({ timeout: 6000 })).trim();
+  // Avoid opening an animated menu when the requested model is already selected.
+  if (currentText.includes(model)) {
+    console.log(`Model already selected (${model}); skipping model menu interaction.`);
+    return;
+  }
+  await trigger.click({ timeout: 8000 });
   const option = page.locator(selectors.model_option);
   try {
-    await option.waitFor({ state: "visible", timeout: 5000 });
+    await option.waitFor({ state: "visible", timeout: 8000 });
+    // Let Flow's menu animation/layout settle, then confirm the option remains visible.
+    await page.waitForTimeout(250);
+    await option.waitFor({ state: "visible", timeout: 3000 });
   } catch {
-    throw new Error("Model option did not become visible within 5000ms after opening the model menu.");
+    throw new Error("Model option did not become stably visible within 8000ms after opening the model menu.");
   }
-  const verifiedOption = await exactVisibleLocator(page, selectors.model_option, "model option");
-  const rawText = (await verifiedOption.innerText()).trim();
+  const verifiedOption = await exactVisibleLocator(page, selectors.model_option, "model option", 6000);
+  const rawText = (await verifiedOption.innerText({ timeout: 6000 })).trim();
   // Flow prepends a material icon ligature (e.g. volume_up); compare the final visible text line exactly.
   const text = rawText.split(/\r?\n/).map(line => line.trim()).filter(Boolean).at(-1) || "";
   if (text !== model) throw new Error(`Model option text mismatch: expected ${JSON.stringify(model)}, got ${JSON.stringify(text)}.`);
-  await verifiedOption.click({ timeout: 2500 });
-  const selected = await exactVisibleLocator(page, selectors.model, "model selector after selection");
-  const selectedText = (await selected.innerText()).trim();
+  await verifiedOption.click({ timeout: 8000 });
+  const selected = await exactVisibleLocator(page, selectors.model, "model selector after selection", 6000);
+  const selectedText = (await selected.innerText({ timeout: 6000 })).trim();
   if (!selectedText.includes(model)) throw new Error(`Model selection did not persist; current label is ${JSON.stringify(selectedText)}.`);
 }
 
@@ -988,7 +997,7 @@ async function loadInputs(args) {
   scene.framing_helper_applied = scene.framing_helper === false ? false : (scene.framing_helper === true || seatedShot);
   if (scene.framing_helper_applied) {
     scene.prompt = scene.prompt.replace(/\b(?:fills?|occupies?)\s+(?:about\s+)?\d{1,3}\s*(?:percent|%)\s+of\s+(?:the\s+)?frame\s+width\b/gi, "is framed from head to knees");
-    const framingSentence = "Locked-off tripod shot from the first frame: the camera does not move, pan, tilt, dolly, or zoom at any time. Frame the seated subject from head to knees, with the head-to-knees span occupying about 70 percent of the frame height. Leave clear space on both sides of both knees; keep both knees fully inside the frame.";
+    const framingSentence = "Locked-off tripod shot from the first frame: the camera does not move, pan, tilt, dolly, or zoom at any time. Move the camera farther back until the entire seated pose, both knees, and both feet are comfortably inside the frame. Keep the subject centered and occupying no more than the middle 60 percent of the frame width, with generous empty space on the left and right; do not zoom in or crop any part of the seated pose.";
     if (!scene.prompt.includes(framingSentence)) scene.prompt = scene.prompt.trim() + " " + framingSentence;
   }
   if (scene.character_description && !/^[\x00-\x7F]+$/.test(scene.character_description)) throw new Error("Character description must be ASCII/English only; non-ASCII characters are blocked before touching Flow.");
@@ -1067,7 +1076,7 @@ async function loadInputs(args) {
     ? scene.expression.trim().replace(/[.!?]+\s*$/, "")
     : "";
   const openEyesGuard = /\b(?:eyes?\s+(?:stay|remain|are|clearly)?\s*open|open eyes)\b/i.test(normalizedExpression)
-    ? " Eyes stay open throughout the clip; natural brief blinks only. No prolonged eye closure or eyes-closed meditation."
+    ? " Eyes stay open from the first frame through the final frame; natural brief blinks only. No prolonged eye closure or eyes-closed meditation."
     : "";
   const expressionSection = normalizedExpression
     ? `\n\nEXPRESSION AND EYE STATE (follow throughout the entire shot): ${normalizedExpression}.${openEyesGuard} Keep this expression and eye state consistent from the first frame to the last; this instruction takes priority over breathing or other subtle motion.`
@@ -1181,7 +1190,7 @@ async function prepare(args, browser, rl) {
   const modelAlreadyVisible = await chosen.page.locator(selectors.model).count() === 1
     && await chosen.page.locator(selectors.model).isVisible().catch(() => false);
   if (modelAlreadyVisible) {
-    await settings.click({ timeout: 2500 }).catch(() => {
+    await settings.click({ timeout: 8000 }).catch(() => {
       throw new Error("Settings overlay could not be closed. Close the Flow overlay manually and rerun; prompt remains untouched.");
     });
   } else {
@@ -1191,7 +1200,7 @@ async function prepare(args, browser, rl) {
     }
   }
   // Open settings; the model/radio controls are rendered only while this panel is open.
-  await settings.click({ timeout: 2500 }).catch(() => {
+  await settings.click({ timeout: 8000 }).catch(() => {
     throw new Error("Could not open Flow settings (possibly blocked by an account overlay). Close any overlay manually and rerun; prompt remains untouched.");
   });
 
@@ -1225,7 +1234,7 @@ async function prepare(args, browser, rl) {
     creditCost = await readCreditCost(chosen.page);
 
     const settingsAgain = await exactVisibleLocator(chosen.page, selectors.settings_trigger, "settings trigger to close panel");
-    await settingsAgain.click({ timeout: 2500 });
+    await settingsAgain.click({ timeout: 8000 });
   } catch (error) {
     // First close a nested model menu, then toggle Settings closed if it remains open.
     await chosen.page.keyboard.press("Escape").catch(() => {});
@@ -1233,7 +1242,7 @@ async function prepare(args, browser, rl) {
       count === 1 && await chosen.page.locator(selectors.model).isVisible().catch(() => false)).catch(() => false);
     const overlayStillVisible = await chosen.page.locator(".cdk-overlay-backdrop:visible").count().catch(() => 0) > 0;
     if (modelStillVisible || overlayStillVisible) {
-      await chosen.page.locator(selectors.settings_trigger).click({ timeout: 1500 }).catch(() => {});
+      await chosen.page.locator(selectors.settings_trigger).click({ timeout: 4000 }).catch(() => {});
       await chosen.page.keyboard.press("Escape").catch(() => {});
     }
     throw new Error(`Settings preparation failed; attempted to close Flow overlays before stopping: ${error.message}`);
@@ -1282,8 +1291,13 @@ async function prepare(args, browser, rl) {
     await prompt.fill(scene.prompt, { timeout: 2500 });
     await waitForCreateEnabled(chosen.page, create, 5000);
     await verifyAttachedReferenceUuids(chosen.page, selectors, attachedReferenceUuids);
-    fs.mkdirSync(path.dirname(screenshot), { recursive: true });
-    await chosen.page.screenshot({ path: screenshot, fullPage: false, timeout: 4000 });
+    // A screenshot is diagnostic only; a slow Chrome render must not invalidate an otherwise good preflight.
+    try {
+      fs.mkdirSync(path.dirname(screenshot), { recursive: true });
+      await chosen.page.screenshot({ path: screenshot, fullPage: false, timeout: 10000 });
+    } catch (screenshotError) {
+      console.warn(`Could not save preflight screenshot (non-fatal): ${screenshotError.message}`);
+    }
   } catch (error) {
     let cleanupStatus;
     try {
