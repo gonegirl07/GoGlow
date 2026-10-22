@@ -581,15 +581,18 @@ class FlowPilotContractTests(unittest.TestCase):
         self.assertIn("createClickedAt: args._waitCreateClickedAt", self.script)
 
 
-    def test_flow_video_uuid_can_be_resolved_from_edit_route_when_tile_dom_has_no_uuid(self):
-        self.assertIn("const resolveUuidByOpeningTile = async index =>", self.script)
-        self.assertIn("page.waitForFunction(() =>", self.script)
-        self.assertIn("location.pathname", self.script)
-        self.assertIn("const match = page.url().match(", self.script)
-        self.assertIn("/edit", self.script)
-        self.assertIn('await page.goBack({ waitUntil: "domcontentloaded", timeout: 10000 })', self.script)
+    def test_flow_video_uuid_is_read_directly_from_edit_url_after_tile_click(self):
+        resolver = self.script.split("const resolveUuidByOpeningTile = async index =>", 1)[1].split(
+            "let stableBottomRounds = 0;", 1
+        )[0]
+        self.assertIn("await tile.click({ timeout: 4000, force: true });", resolver)
+        self.assertIn("await page.waitForURL(url => editRoute.test(new URL(url).pathname)", resolver)
+        self.assertIn("const currentUrl = page.url();", resolver)
+        self.assertIn("const match = currentUrl.match(editRoute);", resolver)
+        self.assertIn("await page.goBack({ waitUntil: \"domcontentloaded\", timeout: 10000 }).catch(() => {});", resolver)
         self.assertIn("uuidCache.set(item.hint, resolvedUuid)", self.script)
         self.assertIn("Could not resolve media UUID by opening tile index", self.script)
+        self.assertNotIn("page.waitForFunction(() =>", resolver)
 
     def test_dry_run_runs_full_read_only_media_baseline(self):
         self.assertIn("if (args.waitForResult || args.dryRun)", self.script)
