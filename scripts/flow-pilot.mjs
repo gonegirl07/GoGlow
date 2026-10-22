@@ -530,7 +530,7 @@ async function activateVideosTab(page, selectors) {
       return "role=button";
     }
   }
-  return \`not_found_no_tab_switch (tabs=\${tabCount}, buttons=\${buttonCount})\`;
+  return "not_found_no_tab_switch (tabs=" + tabCount + ", buttons=" + buttonCount + ")";
 }
 
 function appendGenerationLedger(pathname, record) {
