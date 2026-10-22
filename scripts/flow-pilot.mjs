@@ -1072,6 +1072,36 @@ async function uploadSceneReferencesUnsafe(page, selectors, referenceImages, ref
   if (beforeCount !== 0) throw new Error(`Ingredients already contains ${beforeCount} reference chip(s); clear the prompt manually and rerun so this run can prove which images it attached.`);
   const expectedUuids = [];
 
+  // Capture Flow JSON responses while the asset picker opens. Signed thumbnail URLs
+  // can later be replaced by /asb/<token>, so network metadata is the durable lookup.
+  const networkAssetRecords = [];
+  const walkAssetPayload = (value, depth = 0) => {
+    if (!value || typeof value !== "object" || depth > 14) return;
+    if (Array.isArray(value)) {
+      for (const child of value) walkAssetPayload(child, depth + 1);
+      return;
+    }
+    const entries = Object.entries(value);
+    const uuid = entries.filter(([key]) => /^(?:uuid|assetuuid|assetid|mediauuid|mediaid|id)$/i.test(key))
+      .map(([, item]) => assetUuidFromUrl(item)).find(Boolean)
+      || entries.map(([, item]) => typeof item === "string" ? assetUuidFromUrl(item) : null).find(Boolean);
+    if (uuid) {
+      const strings = entries.filter(([, item]) => typeof item === "string").map(([, item]) => item.toLowerCase());
+      networkAssetRecords.push({ uuid, strings });
+    }
+    for (const [, child] of entries) if (child && typeof child === "object") walkAssetPayload(child, depth + 1);
+  };
+  const assetResponseListener = async response => {
+    try {
+      const url = response.url();
+      if (!/flow\.google|googleusercontent|flow-content/i.test(url)) return;
+      const headers = await response.allHeaders();
+      if (!/json/i.test(headers["content-type"] || "")) return;
+      walkAssetPayload(await response.json());
+    } catch { /* DOM and attached-chip verification remain the fallback. */ }
+  };
+  page.on("response", assetResponseListener);
+
   for (const imagePath of referenceImages) {
     const filename = path.basename(imagePath);
     const assetStartedAt = Date.now();
@@ -1191,26 +1221,38 @@ async function uploadSceneReferencesUnsafe(page, selectors, referenceImages, ref
       if (reuseIndex < 0) throw new Error("Reusable asset UUID disappeared from the library; refusing to select an unverified item.");
       asset = matchingAssets.nth(reuseIndex);
     }
-    const assetUuid = await assetUuidFromLocator(asset);
-    if (!assetUuid || (existingUuids.has(assetUuid) && assetUuid !== reusedExistingUuid)) {
-      throw new Error("Library entry for " + filename + " did not have a verifiable new UUID or an explicitly identified reusable UUID.");
+    const requestedAssetUuidForPin = requestedAssetUuid || null;
+    const networkCandidates = networkAssetRecords.filter(record =>
+      record.strings.some(value => value.includes(filename.toLowerCase()) || value.includes(filenameStem.toLowerCase()))
+    );
+    const networkUuids = Array.from(new Set(networkCandidates.map(record => record.uuid)));
+    let assetUuid = await assetUuidFromLocator(asset);
+    if (!assetUuid && requestedAssetUuidForPin && networkUuids.includes(requestedAssetUuidForPin)) {
+      assetUuid = requestedAssetUuidForPin;
     }
-    if (reusedExistingUuid) console.warn(`Reusing existing Flow library asset ${filename} -> UUID ${assetUuid}; inspect its thumbnail during dry-run before any execute.`);
+    if (!assetUuid && networkUuids.length === 1) assetUuid = networkUuids[0];
+    const allowUniqueUnresolvedAsset = existingCount === 1 && !assetUuid;
+    if (requestedAssetUuidForPin && assetUuid && assetUuid !== requestedAssetUuidForPin) {
+      throw new Error(`Pinned Flow asset UUID mismatch for ${filename}: requested ${requestedAssetUuidForPin}, library/network resolved ${assetUuid}.`);
+    }
+    if (!assetUuid && !allowUniqueUnresolvedAsset) {
+      throw new Error(`Library entry for ${filename} has no stable UUID in DOM or matching Flow JSON response; matching_asset_count=${existingCount}, network_candidate_uuids=${networkUuids.join(",") || "none"}. Refusing to guess among ambiguous entries.`);
+    }
+    if (reusedExistingUuid) console.warn(`Reusing existing Flow library asset ${filename} -> UUID ${reusedExistingUuid}; inspect its thumbnail during dry-run before any execute.`);
 
     await asset.click({ timeout: 2500 });
     let attached = false;
     const chipsAfterClick = await chips.count().catch(() => -1);
     for (let i = 0; i < chipsAfterClick; i += 1) {
       const src = await chips.nth(i).locator("img.chip-image").getAttribute("src").catch(() => null);
-      if (assetUuidFromUrl(src) === assetUuid) attached = true;
+      const chipUuid = assetUuidFromUrl(src);
+      if (chipUuid && assetUuid && chipUuid === assetUuid) attached = true;
+      if (chipUuid && !assetUuid) assetUuid = chipUuid;
     }
     if (!attached) {
       const addToPrompt = await exactVisibleLocator(page, selectors.ingredient_add_to_prompt, "Add to prompt button");
       let attachedAfterClick = false;
       let lastClickError = null;
-      // This Flow button occasionally remains visible/enabled/stable while its first
-      // click times out. Retry at most twice, but verify the UUID after every attempt
-      // before clicking again so an accepted first click cannot create a duplicate.
       for (let clickAttempt = 0; clickAttempt < 3; clickAttempt += 1) {
         try {
           await addToPrompt.click({ timeout: 6000 });
@@ -1220,7 +1262,7 @@ async function uploadSceneReferencesUnsafe(page, selectors, referenceImages, ref
         }
         attachedAfterClick = await page.waitForFunction(({ selector, uuid }) => Array.from(document.querySelectorAll(selector)).some(chip => {
           const src = chip.querySelector("img.chip-image")?.getAttribute("src") || "";
-          return src.toLowerCase().includes(uuid);
+          return uuid ? src.toLowerCase().includes(uuid) : Boolean(src);
         }), { selector: selectors.ingredient_reference_items, uuid: assetUuid }, { timeout: 2500 }).then(() => true).catch(() => false);
         if (attachedAfterClick) break;
         if (clickAttempt < 2) await page.waitForTimeout(350);
@@ -1230,16 +1272,25 @@ async function uploadSceneReferencesUnsafe(page, selectors, referenceImages, ref
         const detail = lastClickError ? ` Last click error: ${lastClickError.message}` : "";
         throw new Error(`Add to prompt did not attach asset ${filename} after 3 verified click attempts.${detail}`);
       }
-      try {
-        await page.waitForFunction(({ selector, uuid }) => Array.from(document.querySelectorAll(selector)).some(chip => {
-          const src = chip.querySelector("img.chip-image")?.getAttribute("src") || "";
-          return src.toLowerCase().includes(uuid);
-        }), { selector: selectors.ingredient_reference_items, uuid: assetUuid }, { timeout: 5000 });
-      } catch {
-        await closeIngredientsPicker(page, selectors);
-        throw new Error(`Asset ${filename} was selected but its UUID ${assetUuid} never appeared in an attached prompt chip. Stopping before prompt fill/Create.`);
-      }
     }
+    // Resolve the durable identity from the newly attached chip when thumbnail DOM
+    // and list responses do not expose it. The UUID pin, if supplied, is still enforced.
+    const attachedChipCount = await chips.count();
+    let selectedChipUuid = null;
+    for (let i = 0; i < attachedChipCount; i += 1) {
+      const src = await chips.nth(i).locator("img.chip-image").getAttribute("src").catch(() => null);
+      const candidate = assetUuidFromUrl(src);
+      if (candidate && (!assetUuid || candidate === assetUuid)) selectedChipUuid = candidate;
+    }
+    if (!selectedChipUuid) {
+      await closeIngredientsPicker(page, selectors);
+      throw new Error(`Selected asset ${filename} was attached, but neither its library metadata nor Ingredients chip exposed a stable UUID. Stopping before prompt fill/Create.`);
+    }
+    if (requestedAssetUuidForPin && selectedChipUuid !== requestedAssetUuidForPin) {
+      await closeIngredientsPicker(page, selectors);
+      throw new Error(`Pinned Flow asset UUID mismatch after attach for ${filename}: requested ${requestedAssetUuidForPin}, attached chip UUID ${selectedChipUuid}. Stopping before prompt fill/Create.`);
+    }
+    assetUuid = selectedChipUuid;
     await closeIngredientsPicker(page, selectors);
     const attachedUuids = [];
     const finalChipCount = await chips.count();
@@ -1258,6 +1309,7 @@ async function uploadSceneReferencesUnsafe(page, selectors, referenceImages, ref
   if (finalCount !== referenceImages.length) throw new Error(`Ingredients chip count mismatch: expected ${referenceImages.length}, observed ${finalCount}. Stopping before prompt fill/Create.`);
   await verifyAttachedReferenceUuids(page, selectors, expectedUuids);
   console.log(`Verified exact asset identity and loaded thumbnails for ${finalCount} reference chip(s).`);
+  page.off("response", assetResponseListener);
   return expectedUuids;
 }
 
