@@ -1020,10 +1020,10 @@ async function inspectAddToPromptContext(pickerContainer, buttonSelector, tileSe
         const matches = String(value || "").match(/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/ig);
         return matches || [];
       }).map(uuid => uuid.toLowerCase())));
-      const labels = Array.from(new Set(values.filter(value => /mai-face|ref-3|\\.png|\\.jpe?g/i.test(String(value || ""))).map(value => String(value).slice(0, 180))));
+      const labels = Array.from(new Set(values.filter(value => /mai-face|ref-3|\.png|\.jpe?g/i.test(String(value || ""))).map(value => String(value).slice(0, 180))));
       selected = { depth, tile_count_in_context: tileCount, visible_image_count: images.length, uuids, labels,
         context_tag: node.tagName.toLowerCase(), context_role: node.getAttribute("role"),
-        context_text: String(node.innerText || node.textContent || "").replace(/\\s+/g, " ").trim().slice(0, 220) };
+        context_text: String(node.innerText || node.textContent || "").replace(/\s+/g, " ").trim().slice(0, 220) };
       if (uuids.length || labels.length) break;
     }
     return selected || { depth: null, tile_count_in_context: null, visible_image_count: 0, uuids: [], labels: [], context_tag: null, context_role: null, context_text: "" };
