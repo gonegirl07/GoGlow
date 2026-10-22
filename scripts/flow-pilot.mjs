@@ -158,11 +158,12 @@ async function readCreditBalance(page, selectors) {
 
 async function generatedItemKeys(page, selector) {
   return page.locator(selector).evaluateAll(elements => elements.map(element => {
-    const key = element.getAttribute("data-id")
-      || element.getAttribute("data-testid")
-      || element.getAttribute("href")
+    // Prefer a concrete media link/source; generic data-testid values can be shared by every tile.
+    const key = element.getAttribute("href")
       || element.querySelector("a[href]")?.getAttribute("href")
-      || element.querySelector("video, img")?.getAttribute("src")
+      || element.querySelector("video")?.getAttribute("src")
+      || element.getAttribute("data-id")
+      || element.querySelector("img")?.getAttribute("src")
       || "";
     return String(key).trim();
   }));
@@ -193,11 +194,12 @@ async function collectAllGeneratedItems(page, selector, { targetKey = null, maxS
   let duplicateVisibleKeyDetected = false;
   for (let step = 0; step <= maxScrolls; step += 1) {
     const visible = await page.locator(selector).evaluateAll(elements => elements.map((element, index) => {
-      const key = element.getAttribute("data-id")
-        || element.getAttribute("data-testid")
-        || element.getAttribute("href")
+      // Prefer a concrete media link/source; generic data-testid values can be shared by every tile.
+      const key = element.getAttribute("href")
         || element.querySelector("a[href]")?.getAttribute("href")
-        || element.querySelector("video, img")?.getAttribute("src")
+        || element.querySelector("video")?.getAttribute("src")
+        || element.getAttribute("data-id")
+        || element.querySelector("img")?.getAttribute("src")
         || "";
       const text = String(element.innerText || element.textContent || "").replace(/\s+/g, " ").trim();
       const state = [element.getAttribute("data-status"), element.getAttribute("data-state"),
@@ -445,11 +447,10 @@ async function waitForGenerationAndDownload(page, selectors, { beforeKeys, befor
     await activateVideosTab(page, selectors).catch(() => "not_found_no_tab_switch");
     await failIfVisible();
     const scan = await collectAllGeneratedItems(page, selectors.generated_video_items).catch(() => ({ items: [] }));
+    // A result is eligible only when its concrete key was absent from the pre-Create snapshot.
+    // Never promote the first visible tile just because the grid count increased.
     const newItems = scan.items.filter(item => item.key && !beforeKeys.includes(item.key));
-    const firstTile = scan.items[0] || null;
-    const firstTileIsNew = Boolean(firstTile && firstTile.key && !beforeKeys.includes(firstTile.key)
-      && scan.items.length > beforeKeys.length);
-    const candidateItems = firstTileIsNew ? [firstTile] : newItems;
+    const candidateItems = newItems;
     const failedTile = newItems.find(item =>
       /\bfailed\b/i.test(`${item.state} ${item.text}`)
       || isGenerationFailureText(`${item.state} ${item.text}`));
@@ -543,7 +544,8 @@ async function waitForGenerationAndDownload(page, selectors, { beforeKeys, befor
     const safeAttempt = String(attemptId || "attempt").replace(/[^a-zA-Z0-9_-]/g, "_");
     const targetDir = path.resolve(downloadDir);
     fs.mkdirSync(targetDir, { recursive: true });
-    const targetName = variantCount > 1 ? `${safeScene}__v${variantIndex}${extension}` : `${safeScene}__${safeAttempt}${extension}`;
+    // Every output is tied to its unique submission attempt; reruns never collide with old files.
+    const targetName = `${safeScene}__${safeAttempt}${extension}`;
     const target = path.join(targetDir, targetName);
     if (fs.existsSync(target)) throw new Error(`Refusing to overwrite an existing scene/attempt download: ${target}`);
     await download.saveAs(target);
@@ -824,47 +826,37 @@ async function uploadSceneReferencesUnsafe(page, selectors, referenceImages) {
       if (uuid) existingUuids.add(uuid);
     }
 
-    const uploadButton = await exactVisibleLocator(page, selectors.ingredient_upload_button, "Upload media button");
-    const chooserPromise = page.waitForEvent("filechooser", { timeout: 5000 });
-    await uploadButton.click({ timeout: 2500 });
-    const chooser = await chooserPromise;
-    await chooser.setFiles(imagePath);
     let reusedExistingUuid = null;
-    const uuidWaitStartedAt = Date.now();
-    try {
-      await page.waitForFunction(({ selector, filename, oldUuids }) => {
-        // Flow inserts the newest upload at the top. Wait for the first same-name entry's
-        // thumbnail UUID rather than accepting a slower-loading old duplicate lower in the list.
-        const newestMatch = Array.from(document.querySelectorAll(selector)).find(asset =>
-          (asset.innerText || asset.textContent || "").includes(filename));
-        if (!newestMatch) return false;
-        const src = newestMatch.querySelector("img")?.getAttribute("src") || "";
-        const match = src.match(/[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}/i);
-        return Boolean(match && !oldUuids.includes(match[0].toLowerCase()));
-      }, { selector: selectors.ingredient_library_item, filename, oldUuids: Array.from(existingUuids) }, { timeout: ASSET_READY_TIMEOUT_MS });
-      console.log(`Reference UUID ready: ${filename} in ${Date.now() - uuidWaitStartedAt}ms`);
-    } catch {
-      const diagnostics = [];
-      const countAfterTimeout = await matchingAssets.count().catch(() => 0);
-      for (let i = 0; i < countAfterTimeout; i += 1) {
-        const src = await matchingAssets.nth(i).locator("img").first().getAttribute("src").catch(() => null);
-        const uuid = assetUuidFromUrl(src);
-        if (uuid) diagnostics.push(uuid);
-      }
-      // Flow can deduplicate an upload and keep the existing project-library UUID.
-      // Reuse is allowed only when the existing same-name asset has a readable UUID;
-      // the dry-run reports it so the operator can inspect the thumbnail before execution.
-      reusedExistingUuid = diagnostics.find(uuid => existingUuids.has(uuid)) || null;
-      console.warn(JSON.stringify({
-        event: reusedExistingUuid ? "asset_upload_reused_existing" : "asset_upload_uuid_timeout",
-        elapsed_ms: Date.now() - uuidWaitStartedAt,
+    if (existingUuids.size === 1) {
+      // The library already contains one unambiguous asset with this exact local filename.
+      // Reuse immediately rather than uploading a duplicate and waiting for Flow's 90s UUID timeout.
+      reusedExistingUuid = Array.from(existingUuids)[0];
+      console.log(JSON.stringify({
+        event: "asset_library_reused_existing",
         filename,
-        timeout_ms: ASSET_READY_TIMEOUT_MS,
-        existing_uuids_before_upload: Array.from(existingUuids),
-        matching_uuids_after_timeout: diagnostics,
         selected_existing_uuid: reusedExistingUuid,
+        note: "Existing unique library asset found; skipping upload and UUID timeout wait.",
       }));
-      if (!reusedExistingUuid) {
+    } else if (existingUuids.size > 1) {
+      throw new Error(`Multiple existing library assets match ${filename}; refusing to guess which reference is correct.`);
+    } else {
+      const uploadButton = await exactVisibleLocator(page, selectors.ingredient_upload_button, "Upload media button");
+      const chooserPromise = page.waitForEvent("filechooser", { timeout: 5000 });
+      await uploadButton.click({ timeout: 2500 });
+      const chooser = await chooserPromise;
+      await chooser.setFiles(imagePath);
+      const uuidWaitStartedAt = Date.now();
+      try {
+        await page.waitForFunction(({ selector, filename, oldUuids }) => {
+          const newestMatch = Array.from(document.querySelectorAll(selector)).find(asset =>
+            (asset.innerText || asset.textContent || "").includes(filename));
+          if (!newestMatch) return false;
+          const src = newestMatch.querySelector("img")?.getAttribute("src") || "";
+          const match = src.match(/[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}/i);
+          return Boolean(match && !oldUuids.includes(match[0].toLowerCase()));
+        }, { selector: selectors.ingredient_library_item, filename, oldUuids: Array.from(existingUuids) }, { timeout: ASSET_READY_TIMEOUT_MS });
+        console.log(`Reference UUID ready: ${filename} in ${Date.now() - uuidWaitStartedAt}ms`);
+      } catch {
         throw new Error("Upload " + filename + " did not expose a new UUID within " + ASSET_READY_TIMEOUT_MS + "ms and no reusable same-name asset UUID was verifiable. Stopping before prompt fill/Create.");
       }
     }

@@ -98,7 +98,8 @@ class FlowPilotContractTests(unittest.TestCase):
         self.assertIn('chipCount !== 0', self.script)
 
     def test_deduplicated_upload_can_reuse_a_verifiable_existing_asset(self):
-        self.assertIn('event: reusedExistingUuid ? "asset_upload_reused_existing" : "asset_upload_uuid_timeout"', self.script)
+        self.assertIn('event: "asset_library_reused_existing"', self.script)
+        self.assertIn("Existing unique library asset found; skipping upload and UUID timeout wait.", self.script)
         self.assertIn('existing_uuids_before_upload: Array.from(existingUuids)', self.script)
         self.assertIn('matching_uuids_after_timeout: diagnostics', self.script)
         self.assertIn('selected_existing_uuid: reusedExistingUuid', self.script)
@@ -169,10 +170,12 @@ class FlowPilotContractTests(unittest.TestCase):
         self.assertIn('const safeScene = String(sceneId || "scene")', self.script)
         self.assertIn('const safeAttempt = String(attemptId || "attempt")', self.script)
         self.assertIn('${safeScene}__${safeAttempt}${extension}', self.script)
+        self.assertIn('const targetName = `${safeScene}__${safeAttempt}${extension}`', self.script)
         self.assertIn("Refusing to overwrite an existing scene/attempt download", self.script)
 
     def test_virtualized_flow_grid_uses_new_stable_keys_not_tile_count(self):
         self.assertIn("const newItems = scan.items.filter(item => item.key && !beforeKeys.includes(item.key))", self.script)
+        self.assertIn("Prefer a concrete media link/source; generic data-testid values can be shared by every tile.", self.script)
         self.assertIn("async function collectAllGeneratedItems(page, selector", self.script)
         self.assertNotIn("count > beforeCount", self.script)
 
@@ -394,10 +397,9 @@ class FlowPilotContractTests(unittest.TestCase):
         )[0]
         self.assertIn("Explicitly re-select Videos", wait_fn)
         self.assertIn("await activateVideosTab(page, selectors)", wait_fn)
-        self.assertIn("const firstTile = scan.items[0] || null", wait_fn)
-        self.assertIn("const firstTileIsNew = Boolean(firstTile", wait_fn)
-        self.assertIn("scan.items.length > beforeKeys.length", wait_fn)
-        self.assertIn("const candidateItems = firstTileIsNew ? [firstTile] : newItems", wait_fn)
+        self.assertIn("const candidateItems = newItems", wait_fn)
+        self.assertNotIn("firstTileIsNew", wait_fn)
+        self.assertIn("if (candidateItems.length === 1 && !attemptedKeys.has(candidateItems[0].key))", wait_fn)
 
     def test_wait_extends_polling_when_credit_was_charged_but_result_is_late(self):
         wait_fn = self.script.split("async function waitForGenerationAndDownload", 1)[1].split(
@@ -447,9 +449,9 @@ class FlowPilotContractTests(unittest.TestCase):
     def test_seated_shots_get_head_to_knees_framing_and_wide_knee_margins(self):
         self.assertIn('scene.framing_helper_applied', self.script)
         self.assertIn('Locked-off tripod shot from the first frame: the camera does not move, pan, tilt, dolly, or zoom at any time', self.script)
-        self.assertIn('no more than the middle 60 percent of the frame width', self.script)
-        self.assertIn('Move the camera farther back until the entire seated pose, both knees, and both feet are comfortably inside the frame', self.script)
-        self.assertIn('do not zoom in or crop any part of the seated pose', self.script)
+        self.assertIn('Wide full-body shot with the person appearing small in the frame.', self.script)
+        self.assertIn('Show the entire yoga mat and surrounding floor with clear empty space on every side', self.script)
+        self.assertIn('Keep the whole seated pose comfortably inside the frame; do not crop the body or mat.', self.script)
         self.assertIn('is framed from head to knees', self.script)
         self.assertIn('scene.framing_helper === false ? false', self.script)
 
