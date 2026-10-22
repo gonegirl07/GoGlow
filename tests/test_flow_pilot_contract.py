@@ -430,7 +430,7 @@ class FlowPilotContractTests(unittest.TestCase):
         self.assertIn("await addToPrompt.click({ timeout: 6000 })", upload_fn)
         self.assertIn("attachedAfterClick = await page.waitForFunction", upload_fn)
         self.assertIn("if (attachedAfterClick) break", upload_fn)
-        self.assertIn("did not attach asset", upload_fn)
+        self.assertIn("did not add a new Ingredients chip", upload_fn)
 
 
 
