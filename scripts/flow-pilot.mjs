@@ -1561,21 +1561,29 @@ async function uploadSceneReferencesUnsafe(page, selectors, referenceImages, ref
       if (!uuid) throw new Error(`Existing Ingredients chip ${i + 1} has no verifiable UUID before attaching ${filename}.`);
       beforeAttachChipUuids.push(uuid);
     }
-    await asset.click({ timeout: 2500 });
-
-    // Flow may not expose aria-selected on picker cards. Treat exactly one visible
-    // "Add to prompt" button as the readiness signal; record aria-selected diagnostically.
+    // Flow may render same-name library cards outside the picker; asset is deliberately
+    // selected from the visible picker-scoped locator resolved above.
     const addToPromptSelector = selectors.ingredient_add_to_prompt;
-    const addToPromptCandidates = page.locator(addToPromptSelector);
+    const addToPromptCandidates = pickerContainer.locator(addToPromptSelector);
     const selectionWaitStartedAt = Date.now();
     const selectionWaitTimeoutMs = 8000;
     let selectedAssetAriaSelected = null;
     let addToPromptVisibleCount = 0;
     let referenceSelectionReady = false;
     let selectionRetried = false;
-    // The selected asset may be below the picker viewport; bring it into view before
-    // looking for the contextual Add to prompt action.
-    await asset.scrollIntoViewIfNeeded({ timeout: 3000 }).catch(() => {});
+    const initialAssetBox = await asset.boundingBox().catch(() => null);
+    console.log(JSON.stringify({
+      event: "ingredients_picker_target_tile",
+      filename,
+      matching_tile_count: await matchingAssets.count().catch(() => 0),
+      target_tile_box: initialAssetBox ? { x: Math.round(initialAssetBox.x), y: Math.round(initialAssetBox.y), width: Math.round(initialAssetBox.width), height: Math.round(initialAssetBox.height) } : null,
+      target_tile_aria_selected_before_click: await asset.getAttribute("aria-selected").catch(() => null),
+      target_tile_text: (await asset.innerText().catch(() => "")).replace(/\\s+/g, " ").trim().slice(0, 160),
+    }));
+    // Start the timer before scrolling/clicking so the reported elapsed time includes
+    // slow picker interactions rather than only the final readiness polling loop.
+    await asset.scrollIntoViewIfNeeded({ timeout: 1500 }).catch(() => {});
+    await asset.click({ timeout: 1500 }).catch(() => {});
     while (Date.now() - selectionWaitStartedAt < selectionWaitTimeoutMs) {
       selectedAssetAriaSelected = await asset.getAttribute("aria-selected").catch(() => null);
       const candidateCount = await addToPromptCandidates.count().catch(() => 0);
@@ -1587,16 +1595,15 @@ async function uploadSceneReferencesUnsafe(page, selectors, referenceImages, ref
         referenceSelectionReady = true;
         break;
       }
-      // aria-selected is absent on some Flow picker builds. If no action appears,
-      // re-scroll and retry selecting the card once rather than waiting on a stale
-      // off-screen selection state.
+      // Some picker builds omit aria-selected entirely. Retry the exact visible tile
+      // once, then require the contextual Add to prompt action before continuing.
       if (!selectionRetried && Date.now() - selectionWaitStartedAt >= 1000
         && selectedAssetAriaSelected !== "true" && addToPromptVisibleCount === 0) {
-        await asset.scrollIntoViewIfNeeded({ timeout: 2000 }).catch(() => {});
-        await asset.click({ timeout: 2500 }).catch(() => {});
+        await asset.scrollIntoViewIfNeeded({ timeout: 1000 }).catch(() => {});
+        await asset.click({ timeout: 1500 }).catch(() => {});
         selectionRetried = true;
       }
-      await page.waitForTimeout(200);
+      await page.waitForTimeout(150);
     }
     console.log(JSON.stringify({
       event: "reference_asset_selection_ready",
