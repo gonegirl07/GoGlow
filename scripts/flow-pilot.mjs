@@ -269,14 +269,14 @@ async function collectAllGeneratedItems(page, selector, { targetKey = null, maxS
     }
     (document.scrollingElement || document.documentElement).scrollTop = top;
   }, { selectorText: selector, top });
-  const resolveUuidByOpeningTile = async (index, identity = null) => {
+  const resolveUuidByOpeningTile = async (index, identity = null, rowIdentities = [], expectedTileCount = null) => {
     const gridUrl = page.url();
     const scrollTop = await readScrollTop();
     let lastError = null;
     for (let attempt = 1; attempt <= 5; attempt += 1) {
       try {
         // Re-enter the project grid and Videos tab for each attempt, then re-find
-        // the same card by its thumbnail URL token instead of trusting a virtualized index.
+        // Prefer UUID/network metadata; thumbnail URL tokens are a hint only because /asb/ signatures can rotate.
         await page.goto(gridUrl, { waitUntil: "domcontentloaded", timeout: 12000 }).catch(() => {});
         const tabResult = await activateVideosTab(page, selectors).catch(error => `error:${error.message}`);
         // Flow may briefly render All media (or an incomplete grid) after route entry.
@@ -331,6 +331,33 @@ async function collectAllGeneratedItems(page, selector, { targetKey = null, maxS
             elements.map((element, i) => ({ i, text: String(element.innerText || element.textContent || "").replace(/\\s+/g, " ").trim() }))
               .filter(item => item.text === targetText).map(item => item.i), normalizedTargetText).catch(() => []);
           if (matchingIndices.length === 1) currentIndex = matchingIndices[0];
+        }
+        // A signed /asb/ token may rotate for the same media. For a middle tile,
+        // permit index fallback only when both neighboring tile tokens and the
+        // DOM tile count still match the original row snapshot.
+        if (currentIndex < 0 && Number.isInteger(index) && index > 0 && index < 2 && rowIdentities.length >= 3) {
+          const expectedRowTokens = rowIdentities.slice(0, 3).map(item => item?.thumbnailSrc ? thumbnailIdentityToken(item.thumbnailSrc) : null);
+          const currentRowTokens = currentTokens.slice(0, 3);
+          const currentTileCount = await page.locator(selector).count().catch(() => 0);
+          const neighborsMatch = Boolean(expectedRowTokens[0] && expectedRowTokens[2]
+            && currentRowTokens[0] === expectedRowTokens[0]
+            && currentRowTokens[2] === expectedRowTokens[2]);
+          const tileCountMatches = expectedTileCount === null || currentTileCount === expectedTileCount;
+          if (neighborsMatch && tileCountMatches && currentRowTokens[index] && expectedRowTokens[index]
+            && currentRowTokens.length === 3) {
+            console.log(JSON.stringify({
+              event: "token_changed_at_index",
+              tile_index: index,
+              old_thumbnail_token: expectedRowTokens[index],
+              new_thumbnail_token: currentRowTokens[index],
+              left_neighbor_match: true,
+              right_neighbor_match: true,
+              expected_tile_count: expectedTileCount,
+              current_tile_count: currentTileCount,
+              accepted_by_position_with_neighbor_validation: true,
+            }));
+            currentIndex = index;
+          }
         }
         if (currentIndex < 0 && !identity?.thumbnailSrc && !identity?.text) currentIndex = index;
         if (currentIndex < 0) throw new Error("Could not re-identify the same tile by thumbnail token/text after returning to the project grid.");
@@ -407,6 +434,7 @@ async function collectAllGeneratedItems(page, selector, { targetKey = null, maxS
         || element.querySelector("[data-created-at]")?.getAttribute("data-created-at") || null;
       return { key: String(key).trim(), mediaUuid: mediaUuid ? mediaUuid.toLowerCase() : null, hint, text, thumbnailSrc, state, progress, index, createdAt };
     }));
+    const domTileCount = visible.length;
     if (Number.isInteger(topLimit) && topLimit > 0) visible = visible.slice(0, topLimit);
     for (const item of visible) {
       if (!item.mediaUuid && item.hint && uuidCache.has(item.hint)) {
@@ -422,7 +450,7 @@ async function collectAllGeneratedItems(page, selector, { targetKey = null, maxS
         }
       }
       if (!item.mediaUuid) {
-        const resolvedUuid = await resolveUuidByOpeningTile(item.index, item);
+        const resolvedUuid = await resolveUuidByOpeningTile(item.index, item, visible, domTileCount);
         if (resolvedUuid) {
           item.mediaUuid = resolvedUuid;
           item.key = `media:${resolvedUuid}`;
