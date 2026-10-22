@@ -281,18 +281,20 @@ class FlowPilotContractTests(unittest.TestCase):
         self.assertIn('faceDescriptionMode === "hybrid"', self.script)
         self.assertIn("HYBRID FACE DESCRIPTION (brief matching traits only; reference images remain authoritative)", self.script)
         self.assertIn("const rawNormalizedExpression = scene.expression", self.script)
-        self.assertIn("rawNormalizedExpression.replace(/(?:[,;.]?\\s*)natural brief blinks only\\b/ig", self.script)
+        self.assertIn('.replace(/(?:[,;.]?\\s*)natural brief blinks only\\b/ig, "")', self.script)
         self.assertIn("const openEyesRequested =", self.script)
-        self.assertIn("const expressionSection = normalizedExpression", self.script)
+        self.assertIn("const expressionContent = [normalizedExpression, openEyesGuard].filter(Boolean)", self.script)
+        self.assertIn("const expressionSection = expressionContent", self.script)
         self.assertIn("EXPRESSION AND EYE STATE (follow throughout the entire shot)", self.script)
         self.assertIn("this instruction takes priority over breathing or other subtle motion", self.script)
         self.assertIn("Expression must be ASCII/English only", self.script)
 
     def test_generation_ledger_records_face_reference_configuration(self):
-        self.assertIn("face_reference_ids: selectedFaceRefs.map(item => path.basename(item))", self.script)
+        self.assertIn("face_reference_ids: faceReferenceIds", self.script)
         self.assertIn('face_description_mode: scene.face_description_mode || "include"', self.script)
         self.assertIn("expression: scene.expression || null", self.script)
-        self.assertIn("other_reference_ids: referenceImages.filter(item => !selectedPaths.has", self.script)
+        self.assertIn("reference_set_key: referenceSetKey", self.script)
+        self.assertIn("other_reference_ids: otherReferenceIds", self.script)
 
     def test_virtualized_media_grid_is_swept_before_tile_identity_comparison(self):
         self.assertIn("async function collectAllGeneratedItems(page, selector", self.script)
@@ -480,7 +482,7 @@ class FlowPilotContractTests(unittest.TestCase):
 
 
     def test_open_eyes_guard_does_not_duplicate_natural_blinks_clause(self):
-        self.assertIn('rawNormalizedExpression.replace(/(?:[,;.]?\\s*)natural brief blinks only\\b/ig', self.script)
+        self.assertIn('.replace(/(?:[,;.]?\\s*)natural brief blinks only\\b/ig, "")', self.script)
         self.assertIn('const openEyesRequested =', self.script)
         self.assertIn('const openEyesGuard = openEyesRequested', self.script)
 
