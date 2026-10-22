@@ -212,7 +212,7 @@ async function collectAllGeneratedItems(page, selector, { targetKey = null, maxS
   // Observe Flow's own JSON responses while the virtualized grid is swept. Some builds
   // expose the media UUID in list payloads before it appears in thumbnail DOM attributes.
   const networkMediaRecords = [];
-  const normalizeLabel = value => String(value || "").toLowerCase().replace(/\\s+/g, " ").trim();
+  const normalizeLabel = value => String(value || "").toLowerCase().replace(/\s+/g, " ").trim();
   const walkNetworkPayload = (value, depth = 0) => {
     if (!value || typeof value !== "object" || depth > 12) return;
     if (Array.isArray(value)) {
@@ -234,7 +234,7 @@ async function collectAllGeneratedItems(page, selector, { targetKey = null, maxS
   const networkResponseListener = async response => {
     try {
       const url = response.url();
-      if (!/flow\\.google|googleusercontent|flow-content/i.test(url)) return;
+      if (!/flow\.google|googleusercontent|flow-content/i.test(url)) return;
       const headers = await response.allHeaders();
       if (!/json/i.test(headers["content-type"] || "")) return;
       walkNetworkPayload(await response.json());
@@ -319,7 +319,7 @@ async function collectAllGeneratedItems(page, selector, { targetKey = null, maxS
         return matches && matches.length ? matches[matches.length - 1].toLowerCase() : null;
       };
       const mediaUuid = sources.map(uuidFrom).find(Boolean);
-      const hint = [String(element.innerText || element.textContent || "").replace(/\\s+/g, " ").trim(), ...sources].join("|");
+      const hint = [String(element.innerText || element.textContent || "").replace(/\s+/g, " ").trim(), ...sources].join("|");
       const key = mediaUuid ? `media:${mediaUuid}` : (sources[0] || "");
       const text = String(element.innerText || element.textContent || "").replace(/\s+/g, " ").trim();
       const state = [element.getAttribute("data-status"), element.getAttribute("data-state"),
