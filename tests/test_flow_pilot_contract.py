@@ -403,7 +403,7 @@ class FlowPilotContractTests(unittest.TestCase):
         self.assertIn("await activateVideosTab(page, selectors)", wait_fn)
         self.assertIn("const candidateItems = newItems", wait_fn)
         self.assertNotIn("firstTileIsNew", wait_fn)
-        self.assertIn("if (newItems.length > 1)", wait_fn)
+        self.assertIn("if (candidateItems.length > 1)", wait_fn)
         self.assertIn("if (candidateItems.length === 1 && !attemptedKeys.has(candidateItems[0].key))", wait_fn)
 
     def test_wait_extends_polling_when_credit_was_charged_but_result_is_late(self):
