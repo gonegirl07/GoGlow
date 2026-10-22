@@ -457,7 +457,7 @@ async function waitForGenerationAndDownload(page, selectors, { beforeKeys, befor
     if (failedTile) {
       throw new Error(`FLOW_GENERATION_FAILED: new Flow tile ${failedTile.key} reports failure: ${failedTile.text || failedTile.state}`);
     }
-    if (!firstTileIsNew && newItems.length > 1) {
+    if (newItems.length > 1) {
       throw new Error(`More than one new Flow video tile appeared after a full virtualized-grid sweep (${newItems.length}); refusing to guess which clip to download.`);
     }
     if (candidateItems.length === 1 && !attemptedKeys.has(candidateItems[0].key)) {

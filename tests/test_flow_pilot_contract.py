@@ -391,7 +391,7 @@ class FlowPilotContractTests(unittest.TestCase):
         )
 
 
-    def test_wait_reselects_videos_and_uses_new_first_tile_when_inventory_grows(self):
+    def test_wait_reselects_videos_and_requires_new_media_id(self):
         wait_fn = self.script.split("async function waitForGenerationAndDownload", 1)[1].split(
             "function createConfirmationReader()", 1
         )[0]
@@ -399,6 +399,7 @@ class FlowPilotContractTests(unittest.TestCase):
         self.assertIn("await activateVideosTab(page, selectors)", wait_fn)
         self.assertIn("const candidateItems = newItems", wait_fn)
         self.assertNotIn("firstTileIsNew", wait_fn)
+        self.assertIn("if (newItems.length > 1)", wait_fn)
         self.assertIn("if (candidateItems.length === 1 && !attemptedKeys.has(candidateItems[0].key))", wait_fn)
 
     def test_wait_extends_polling_when_credit_was_charged_but_result_is_late(self):
