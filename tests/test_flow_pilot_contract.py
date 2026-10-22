@@ -910,5 +910,25 @@ assert.deepEqual(findNewCompletedMediaItems([
         self.assertIn("const thumbnailDeadline = networkUuidShortcut ? Date.now() : Date.now() + 7000;", upload_fn)
         self.assertIn("Skipped Flow asset thumbnail UUID wait:", upload_fn)
 
+
+    def test_picker_resets_between_assets_and_requires_preview_uuid_before_add(self):
+        self.assertIn("async function resetIngredientsPicker(page, selectors)", self.script)
+        self.assertIn('await page.keyboard.press("Escape")', self.script)
+        self.assertIn("Ingredients picker did not fully unmount", self.script)
+        self.assertIn("await resetIngredientsPicker(page, selectors);", self.script)
+        self.assertIn("async function inspectAddToPromptContext(pickerContainer, buttonSelector, tileSelector)", self.script)
+        self.assertIn('event: "ingredients_picker_add_action_identity"', self.script)
+        self.assertIn("expected_asset_uuid: expectedPreviewUuid || null", self.script)
+        self.assertIn("previewContext.uuids?.includes(expectedPreviewUuid)", self.script)
+        self.assertIn("Refusing to click Add to prompt", self.script)
+        self.assertIn("action_clicked: false", self.script)
+        upload_fn = self.script.split("async function uploadSceneReferencesUnsafe", 1)[1].split(
+            "async function uploadSceneReferences(", 1
+        )[0]
+        self.assertLess(
+            upload_fn.index("if (!expectedPreviewUuid || !previewContext.uuids?.includes(expectedPreviewUuid))"),
+            upload_fn.index("await addToPrompt.click({ timeout: 6000 });"),
+        )
+
 if __name__ == "__main__":
     unittest.main()
