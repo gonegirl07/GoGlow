@@ -1026,7 +1026,7 @@ async function inspectAddToPromptContext(button) {
         return matches || [];
       }).map(uuid => uuid.toLowerCase())));
       const previewLabels = Array.from(new Set(values.flatMap(value => {
-        const match = String(value || "").match(/Preview of\\s+([^\\r\\n]+)/i);
+        const match = String(value || "").match(/Preview of\\s+(.+?\\.(?:png|jpe?g|webp|gif|avif))/i);
         return match ? [match[1].trim().replace(/["'”’]+$/, "")] : [];
       })));
       const labels = Array.from(new Set(values.filter(value => /mai-face|ref-3|\\.png|\\.jpe?g/i.test(String(value || ""))).map(value => String(value).slice(0, 180))));
