@@ -1648,6 +1648,7 @@ async function uploadSceneReferencesUnsafe(page, selectors, referenceImages, ref
     const addToPromptCandidates = pickerContainer.locator(addToPromptSelector);
     const selectionWaitStartedAt = Date.now();
     const selectionWaitTimeoutMs = 8000;
+    const selectionDeadline = selectionWaitStartedAt + selectionWaitTimeoutMs;
     let selectedAssetAriaSelected = null;
     let addToPromptVisibleCount = 0;
     let referenceSelectionReady = false;
@@ -1655,54 +1656,109 @@ async function uploadSceneReferencesUnsafe(page, selectors, referenceImages, ref
     let previewContext = null;
     let previewIdentitySignal = "unverified";
     const expectedPreviewUuid = (requestedAssetUuidForPin || assetUuid || "").toLowerCase();
-    const targetFilename = filename.split(/[\\/]/).pop().toLowerCase();
-    const initialAssetBox = await asset.boundingBox().catch(() => null);
+    const targetFilename = filename.split(/[\\\\/]/).pop().toLowerCase();
+    const pickerContainerSelector = '[role="dialog"], [aria-modal="true"], .cdk-overlay-pane';
+    const readPickerDiagnostics = async (tileBox = null) => page.evaluate(({ containerSelector, tileSelector, filename, x, y }) => {
+      const visible = node => {
+        if (!node || !node.isConnected) return false;
+        const style = getComputedStyle(node), rect = node.getBoundingClientRect();
+        return style.display !== "none" && style.visibility !== "hidden" && Number(style.opacity || 1) > 0 && rect.width > 0 && rect.height > 0;
+      };
+      const containers = Array.from(document.querySelectorAll(containerSelector)).filter(visible);
+      const tiles = containers.flatMap(container => Array.from(container.querySelectorAll(tileSelector)).filter(visible)
+        .filter(tile => String(tile.innerText || tile.textContent || "").toLowerCase().includes(filename.toLowerCase())));
+      const pane = containers.map(container => ({ role: container.getAttribute("role"), text: String(container.innerText || "").replace(/\\s+/g, " ").trim().slice(0, 160) }));
+      const hit = Number.isFinite(x) && Number.isFinite(y) ? document.elementFromPoint(x, y) : null;
+      return {
+        visible_picker_count: containers.length, matching_visible_tile_count: tiles.length,
+        matching_tiles: tiles.slice(0, 4).map(tile => { const r = tile.getBoundingClientRect(); return {
+          aria_selected: tile.getAttribute("aria-selected"),
+          box: { x: Math.round(r.x), y: Math.round(r.y), width: Math.round(r.width), height: Math.round(r.height) },
+          text: String(tile.innerText || tile.textContent || "").replace(/\\s+/g, " ").trim().slice(0, 120) }; }),
+        detail_pane: pane,
+        click_hit_inside_matching_tile: Boolean(hit && tiles.some(tile => tile === hit || tile.contains(hit))),
+        click_hit_tag: hit?.tagName?.toLowerCase() || null,
+        click_hit_text: String(hit?.innerText || hit?.textContent || "").replace(/\\s+/g, " ").trim().slice(0, 100)
+      };
+    }, { containerSelector: pickerContainerSelector, tileSelector: selectors.ingredient_library_item, filename,
+      x: tileBox ? tileBox.x + tileBox.width / 2 : null, y: tileBox ? tileBox.y + tileBox.height / 2 : null })
+      .catch(error => ({ diagnostic_error: error.message }));
+    const freshTile = async () => {
+      const containers = page.locator(pickerContainerSelector);
+      const containerCount = await containers.count().catch(() => 0);
+      for (let i = 0; i < containerCount && Date.now() < selectionDeadline; i += 1) {
+        const container = containers.nth(i);
+        if (!(await container.isVisible({ timeout: 150 }).catch(() => false))) continue;
+        const tiles = container.locator(`${selectors.ingredient_library_item}:visible`);
+        let found = tiles.filter({ hasText: filename });
+        if (await found.count().catch(() => 0) === 0 && filenameStem !== filename) found = tiles.filter({ hasText: filenameStem });
+        if (await found.count().catch(() => 0) === 1 && await found.first().isVisible({ timeout: 150 }).catch(() => false)) return { container, tile: found.first() };
+      }
+      return null;
+    };
+    let activeAsset = asset;
+    const initialAssetBox = await activeAsset.boundingBox({ timeout: 300 }).catch(() => null);
     console.log(JSON.stringify({
-      event: "ingredients_picker_target_tile",
-      filename,
+      event: "ingredients_picker_target_tile", filename,
       matching_tile_count: await matchingAssets.count().catch(() => 0),
       target_tile_box: initialAssetBox ? { x: Math.round(initialAssetBox.x), y: Math.round(initialAssetBox.y), width: Math.round(initialAssetBox.width), height: Math.round(initialAssetBox.height) } : null,
-      target_tile_aria_selected_before_click: await asset.getAttribute("aria-selected").catch(() => null),
-      target_tile_text: (await asset.innerText().catch(() => "")).replace(/\\s+/g, " ").trim().slice(0, 160),
+      target_tile_aria_selected_before_click: await activeAsset.getAttribute("aria-selected", { timeout: 300 }).catch(() => null),
+      target_tile_text: (await activeAsset.innerText({ timeout: 300 }).catch(() => "")).replace(/\\s+/g, " ").trim().slice(0, 160),
     }));
-    await asset.scrollIntoViewIfNeeded({ timeout: 1500 }).catch(() => {});
-    await asset.click({ timeout: 2000 }).catch(() => {});
-    while (Date.now() - selectionWaitStartedAt < selectionWaitTimeoutMs) {
-      selectedAssetAriaSelected = await asset.getAttribute("aria-selected").catch(() => null);
-      const candidateCount = await addToPromptCandidates.count().catch(() => 0);
+    await activeAsset.scrollIntoViewIfNeeded({ timeout: 400 }).catch(() => {});
+    let current = await freshTile();
+    if (!current) {
+      console.log(JSON.stringify({ event: "ingredients_picker_step_diagnostics", step: "before_initial_click", ...(await readPickerDiagnostics(initialAssetBox)) }));
+      throw new Error(`Picker closed or target tile became ambiguous before selecting ${filename}; stopping before Add/prompt fill/Create.`);
+    }
+    activeAsset = current.tile;
+    const firstBox = await activeAsset.boundingBox({ timeout: 300 }).catch(() => null);
+    if (firstBox) await activeAsset.click({ position: { x: Math.max(2, Math.floor(firstBox.width / 2)), y: Math.max(2, Math.floor(firstBox.height / 2)) }, timeout: 700 }).catch(() => {});
+    console.log(JSON.stringify({ event: "ingredients_picker_step_diagnostics", step: "after_initial_click", ...(await readPickerDiagnostics(firstBox)) }));
+    while (Date.now() < selectionDeadline) {
+      current = await freshTile();
+      if (!current) {
+        console.log(JSON.stringify({ event: "ingredients_picker_step_diagnostics", step: "target_missing_during_poll", ...(await readPickerDiagnostics()) }));
+        break;
+      }
+      activeAsset = current.tile;
+      selectedAssetAriaSelected = await activeAsset.getAttribute("aria-selected", { timeout: 200 }).catch(() => null);
+      const addCandidates = current.container.locator(selectors.ingredient_add_to_prompt);
+      const candidateCount = await addCandidates.count().catch(() => 0);
       addToPromptVisibleCount = 0;
       let visibleButton = null;
-      for (let i = 0; i < candidateCount; i += 1) {
-        if (await addToPromptCandidates.nth(i).isVisible().catch(() => false)) {
-          addToPromptVisibleCount += 1;
-          visibleButton = addToPromptCandidates.nth(i);
-        }
+      for (let i = 0; i < candidateCount && Date.now() < selectionDeadline; i += 1) {
+        if (await addCandidates.nth(i).isVisible({ timeout: 150 }).catch(() => false)) { addToPromptVisibleCount += 1; visibleButton = addCandidates.nth(i); }
       }
-      previewContext = addToPromptVisibleCount === 1 && visibleButton
-        ? await inspectAddToPromptContext(visibleButton) : null;
+      previewContext = addToPromptVisibleCount === 1 && visibleButton ? await inspectAddToPromptContext(visibleButton) : null;
       const previewLabels = (previewContext?.preview_labels || []).map(label => String(label).trim().toLowerCase());
       const labelMatches = previewLabels.includes(targetFilename);
       const uuidMatches = Boolean(expectedPreviewUuid && previewContext?.uuids?.includes(expectedPreviewUuid));
       previewIdentitySignal = uuidMatches ? "uuid" : labelMatches ? "exact_preview_filename" : "unverified";
       if (addToPromptVisibleCount === 1 && (selectedAssetAriaSelected === "true" || labelMatches) && previewIdentitySignal !== "unverified") {
-        referenceSelectionReady = true;
-        break;
+        referenceSelectionReady = true; break;
       }
-      if (!selectionRetried && Date.now() - selectionWaitStartedAt >= 1200
-        && selectedAssetAriaSelected !== "true" && !labelMatches) {
+      if (!selectionRetried && Date.now() - selectionWaitStartedAt >= 1000 && Date.now() < selectionDeadline) {
         selectionRetried = true;
-        await asset.scrollIntoViewIfNeeded({ timeout: 1000 }).catch(() => {});
-        await asset.hover({ timeout: 1200 }).catch(() => {});
-        await asset.click({ position: { x: Math.max(8, Math.floor((initialAssetBox?.width || 40) / 2)), y: Math.max(8, Math.floor((initialAssetBox?.height || 40) / 2)) }, timeout: 1800 }).catch(() => {});
-        if (await asset.getAttribute("aria-selected").catch(() => null) !== "true") {
-          await asset.focus().catch(() => {});
-          await asset.press("Enter", { timeout: 1000 }).catch(() => {});
-          if (await asset.getAttribute("aria-selected").catch(() => null) !== "true") {
-            await asset.press("Space", { timeout: 1000 }).catch(() => {});
-          }
-        }
+        const box = await activeAsset.boundingBox({ timeout: 200 }).catch(() => null);
+        await activeAsset.scrollIntoViewIfNeeded({ timeout: 300 }).catch(() => {});
+        await activeAsset.hover({ timeout: 300 }).catch(() => {});
+        console.log(JSON.stringify({ event: "ingredients_picker_step_diagnostics", step: "before_retry_click", ...(await readPickerDiagnostics(box)) }));
+        current = await freshTile();
+        if (!current || !box || Date.now() >= selectionDeadline) break;
+        activeAsset = current.tile;
+        const currentBox = await activeAsset.boundingBox({ timeout: 200 }).catch(() => null);
+        if (!currentBox) break;
+        const point = { x: Math.floor(currentBox.width / 2), y: Math.floor(currentBox.height / 2) };
+        const hitTest = await page.evaluate(({ x, y, tileSelector, filename }) => {
+          const hit = document.elementFromPoint(x, y);
+          const tiles = Array.from(document.querySelectorAll(tileSelector)).filter(tile => String(tile.innerText || tile.textContent || "").toLowerCase().includes(filename.toLowerCase()));
+          return Boolean(hit && tiles.some(tile => tile === hit || tile.contains(hit)));
+        }, { x: currentBox.x + point.x, y: currentBox.y + point.y, tileSelector: selectors.ingredient_library_item, filename }).catch(() => false);
+        if (hitTest) await activeAsset.click({ position: point, timeout: 500 }).catch(() => {});
+        console.log(JSON.stringify({ event: "ingredients_picker_step_diagnostics", step: "after_retry_click", hit_test_inside_tile: hitTest, ...(await readPickerDiagnostics(currentBox)) }));
       }
-      await page.waitForTimeout(150);
+      await page.waitForTimeout(Math.min(100, Math.max(0, selectionDeadline - Date.now())));
     }
     console.log(JSON.stringify({
       event: "reference_asset_selection_ready",
