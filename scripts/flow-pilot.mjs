@@ -1370,9 +1370,8 @@ async function uploadSceneReferencesUnsafe(page, selectors, referenceImages, ref
     }
     await asset.click({ timeout: 2500 });
 
-    // Flow updates the selected-card state and mounts "Add to prompt" asynchronously.
-    // Do not assert uniqueness against the pre-selection picker state: wait up to 5s
-    // for this exact asset to report aria-selected=true and at least one visible button.
+    // Flow may not expose aria-selected on picker cards. Treat exactly one visible
+    // "Add to prompt" button as the readiness signal; record aria-selected diagnostically.
     const addToPromptSelector = selectors.ingredient_add_to_prompt;
     const addToPromptCandidates = page.locator(addToPromptSelector);
     const selectionWaitStartedAt = Date.now();
@@ -1386,7 +1385,7 @@ async function uploadSceneReferencesUnsafe(page, selectors, referenceImages, ref
       for (let i = 0; i < candidateCount; i += 1) {
         if (await addToPromptCandidates.nth(i).isVisible().catch(() => false)) addToPromptVisibleCount += 1;
       }
-      if (selectedAssetAriaSelected === "true" && addToPromptVisibleCount > 0) {
+      if (addToPromptVisibleCount === 1) {
         referenceSelectionReady = true;
         break;
       }
@@ -1399,9 +1398,10 @@ async function uploadSceneReferencesUnsafe(page, selectors, referenceImages, ref
       add_to_prompt_visible_count: addToPromptVisibleCount,
       wait_ms: Date.now() - selectionWaitStartedAt,
       ready: referenceSelectionReady,
+      readiness_signal: "exactly_one_visible_add_to_prompt_button",
     }));
     if (!referenceSelectionReady) {
-      throw new Error(`Reference asset selection was not confirmed within 5000ms for ${filename}; aria-selected=${JSON.stringify(selectedAssetAriaSelected)}, visible Add to prompt buttons=${addToPromptVisibleCount}. Stopping safely before prompt fill/Create.`);
+      throw new Error(`Reference asset selection did not expose exactly one visible Add to prompt button within 5000ms for ${filename}; aria-selected=${JSON.stringify(selectedAssetAriaSelected)}, visible Add to prompt buttons=${addToPromptVisibleCount}. Stopping safely before prompt fill/Create.`);
     }
     // Count/visibility is authoritative only after the selection state has settled.
     const addToPrompt = await exactVisibleLocator(page, addToPromptSelector, "Add to prompt button", 1000);
@@ -1860,7 +1860,26 @@ async function prepare(args, browser, rl) {
       if (args.waitForResult && initialBalance === null) throw new Error("Could not read an integer credit balance.");
       if (typeof selectors.generated_video_items !== "string" || !selectors.generated_video_items.trim()) throw new Error("Dry-run baseline scan requires a configured generated_video_items selector.");
       const videosTabState = await activateVideosTab(chosen.page, selectors);
-      const initialScan = await collectAllGeneratedItems(chosen.page, selectors.generated_video_items, { uuidCache: baselineUuidCache, topLimit: 3, selectors });
+      let initialScan = await collectAllGeneratedItems(chosen.page, selectors.generated_video_items, { uuidCache: baselineUuidCache, topLimit: 3, selectors });
+      // Flow may render the three tile shells before its media UUID metadata arrives.
+      // Retry only the all-unresolved case; never accept partial/ambiguous identities.
+      for (let baselineRetry = 1; baselineRetry <= 2
+        && initialScan.items.length > 0
+        && initialScan.items.every(item => !item.mediaUuid); baselineRetry += 1) {
+        console.warn(JSON.stringify({
+          event: "baseline_uuid_retry",
+          retry: baselineRetry,
+          max_retries: 2,
+          tile_count: initialScan.items.length,
+          uuid_count: initialScan.items.filter(item => item.mediaUuid).length,
+          wait_ms: 600,
+        }));
+        await chosen.page.waitForTimeout(600);
+        baselineUuidCache.clear();
+        initialScan = await collectAllGeneratedItems(chosen.page, selectors.generated_video_items, {
+          uuidCache: baselineUuidCache, topLimit: 3, selectors,
+        });
+      }
       // Keep every stable media UUID in the baseline, including Failed tiles, so a
       // later disappearing/refunded tile cannot make another existing card look new.
       // Failed tiles are diagnostics only and never count as usable video candidates.
