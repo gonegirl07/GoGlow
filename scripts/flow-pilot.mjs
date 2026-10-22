@@ -1185,8 +1185,9 @@ async function uploadSceneReferencesUnsafe(page, selectors, referenceImages, ref
     }
     const existingUuids = new Set();
     const existingCount = await matchingAssets.count().catch(() => 0);
-    // A unique same-name UUID in Flow's JSON is already authoritative enough to
-    // skip the slow /asb/<token> -> UUID thumbnail upgrade for a single card.
+    // Flow lazily upgrades old thumbnail URLs from /asb/<token> to flow-content/image/<uuid>.
+    // A unique same-name UUID in Flow's JSON is authoritative enough to skip that
+    // slow thumbnail upgrade for a single card.
     const filenameNeedles = [filename.toLowerCase(), filenameStem.toLowerCase()];
     const networkNameUuids = Array.from(new Set(networkAssetRecords
       .filter(record => record.strings.some(value => filenameNeedles.some(needle => needle && value.includes(needle))))
