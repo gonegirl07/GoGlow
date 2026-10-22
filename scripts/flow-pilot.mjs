@@ -2326,6 +2326,7 @@ async function prepare(args, browser, rl) {
       } while (Date.now() < balanceDeadline);
       if (!submissionEvidence && resultStatus !== "failed") {
         resultStatus = "create_not_confirmed";
+        args._stopVariants = true;
         timeoutError = "CREATE_NOT_CONFIRMED: No new media UUID and no credit decrease were observed after Create; do not resubmit automatically without manual inspection.";
         appendEvent(args.log, { event: "create_not_confirmed", scene_id: scene.scene_id,
           status: "create_not_confirmed_do_not_retry", before_balance: args._waitInitialBalance, after_balance: afterBalance });
@@ -2341,7 +2342,7 @@ async function prepare(args, browser, rl) {
         const ledgerPath = appendGenerationLedger(args.ledgerOutput, ledgerRecord);
         appendEvent(args.log, { event: "generation_ledger_recorded", scene_id: scene.scene_id, attempt_id: ledgerRecord.attempt_id, status: ledgerRecord.result.status, ledger_path: ledgerPath, before_balance: ledgerRecord.credits.before_balance, after_balance: ledgerRecord.credits.after_balance, actual_amount: ledgerRecord.credits.actual_amount, charge_status: ledgerRecord.credits.charge_status, media_uri: ledgerRecord.media.uri, downloaded_file: ledgerRecord.media.downloaded_file });
         console.log(`Generation ledger appended: ${ledgerPath}`);
-      if (resultStatus === "create_not_confirmed") process.exitCode = 2;
+        if (resultStatus === "create_not_confirmed") process.exitCode = 2;
       } catch (error) {
         appendEvent(args.log, { event: "generation_ledger_write_failed", scene_id: scene.scene_id, error: String(error) });
         console.error(`CRITICAL: generation completed/unknown but ledger write failed: ${error.message}`);
