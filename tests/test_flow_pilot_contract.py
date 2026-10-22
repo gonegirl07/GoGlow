@@ -791,6 +791,25 @@ class FlowPilotContractTests(unittest.TestCase):
         self.assertIn("function thumbnailIdentityToken(value)", self.script)
         self.assertIn(r"source.match(/\/asb\/([^/?#]+)/i)", self.script)
 
+    def test_middle_tile_rotated_thumbnail_token_uses_neighbor_and_count_validation(self):
+        resolver = self.script.split("const resolveUuidByOpeningTile", 1)[1].split(
+            "let stableBottomRounds = 0;", 1
+        )[0]
+        self.assertIn("resolveUuidByOpeningTile(item.index, item, visible, domTileCount)", self.script)
+        self.assertIn("const expectedRowTokens = rowIdentities.slice(0, 3).map", resolver)
+        self.assertIn("const currentRowTokens = currentTokens.slice(0, 3)", resolver)
+        self.assertIn("const neighborsMatch = Boolean(expectedRowTokens[0] && expectedRowTokens[2]", resolver)
+        self.assertIn("currentRowTokens[0] === expectedRowTokens[0]", resolver)
+        self.assertIn("currentRowTokens[2] === expectedRowTokens[2]", resolver)
+        self.assertIn("const tileCountMatches = expectedTileCount === null || currentTileCount === expectedTileCount", resolver)
+        self.assertIn("currentIndex = index;", resolver)
+        self.assertIn('event: "token_changed_at_index"', resolver)
+        self.assertIn("old_thumbnail_token: expectedRowTokens[index]", resolver)
+        self.assertIn("new_thumbnail_token: currentRowTokens[index]", resolver)
+        self.assertIn("accepted_by_position_with_neighbor_validation: true", resolver)
+        self.assertIn("const resolvedUuid = await resolveUuidByOpeningTile(item.index, item, visible, domTileCount)", self.script)
+        self.assertIn("First-row baseline requires unique, stable media UUIDs/keys", self.script)
+
     def test_unique_network_asset_uuid_skips_lazy_thumbnail_wait(self):
         upload_fn = self.script.split("async function uploadSceneReferencesUnsafe", 1)[1].split(
             "async function uploadSceneReferences(", 1
