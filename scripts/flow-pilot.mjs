@@ -678,7 +678,7 @@ async function waitForGenerationAndDownload(page, selectors, { beforeKeys, befor
       throw new Error(`FLOW_GENERATION_FAILED: new Flow tile ${failedTile.key} reports failure: ${failedTile.text || failedTile.state}`);
     }
     if (candidateItems.length > 1) {
-      throw new Error(`More than one new non-failed Flow video tile appeared after a full virtualized-grid sweep (${candidateItems.length}); refusing to guess which clip to download.`);
+      throw new Error(`More than one new non-failed Flow video tile appeared in the top-of-grid result check (${candidateItems.length}); refusing to guess which clip to download.`);
     }
     if (candidateItems.length === 1 && !attemptedKeys.has(candidateItems[0].key)) {
       const candidate = candidateItems[0];
@@ -1767,8 +1767,8 @@ async function prepare(args, browser, rl) {
         duplicate_visible_key_detected: initialScan.duplicateVisibleKeyDetected,
       }, null, 2));
       if (initialScan.unkeyedItemsDetected || initialScan.duplicateVisibleKeyDetected
-        || initialItems.some(key => !key) || new Set(initialItems).size !== initialItems.length) {
-        throw new Error(`generated_video_items selector must expose a stable media UUID/key for every tile and distinct keys within each viewport across a full virtualized-grid sweep (tiles=${initialScan.items.length}, UUIDs=${baselineUuids.length}, reached_bottom=${initialScan.reachedBottom}, sample=${baselineUuids.slice(0, 5).join(",") || "none"}).`);
+        || baselineUuids.length !== 6 || initialItems.some(key => !key) || new Set(initialItems).size !== initialItems.length) {
+        throw new Error(`Top-6 baseline requires six unique, stable media UUIDs/keys (tiles=${initialScan.items.length}, UUIDs=${baselineUuids.length}, sample=${baselineUuids.slice(0, 6).join(",") || "none"}).`);
       }
       args._waitInitialBalance = initialBalance;
       args._waitInitialItemKeys = initialItems;
