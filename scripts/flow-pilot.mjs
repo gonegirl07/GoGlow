@@ -280,7 +280,7 @@ async function collectAllGeneratedItems(page, selector, { targetKey = null, maxS
         await page.goto(gridUrl, { waitUntil: "domcontentloaded", timeout: 12000 }).catch(() => {});
         const tabResult = await activateVideosTab(page, selectors).catch(error => `error:${error.message}`);
         // Flow may briefly render All media (or an incomplete grid) after route entry.
-        // Wait for six visible Videos thumbnails and a stable two-snapshot token list.
+        // Wait for at least three visible first-row thumbnails and a stable two-snapshot token list.
         let previousTokens = null;
         let currentTokens = [];
         for (let gridPoll = 0; gridPoll < 20; gridPoll += 1) {
@@ -291,7 +291,7 @@ async function collectAllGeneratedItems(page, selector, { targetKey = null, maxS
             try { return new URL(source, location.href).pathname; }
             catch { return source.split(/[?#]/, 1)[0]; }
           })).catch(() => []);
-          if (currentTokens.length >= 6 && previousTokens
+          if (currentTokens.length >= 3 && previousTokens
             && currentTokens.length === previousTokens.length
             && currentTokens.every((token, i) => token === previousTokens[i])) break;
           previousTokens = currentTokens;
@@ -509,18 +509,28 @@ async function activateVideosTab(page, selectors) {
     return "configured_selector";
   }
   const roleTab = page.getByRole("tab", { name: /^Videos$/i });
-  if (await roleTab.count().catch(() => 0) === 1 && await roleTab.isVisible().catch(() => false)) {
-    await roleTab.click({ timeout: 3000 });
-    await page.waitForTimeout(300);
-    return "role=tab";
+  const tabCount = await roleTab.count().catch(() => 0);
+  for (let i = 0; i < tabCount; i += 1) {
+    const candidate = roleTab.nth(i);
+    if (await candidate.isVisible().catch(() => false)) {
+      await candidate.click({ timeout: 3000 });
+      await page.waitForTimeout(300);
+      return "role=tab";
+    }
   }
+  // Flow's sidebar may expose Videos as a button, and responsive layouts can
+  // leave duplicate hidden buttons in the DOM. Click the first visible exact match.
   const button = page.getByRole("button", { name: /^Videos$/i });
-  if (await button.count().catch(() => 0) === 1 && await button.isVisible().catch(() => false)) {
-    await button.click({ timeout: 3000 });
-    await page.waitForTimeout(300);
-    return "role=button";
+  const buttonCount = await button.count().catch(() => 0);
+  for (let i = 0; i < buttonCount; i += 1) {
+    const candidate = button.nth(i);
+    if (await candidate.isVisible().catch(() => false)) {
+      await candidate.click({ timeout: 3000 });
+      await page.waitForTimeout(300);
+      return "role=button";
+    }
   }
-  return "not_found_no_tab_switch";
+  return \`not_found_no_tab_switch (tabs=\${tabCount}, buttons=\${buttonCount})\`;
 }
 
 function appendGenerationLedger(pathname, record) {
@@ -1803,18 +1813,18 @@ async function prepare(args, browser, rl) {
       if (args.waitForResult && initialBalance === null) throw new Error("Could not read an integer credit balance.");
       if (typeof selectors.generated_video_items !== "string" || !selectors.generated_video_items.trim()) throw new Error("Dry-run baseline scan requires a configured generated_video_items selector.");
       const videosTabState = await activateVideosTab(chosen.page, selectors);
-      const initialScan = await collectAllGeneratedItems(chosen.page, selectors.generated_video_items, { uuidCache: baselineUuidCache, topLimit: 6, selectors });
+      const initialScan = await collectAllGeneratedItems(chosen.page, selectors.generated_video_items, { uuidCache: baselineUuidCache, topLimit: 3, selectors });
       // Keep every stable media UUID in the baseline, including Failed tiles, so a
       // later disappearing/refunded tile cannot make another existing card look new.
       // Failed tiles are diagnostics only and never count as usable video candidates.
-      if (!initialScan.topLimited || initialScan.items.length !== 6) throw new Error(`Pre-Create top-six baseline requires six visible tiles; observed ${initialScan.items.length}. Refusing to Create with an incomplete baseline.`);
+      if (!initialScan.topLimited || initialScan.items.length < 3) throw new Error(`Pre-Create first-row baseline requires at least three visible tiles; observed ${initialScan.items.length}. Refusing to Create with an incomplete baseline.`);
       const initialItems = initialScan.items.map(item => item.key);
       const baselineUuids = initialScan.items.map(item => item.mediaUuid).filter(Boolean);
       const failedBaselineItems = initialScan.items.filter(item =>
         /\bfailed\b/i.test(`${item.state} ${item.text}`) || isGenerationFailureText(`${item.state} ${item.text}`));
       console.log(JSON.stringify({
         event: "baseline_media_inventory_summary",
-        baseline_strategy: "top_6_tiles_only",
+        baseline_strategy: "visible_first_row_min_3",
         reached_bottom: initialScan.reachedBottom,
         tile_count: initialScan.items.length,
         uuid_count: baselineUuids.length,
@@ -1823,15 +1833,15 @@ async function prepare(args, browser, rl) {
         duplicate_visible_key_detected: initialScan.duplicateVisibleKeyDetected,
       }, null, 2));
       if (initialScan.unkeyedItemsDetected || initialScan.duplicateVisibleKeyDetected
-        || baselineUuids.length !== 6 || initialItems.some(key => !key) || new Set(initialItems).size !== initialItems.length) {
-        throw new Error(`Top-6 baseline requires six unique, stable media UUIDs/keys (tiles=${initialScan.items.length}, UUIDs=${baselineUuids.length}, sample=${baselineUuids.slice(0, 6).join(",") || "none"}).`);
+        || baselineUuids.length !== initialScan.items.length || initialItems.some(key => !key) || new Set(initialItems).size !== initialItems.length) {
+        throw new Error(`First-row baseline requires unique, stable media UUIDs/keys (tiles=${initialScan.items.length}, UUIDs=${baselineUuids.length}, sample=${baselineUuids.slice(0, 6).join(",") || "none"}).`);
       }
       args._waitInitialBalance = initialBalance;
       args._waitInitialItemKeys = initialItems;
       args._waitUuidCache = baselineUuidCache;
       args._waitInitialItemCount = initialItems.length - failedBaselineItems.length;
       console.log(args.waitForResult
-        ? "WAIT SELECTOR PREFLIGHT (read-only; no Create click; Videos tab selected when available; first 6 tiles only; Failed tiles retained only as baseline UUIDs)"
+        ? "WAIT SELECTOR PREFLIGHT (read-only; no Create click; Videos tab selected when available; visible first row only; Failed tiles retained only as baseline UUIDs)"
         : "DRY-RUN MEDIA BASELINE (read-only; no Create click; Videos tab selected when available; first 6 tiles only; no full-grid sweep)");
       console.log(JSON.stringify({
         mode: args.waitForResult ? "wait-preflight" : "dry-run-baseline",
