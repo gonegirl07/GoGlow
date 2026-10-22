@@ -1049,7 +1049,7 @@ async function openIngredientsPicker(page, selectors) {
   await page.locator(selectors.ingredient_library_item).first().waitFor({ state: "visible", timeout: 5000 }).catch(() => {});
 }
 
-async function uploadSceneReferencesUnsafe(page, selectors, referenceImages) {
+async function uploadSceneReferencesUnsafe(page, selectors, referenceImages, referenceAssetUuids = new Map()) {
   const chips = page.locator(selectors.ingredient_reference_items);
   const beforeCount = await chips.count().catch(() => -1);
   if (beforeCount !== 0) throw new Error(`Ingredients already contains ${beforeCount} reference chip(s); clear the prompt manually and rerun so this run can prove which images it attached.`);
@@ -1094,8 +1094,18 @@ async function uploadSceneReferencesUnsafe(page, selectors, referenceImages) {
       existing_uuids_before_upload: Array.from(existingUuids),
       matching_asset_count: existingCount,
     }));
+    const requestedAssetUuid = referenceAssetUuids instanceof Map
+      ? referenceAssetUuids.get(imagePath) : referenceAssetUuids?.[imagePath];
     let reusedExistingUuid = null;
-    if (existingCount === 1 && existingUuids.size === 1) {
+    if (requestedAssetUuid) {
+      let requestedFound = false;
+      for (let i = 0; i < existingCount; i += 1) {
+        if (await assetUuidFromLocator(matchingAssets.nth(i)) === requestedAssetUuid) { requestedFound = true; break; }
+      }
+      if (!requestedFound) throw new Error(`Job explicitly requested Flow asset UUID ${requestedAssetUuid} for ${filename}, but that UUID was not found among matching library entries. Refusing to upload or guess.`);
+      reusedExistingUuid = requestedAssetUuid;
+      console.log(JSON.stringify({ event: "asset_library_reused_explicit_uuid", filename, selected_existing_uuid: reusedExistingUuid }));
+    } else if (existingCount === 1 && existingUuids.size === 1) {
       // The library already contains one unambiguous asset with this exact local filename.
       // Reuse immediately rather than uploading a duplicate and waiting for Flow's 90s UUID timeout.
       reusedExistingUuid = Array.from(existingUuids)[0];
@@ -1116,8 +1126,10 @@ async function uploadSceneReferencesUnsafe(page, selectors, referenceImages) {
       await chooser.setFiles(imagePath);
       const uuidWaitStartedAt = Date.now();
       try {
+        // Inspect every same-name card, not only the first one: older duplicates can
+        // appear before the newly uploaded card and otherwise mask its UUID for 90 seconds.
         await page.waitForFunction(({ selector, filename, filenameStem, oldUuids }) => {
-          const newestMatch = Array.from(document.querySelectorAll(selector)).find(asset => {
+          const cards = Array.from(document.querySelectorAll(selector)).filter(asset => {
             const label = (asset.innerText || asset.textContent || "").toLowerCase();
             const image = asset.querySelector("img");
             const metadata = [image?.getAttribute("alt"), image?.getAttribute("title"),
@@ -1125,10 +1137,12 @@ async function uploadSceneReferencesUnsafe(page, selectors, referenceImages) {
             return label.includes(filename.toLowerCase()) || label.includes(filenameStem.toLowerCase())
               || metadata.includes(filename.toLowerCase()) || metadata.includes(filenameStem.toLowerCase());
           });
-          if (!newestMatch) return false;
-          const sources = [newestMatch, ...Array.from(newestMatch.querySelectorAll("*"))].flatMap(node => Array.from(node.attributes || [], attribute => attribute.value)).join(" ");
-          const match = sources.match(/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/i);
-          return Boolean(match && !oldUuids.includes(match[0].toLowerCase()));
+          const uuids = cards.flatMap(card => {
+            const sources = [card, ...Array.from(card.querySelectorAll("*"))]
+              .flatMap(node => Array.from(node.attributes || [], attribute => attribute.value)).join(" ");
+            return Array.from(sources.matchAll(/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/ig), match => match[0].toLowerCase());
+          });
+          return uuids.some(uuid => !oldUuids.includes(uuid));
         }, { selector: selectors.ingredient_library_item, filename, filenameStem, oldUuids: Array.from(existingUuids) }, { timeout: ASSET_READY_TIMEOUT_MS });
         console.log(`Reference UUID ready: ${filename} in ${Date.now() - uuidWaitStartedAt}ms`);
       } catch {
@@ -1230,10 +1244,10 @@ async function uploadSceneReferencesUnsafe(page, selectors, referenceImages) {
   return expectedUuids;
 }
 
-async function uploadSceneReferences(page, selectors, referenceImages, prompt) {
+async function uploadSceneReferences(page, selectors, referenceImages, prompt, referenceAssetUuids = new Map()) {
   let uploadError = null;
   try {
-    return await uploadSceneReferencesUnsafe(page, selectors, referenceImages);
+    return await uploadSceneReferencesUnsafe(page, selectors, referenceImages, referenceAssetUuids);
   } catch (error) {
     uploadError = error;
     throw error;
@@ -1304,16 +1318,46 @@ async function loadInputs(args) {
   if (!Array.isArray(scene.reference_images) || scene.reference_images.length < 1 || scene.reference_images.length > 3) {
     throw new Error("Scene JSON must provide reference_images as an array of 1 to 3 local file paths.");
   }
+  const inlineAssetUuids = new Map();
   const referenceImages = scene.reference_images.map((value, index) => {
-    if (typeof value !== "string" || !value.trim()) throw new Error(`reference_images[${index}] must be a non-empty local path.`);
-    const resolved = path.resolve(path.dirname(scenePath), value);
+    const entry = typeof value === "string" ? { path: value } : value;
+    if (!entry || typeof entry !== "object" || typeof entry.path !== "string" || !entry.path.trim()) {
+      throw new Error(`reference_images[${index}] must be a path string or {path, flow_asset_uuid} object.`);
+    }
+    const resolved = path.resolve(path.dirname(scenePath), entry.path);
     if (!fs.existsSync(resolved) || !fs.statSync(resolved).isFile()) throw new Error(`Reference image does not exist or is not a file: ${resolved}`);
     if (![".png", ".jpg", ".jpeg", ".webp"].includes(path.extname(resolved).toLowerCase())) {
       throw new Error(`Reference image must be PNG, JPG, JPEG, or WEBP: ${resolved}`);
     }
+    if (entry.flow_asset_uuid !== undefined) {
+      const uuid = String(entry.flow_asset_uuid).trim().toLowerCase();
+      if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/.test(uuid)) {
+        throw new Error(`reference_images[${index}].flow_asset_uuid must be a UUID.`);
+      }
+      inlineAssetUuids.set(resolved, uuid);
+    }
     return resolved;
   });
   if (new Set(referenceImages).size !== referenceImages.length) throw new Error("reference_images must contain distinct file paths.");
+  const referenceAssetUuids = new Map(inlineAssetUuids);
+  const declaredAssetUuids = scene.reference_asset_uuids;
+  const declaredEntries = declaredAssetUuids === undefined ? []
+    : Array.isArray(declaredAssetUuids) ? declaredAssetUuids.map((entry, index) => {
+      if (!entry || typeof entry !== "object") throw new Error(`reference_asset_uuids[${index}] must be {path, flow_asset_uuid}.`);
+      return [entry.path, entry.flow_asset_uuid];
+    })
+    : declaredAssetUuids && typeof declaredAssetUuids === "object" ? Object.entries(declaredAssetUuids)
+    : (() => { throw new Error("reference_asset_uuids must be an object keyed by image path or an array of {path, flow_asset_uuid}."); })();
+  for (const [rawPath, rawUuid] of declaredEntries) {
+    if (typeof rawPath !== "string" || !rawPath.trim()) throw new Error("reference_asset_uuids entries require a non-empty path.");
+    const resolvedPath = path.resolve(path.dirname(scenePath), rawPath);
+    const matches = referenceImages.filter(imagePath => imagePath === resolvedPath || path.basename(imagePath) === rawPath);
+    if (matches.length !== 1) throw new Error(`reference_asset_uuids path ${JSON.stringify(rawPath)} must uniquely match one reference_images entry.`);
+    const uuid = String(rawUuid || "").trim().toLowerCase();
+    if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/.test(uuid)) throw new Error(`reference_asset_uuids[${JSON.stringify(rawPath)}] must be a UUID.`);
+    if (referenceAssetUuids.has(matches[0]) && referenceAssetUuids.get(matches[0]) !== uuid) throw new Error(`Conflicting Flow asset UUID declarations for ${rawPath}.`);
+    referenceAssetUuids.set(matches[0], uuid);
+  }
   const requestedFaceReferences = scene.face_reference_ids;
   let faceReferenceImages;
   if (requestedFaceReferences !== undefined) {
@@ -1405,7 +1449,7 @@ async function loadInputs(args) {
   }
   if (scene.duration && scene.duration !== "8s") throw new Error("Phase 3 pilot is restricted to duration='8s'.");
   requiredSelectorConfig(selectors);
-  return { scene, selectors, referenceImages: orderedReferenceImages, faceReferenceImage: faceReferenceImages[0], faceReferenceImages };
+  return { scene, selectors, referenceImages: orderedReferenceImages, faceReferenceImage: faceReferenceImages[0], faceReferenceImages, referenceAssetUuids };
 }
 async function chooseFlowTab(browser, args) {
   const pages = await listPages(browser);
@@ -1471,7 +1515,7 @@ async function readCreditCost(page) {
 }
 
 async function prepare(args, browser, rl) {
-  const { scene, selectors, referenceImages, faceReferenceImage } = await loadInputs(args);
+  const { scene, selectors, referenceImages, faceReferenceImage, referenceAssetUuids } = await loadInputs(args);
   const variantIndex = args._variantIndex || 1;
   const variantCount = args._variantCount || scene.variants || 1;
   scene.variant_index = variantIndex;
@@ -1575,7 +1619,7 @@ async function prepare(args, browser, rl) {
   // stop before filling the prompt or enabling a possible Create action.
   const referenceUploadStartedAt = Date.now();
   console.log(`Phase timing: reference upload started (${referenceImages.length} image(s)); asset-ready timeout=${ASSET_READY_TIMEOUT_MS}ms per image.`);
-  const attachedReferenceUuids = await uploadSceneReferences(chosen.page, selectors, referenceImages, prompt);
+  const attachedReferenceUuids = await uploadSceneReferences(chosen.page, selectors, referenceImages, prompt, referenceAssetUuids);
   console.log(`Phase timing: reference upload completed in ${Date.now() - referenceUploadStartedAt}ms.`);
   if (args.waitForResult || args.dryRun) {
     const waitPreflightStartedAt = Date.now();
