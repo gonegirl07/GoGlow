@@ -683,7 +683,7 @@ class FlowPilotContractTests(unittest.TestCase):
         self.assertIn("const resolveUuidFromNetwork = item =>", self.script)
         self.assertLess(
             self.script.index("const networkUuid = resolveUuidFromNetwork(item);"),
-            self.script.index("const resolvedUuid = await resolveUuidByOpeningTile(item.index, item);"),
+            self.script.index("const resolvedUuid = await resolveUuidByOpeningTile(item.index, item, visible, domTileCount);"),
         )
 
     def test_edit_route_fallback_waits_then_force_clicks_animated_tile(self):
