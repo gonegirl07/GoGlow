@@ -1782,6 +1782,37 @@ async function readCreditCost(page) {
   return match ? Number(match[1]) : null;
 }
 
+async function waitForPreCreateThumbnailSnapshot(readSnapshot, wait, maxWaitMs = 10000) {
+  const startedAt = Date.now();
+  let previousTokens = null;
+  let previousTileCount = null;
+  let stableFirstToken = false;
+  let lastSnapshot = { tokens: [], tileCount: 0 };
+  while (Date.now() - startedAt < maxWaitMs) {
+    lastSnapshot = await readSnapshot();
+    const tokens = Array.isArray(lastSnapshot.tokens) ? lastSnapshot.tokens : [];
+    const tileCount = Number(lastSnapshot.tileCount) || 0;
+    const firstToken = tokens[0] || null;
+    stableFirstToken = Boolean(firstToken && previousTokens?.[0] === firstToken
+      && previousTileCount === tileCount);
+    const fullyStable = tileCount >= 3 && tokens.length >= 3 && tokens.slice(0, 3).every(Boolean)
+      && previousTokens?.length === tokens.length
+      && tokens.every((token, index) => token === previousTokens[index])
+      && previousTileCount === tileCount;
+    if (fullyStable) {
+      return { ...lastSnapshot, tokens, tileCount, stableFirstToken: true, fullyStable: true,
+        acceptedByNeighborRule: false, waitMs: Date.now() - startedAt };
+    }
+    previousTokens = tokens.slice();
+    previousTileCount = tileCount;
+    if (Date.now() - startedAt < maxWaitMs) await wait(250);
+  }
+  return { ...lastSnapshot, tokens: lastSnapshot.tokens || [], tileCount: Number(lastSnapshot.tileCount) || 0,
+    stableFirstToken, fullyStable: false,
+    acceptedByNeighborRule: stableFirstToken && (Number(lastSnapshot.tileCount) || 0) >= 3,
+    waitMs: Date.now() - startedAt };
+}
+
 async function prepare(args, browser, rl) {
   const { scene, selectors, referenceImages, faceReferenceImage, referenceAssetUuids } = await loadInputs(args);
   const variantIndex = args._variantIndex || 1;
@@ -2145,38 +2176,35 @@ async function prepare(args, browser, rl) {
       // also discard attached chips. Compare the first thumbnail token to the baseline.
       const expectedFirstToken = args._waitInitialThumbnailTokens?.[0];
       if (!expectedFirstToken) throw new Error("Pre-Create baseline has no first-tile thumbnail token; refusing to click Create.");
-      let currentTokens = [];
-      let previousTokens = null;
-      let stableCurrentGrid = false;
-      for (let poll = 0; poll < 30; poll += 1) {
-        currentTokens = await chosen.page.locator(selectors.generated_video_items).evaluateAll(elements =>
-          elements.slice(0, 3).map(element => {
+      const preCreateSnapshot = await waitForPreCreateThumbnailSnapshot(async () => {
+        return chosen.page.locator(selectors.generated_video_items).evaluateAll(elements => ({
+          tileCount: elements.length,
+          tokens: elements.slice(0, 3).map(element => {
             const source = element.querySelector("img")?.getAttribute("src") || "";
-            if (!source) return "";
-            const asb = source.match(/\/asb\/([^/?#]+)/i);
+            if (!source) return null;
+            const asb = source.match(/\\/asb\\/([^/?#]+)/i);
             if (asb) return `asb:${asb[1]}`;
             try { return new URL(source, location.href).pathname; }
-            catch { return source.split(/[?#]/, 1)[0]; }
-          }).filter(Boolean)).catch(() => []);
-        if (currentTokens.length >= 3 && currentTokens.every(Boolean) && previousTokens
-          && previousTokens.length >= 3 && currentTokens.length === previousTokens.length
-          && currentTokens.every((token, i) => token === previousTokens[i])) {
-          stableCurrentGrid = true;
-          break;
-        }
-        previousTokens = currentTokens;
-        await chosen.page.waitForTimeout(250);
-      }
+            catch { return source.split(/[?#]/, 1)[0] || null; }
+          }),
+        })).catch(() => ({ tileCount: 0, tokens: [] }));
+      }, ms => chosen.page.waitForTimeout(ms), 10000);
+      const currentTokens = preCreateSnapshot.tokens;
       const currentFirstToken = currentTokens[0] || null;
+      const stableCurrentGrid = preCreateSnapshot.fullyStable || preCreateSnapshot.acceptedByNeighborRule;
       console.log(JSON.stringify({
         event: "pre_create_first_tile_identity_recheck",
         expected_first_thumbnail_token: expectedFirstToken,
         current_first_thumbnail_token: currentFirstToken,
         visible_first_three_thumbnail_tokens: currentTokens,
+        visible_tile_count: preCreateSnapshot.tileCount,
+        stable_first_token: preCreateSnapshot.stableFirstToken || preCreateSnapshot.fullyStable,
+        accepted_by_neighbor_rule: preCreateSnapshot.acceptedByNeighborRule,
+        wait_ms: preCreateSnapshot.waitMs,
         read_only_dom_check: true,
       }, null, 2));
-      if (!stableCurrentGrid || currentTokens.length < 3 || !currentTokens.every(Boolean)) {
-        throw new Error(`Pre-Create thumbnail recheck could not read three stable loaded tiles (observed ${currentTokens.length}); refusing to click Create.`);
+      if (!stableCurrentGrid || preCreateSnapshot.tileCount < 3 || !currentFirstToken) {
+        throw new Error(`Pre-Create recheck could not confirm a stable first tile and three-tile row (observed ${preCreateSnapshot.tileCount}); refusing to click Create.`);
       }
       if (currentFirstToken !== expectedFirstToken) {
         throw new Error("Pre-Create first tile thumbnail token differs from the validated baseline; refusing to click Create.");
@@ -2279,9 +2307,15 @@ async function prepare(args, browser, rl) {
       }
     }
   } catch (error) {
-    appendEvent(args.log, { event: "submission_outcome_unknown", scene_id: scene.scene_id,
-      status: "unknown_do_not_retry", error: String(error) });
-    console.error("Submission outcome is unknown. Do NOT click again or retry automatically. Inspect Flow manually.");
+    if (!createMayHaveBeenClicked) {
+      appendEvent(args.log, { event: "submission_aborted_before_create", scene_id: scene.scene_id,
+        status: "not_submitted", error: String(error) });
+      console.error("No generation was submitted. Create was not clicked; safe to correct the preflight issue before trying again.");
+    } else {
+      appendEvent(args.log, { event: "submission_outcome_unknown", scene_id: scene.scene_id,
+        status: "unknown_do_not_retry", error: String(error) });
+      console.error("Submission outcome is unknown. Do NOT click again or retry automatically. Inspect Flow manually.");
+    }
     throw error;
   }
   } catch (error) {
