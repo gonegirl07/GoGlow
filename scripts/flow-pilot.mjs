@@ -287,7 +287,7 @@ async function collectAllGeneratedItems(page, selector, { targetKey = null, maxS
         await restoreScrollTop(scrollTop);
         await page.waitForTimeout(150);
         if (uuid) {
-          if (attempt > 1) console.log(\`Resolved tile index \${index} UUID after retry \${attempt}: \${uuid}\`);
+          if (attempt > 1) console.log(`Resolved tile index ${index} UUID after retry ${attempt}: ${uuid}`);
           return uuid;
         }
         lastError = new Error("edit route contained no UUID");
@@ -299,12 +299,12 @@ async function collectAllGeneratedItems(page, selector, { targetKey = null, maxS
           await restoreScrollTop(scrollTop).catch(() => {});
         }
         if (attempt < 3) {
-          console.warn(\`Retrying media UUID lookup for tile index \${index} (attempt \${attempt}/3): \${error.message}\`);
+          console.warn(`Retrying media UUID lookup for tile index ${index} (attempt ${attempt}/3): ${error.message}`);
           await page.waitForTimeout(400 * attempt);
         }
       }
     }
-    console.warn(\`Could not resolve media UUID by opening tile index \${index} after 3 attempts: \${lastError?.message || "unknown error"}\`);
+    console.warn(`Could not resolve media UUID by opening tile index ${index} after 3 attempts: ${lastError?.message || "unknown error"}`);
     return null;
   };
   let stableBottomRounds = 0;
@@ -1662,7 +1662,7 @@ async function prepare(args, browser, rl) {
       const initialItems = initialScan.items.map(item => item.key);
       const baselineUuids = initialScan.items.map(item => item.mediaUuid).filter(Boolean);
       const failedBaselineItems = initialScan.items.filter(item =>
-        /\bfailed\b/i.test(\`\${item.state} \${item.text}\`) || isGenerationFailureText(\`\${item.state} \${item.text}\`));
+        /\bfailed\b/i.test(`${item.state} ${item.text}`) || isGenerationFailureText(`${item.state} ${item.text}`));
       console.log(JSON.stringify({
         event: "baseline_media_inventory_summary",
         reached_bottom: initialScan.reachedBottom,
@@ -1674,7 +1674,7 @@ async function prepare(args, browser, rl) {
       }, null, 2));
       if (initialScan.unkeyedItemsDetected || initialScan.duplicateVisibleKeyDetected
         || initialItems.some(key => !key) || new Set(initialItems).size !== initialItems.length) {
-        throw new Error(\`generated_video_items selector must expose a stable media UUID/key for every tile and distinct keys within each viewport across a full virtualized-grid sweep (tiles=\${initialScan.items.length}, UUIDs=\${baselineUuids.length}, reached_bottom=\${initialScan.reachedBottom}, sample=\${baselineUuids.slice(0, 5).join(",") || "none"}).\`);
+        throw new Error(`generated_video_items selector must expose a stable media UUID/key for every tile and distinct keys within each viewport across a full virtualized-grid sweep (tiles=${initialScan.items.length}, UUIDs=${baselineUuids.length}, reached_bottom=${initialScan.reachedBottom}, sample=${baselineUuids.slice(0, 5).join(",") || "none"}).`);
       }
       args._waitInitialBalance = initialBalance;
       args._waitInitialItemKeys = initialItems;
