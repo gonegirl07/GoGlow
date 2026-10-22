@@ -698,6 +698,16 @@ function makeGenerationLedgerRecord({ scene, projectId, ledgerProjectId, prompt,
   };
 }
 
+function findNewCompletedMediaItems(items, beforeKeys) {
+  const baseline = new Set(beforeKeys || []);
+  return (items || []).filter(item => {
+    if (!item?.mediaUuid || !item.key || baseline.has(item.key)) return false;
+    const state = `${item.state || ""} ${item.text || ""}`;
+    if (item.progress || /\\b(?:generating|generation in progress|processing|in progress|queued|pending)\\b/i.test(state)) return false;
+    return true;
+  });
+}
+
 async function waitForGenerationAndDownload(page, selectors, { beforeKeys, beforeBalance, createClickedAt, uuidCache = new Map(), timeoutMs, downloadDir, sceneId, attemptId, timeoutScreenshot, variantIndex = 1, variantCount = 1 }) {
   const itemLocator = page.locator(selectors.generated_video_items);
   let deadline = Date.now() + timeoutMs;
@@ -758,8 +768,7 @@ async function waitForGenerationAndDownload(page, selectors, { beforeKeys, befor
     // rotate while rendering. Wait until Flow exposes a media UUID in DOM/network
     // metadata, then identify the new result strictly by set difference vs baseline.
     const topItemsNow = scan.items || scan.topItems || [];
-    const newItems = topItemsNow.filter(item => item.mediaUuid && item.key
-      && !beforeKeys.includes(item.key));
+    const newItems = findNewCompletedMediaItems(topItemsNow, beforeKeys);
     // Failed tiles already in the pre-Create UUID baseline are not new results.
     // A newly failed UUID is still detected below and stops the batch safely.
     const candidateItems = newItems.filter(item =>
