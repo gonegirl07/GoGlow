@@ -657,14 +657,14 @@ async function waitForGenerationAndDownload(page, selectors, { beforeKeys, befor
     // on every grid poll before comparing the new result against the pre-Create inventory.
     await activateVideosTab(page, selectors).catch(() => "not_found_no_tab_switch");
     await failIfVisible();
-    const scan = await collectAllGeneratedItems(page, selectors.generated_video_items, { uuidCache }).catch(() => ({ items: [], topItems: [], reachedBottom: false }));
-    if (!scan.reachedBottom || scan.unkeyedItemsDetected || scan.duplicateVisibleKeyDetected) {
+    const scan = await collectAllGeneratedItems(page, selectors.generated_video_items, { uuidCache, topLimit: 1, selectors }).catch(() => ({ items: [], topItems: [], reachedBottom: false, topLimited: false }));
+    if (!scan.topLimited || scan.unkeyedItemsDetected || scan.duplicateVisibleKeyDetected) {
       console.warn("Media inventory scan is incomplete or ambiguous; refusing to identify/download a clip.");
       await page.waitForTimeout(1000);
       continue;
     }
-    // Require a UUID absent from the full pre-Create inventory AND visible as the first tile
-    // at the top of the post-Create Videos grid. Never select a new-looking UUID elsewhere.
+    // Open/read only the first tile at the top of the post-Create Videos grid. The
+    // first six pre-Create UUIDs are the baseline; never scan the virtualized grid.
     const topItem = scan.topItems?.[0] || null;
     const newItems = topItem?.mediaUuid && topItem.key && !beforeKeys.includes(topItem.key) ? [topItem] : [];
     // Failed tiles already in the pre-Create UUID baseline are not new results.
@@ -1901,12 +1901,12 @@ async function prepare(args, browser, rl) {
       if (currentBalance === null) throw new Error("Credit balance could not be re-read immediately before Create; refusing to click.");
       args._waitInitialBalance = currentBalance;
       await activateVideosTab(chosen.page, selectors);
-      const currentScan = await collectAllGeneratedItems(chosen.page, selectors.generated_video_items, { uuidCache: args._waitUuidCache || new Map() });
-      if (!currentScan.reachedBottom) throw new Error("Pre-Create media inventory did not prove it reached the bottom; refusing to click Create.");
+      const currentScan = await collectAllGeneratedItems(chosen.page, selectors.generated_video_items, { uuidCache: args._waitUuidCache || new Map(), topLimit: 6, selectors });
+      if (!currentScan.topLimited || currentScan.items.length !== 6) throw new Error(`Pre-Create top-six baseline is incomplete (observed ${currentScan.items.length}); refusing to click Create.`);
       args._waitInitialItemKeys = currentScan.items.map(item => item.key);
       if (currentScan.unkeyedItemsDetected || currentScan.duplicateVisibleKeyDetected
-        || new Set(args._waitInitialItemKeys).size !== args._waitInitialItemKeys.length) {
-        throw new Error("Pre-Create media inventory is ambiguous; every tile must have a stable unique key. Refusing to click Create.");
+        || currentScan.items.some(item => !item.mediaUuid) || new Set(args._waitInitialItemKeys).size !== args._waitInitialItemKeys.length) {
+        throw new Error("Pre-Create top-six media baseline is ambiguous; all six tiles must have stable unique UUIDs. Refusing to click Create.");
       }
       args._waitInitialItemCount = args._waitInitialItemKeys.length;
       console.log(`Final pre-Create baseline UUID count: ${args._waitInitialItemKeys.length}.`);
