@@ -964,6 +964,73 @@ async function closeIngredientsPicker(page, selectors) {
   }
 }
 
+async function resetIngredientsPicker(page, selectors) {
+  const containerSelector = '[role="dialog"], [aria-modal="true"], .cdk-overlay-pane';
+  const hasVisiblePickerTiles = async () => page.locator(containerSelector).evaluateAll((containers, tileSelector) =>
+    containers.some(container => {
+      const style = getComputedStyle(container);
+      const rect = container.getBoundingClientRect();
+      if (style.display === "none" || style.visibility === "hidden" || Number(style.opacity || 1) <= 0 || !rect.width || !rect.height) return false;
+      return Array.from(container.querySelectorAll(tileSelector)).some(tile => {
+        const tileStyle = getComputedStyle(tile);
+        const tileRect = tile.getBoundingClientRect();
+        return tileStyle.display !== "none" && tileStyle.visibility !== "hidden"
+          && Number(tileStyle.opacity || 1) > 0 && tileRect.width > 0 && tileRect.height > 0;
+      });
+    }), selectors.ingredient_library_item).catch(() => false);
+  if (!(await hasVisiblePickerTiles())) return;
+  await page.keyboard.press("Escape").catch(() => {});
+  const escapeDeadline = Date.now() + 1800;
+  while (Date.now() < escapeDeadline && await hasVisiblePickerTiles()) await page.waitForTimeout(100);
+  if (await hasVisiblePickerTiles()) await closeIngredientsPicker(page, selectors);
+  const deadline = Date.now() + 2200;
+  while (Date.now() < deadline && await hasVisiblePickerTiles()) await page.waitForTimeout(100);
+  if (await hasVisiblePickerTiles()) {
+    throw new Error("Ingredients picker did not fully unmount after Escape/backdrop close; refusing to reuse a stale preview/Add to prompt action.");
+  }
+  console.log(JSON.stringify({ event: "ingredients_picker_reset_verified", closed: true }));
+}
+
+async function inspectAddToPromptContext(button, pickerContainer, tileSelector) {
+  return button.evaluate((buttonNode, args) => {
+    const uuidPattern = /[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/ig;
+    const uuidFrom = value => {
+      const matches = String(value || "").match(uuidPattern);
+      return matches ? matches[matches.length - 1].toLowerCase() : null;
+    };
+    const visible = node => {
+      const style = getComputedStyle(node);
+      const rect = node.getBoundingClientRect();
+      return style.display !== "none" && style.visibility !== "hidden"
+        && Number(style.opacity || 1) > 0 && rect.width > 0 && rect.height > 0;
+    };
+    const root = args.pickerContainer;
+    const tileNodes = Array.from(root.querySelectorAll(args.tileSelector));
+    let node = buttonNode;
+    let selected = null;
+    for (let depth = 0; node && root.contains(node) && depth < 9; depth += 1, node = node.parentElement) {
+      const images = Array.from(node.querySelectorAll("img, video, [style*='background-image']")).filter(visible);
+      const tileCount = tileNodes.filter(tile => node === tile || node.contains(tile)).length;
+      if (!images.length || tileCount > 1) continue;
+      const values = [];
+      const add = value => { if (value) values.push(String(value)); };
+      for (const el of [node, ...Array.from(node.querySelectorAll("*"))]) {
+        for (const attr of Array.from(el.attributes || [])) add(attr.value);
+        if (el.tagName === "IMG") { add(el.currentSrc); add(el.src); add(el.alt); add(el.title); }
+        add(el.innerText || el.textContent || "");
+      }
+      const uuids = Array.from(new Set(values.flatMap(value => Array.from(value.matchAll(uuidPattern), match => match[0].toLowerCase()))));
+      const labels = Array.from(new Set(values.filter(value => /mai-face|ref-3|\.png|\.jpe?g/i.test(value)).map(value => value.slice(0, 180))));
+      selected = { depth, tile_count_in_context: tileCount, visible_image_count: images.length, uuids, labels,
+        context_tag: node.tagName.toLowerCase(), context_role: node.getAttribute("role"), context_text: String(node.innerText || node.textContent || "").replace(/\\s+/g, " ").trim().slice(0, 220) };
+      if (uuids.length || labels.length) break;
+    }
+    return selected || { depth: null, tile_count_in_context: null, visible_image_count: 0, uuids: [], labels: [], context_tag: null, context_role: null, context_text: "" };
+  }, { pickerContainer: await pickerContainer.elementHandle(), tileSelector }).catch(error => ({
+    error: error.message, depth: null, tile_count_in_context: null, visible_image_count: 0, uuids: [], labels: []
+  }));
+}
+
 function isElementActuallyVisible(element) {
   if (!element || !element.isConnected) return false;
   const style = window.getComputedStyle(element);
@@ -1349,6 +1416,9 @@ async function uploadSceneReferencesUnsafe(page, selectors, referenceImages, ref
     const filename = path.basename(imagePath);
     const assetStartedAt = Date.now();
     console.log(`Reference upload started: ${filename}`);
+    // Reset/unmount any previous picker before each asset so a stale preview action
+    // cannot remain bound to the prior reference.
+    await resetIngredientsPicker(page, selectors);
     await openIngredientsPicker(page, selectors);
     const filenameStem = path.parse(filename).name;
     const pickerResolution = await resolveVisibleIngredientsPicker(page, selectors, filename, filenameStem);
@@ -1619,10 +1689,25 @@ async function uploadSceneReferencesUnsafe(page, selectors, referenceImages, ref
     if (!referenceSelectionReady) {
       throw new Error(`Reference asset selection did not expose exactly one visible Add to prompt button for ${filename}; configured wait budget=${selectionWaitTimeoutMs}ms, actual elapsed=${Date.now() - selectionWaitStartedAt}ms, aria-selected=${JSON.stringify(selectedAssetAriaSelected)}, visible Add to prompt buttons=${addToPromptVisibleCount}, selection_retried=${selectionRetried}. Stopping safely before prompt fill/Create.`);
     }
-    // Count/visibility is authoritative only after the selection state has settled.
+    // The action can be rendered in a preview pane and remain visible while the
+    // selected library tile changes. Require identity evidence from the preview/action
+    // context itself, not merely a single visible button somewhere in the picker.
     const addToPrompt = pickerContainer.locator(addToPromptSelector);
     if (await addToPrompt.count().catch(() => 0) !== 1 || !(await addToPrompt.isVisible().catch(() => false))) {
       throw new Error("Ingredients picker Add to prompt button was not uniquely visible inside the active picker; stopping before chip attach.");
+    }
+    const expectedPreviewUuid = (requestedAssetUuidForPin || assetUuid || "").toLowerCase();
+    const previewContext = await inspectAddToPromptContext(addToPrompt, pickerContainer, selectors.ingredient_library_item);
+    console.log(JSON.stringify({
+      event: "ingredients_picker_add_action_identity",
+      filename,
+      expected_asset_uuid: expectedPreviewUuid || null,
+      preview_context: previewContext,
+      identity_verified: Boolean(expectedPreviewUuid && previewContext.uuids?.includes(expectedPreviewUuid)),
+      action_clicked: false,
+    }));
+    if (!expectedPreviewUuid || !previewContext.uuids?.includes(expectedPreviewUuid)) {
+      throw new Error(`Cannot verify Add to prompt preview identity for ${filename}; expected UUID=${expectedPreviewUuid || "unavailable"}, preview UUIDs=${(previewContext.uuids || []).join(",") || "none"}. Refusing to click Add to prompt.`);
     }
     let attachedAfterClick = false;
     let lastClickError = null;
