@@ -784,7 +784,7 @@ class FlowPilotContractTests(unittest.TestCase):
     def test_pre_create_recheck_passes_when_third_thumbnail_loads_after_initial_nulls(self):
         helper = "async function waitForPreCreateThumbnailSnapshot" + self.script.split(
             "async function waitForPreCreateThumbnailSnapshot", 1
-        )[1].split("\\n\\nasync function prepare", 1)[0]
+        )[1].split("\n\nasync function prepare", 1)[0]
         node_test = helper + r"""
 const assert = await import('node:assert/strict');
 let reads = 0;
