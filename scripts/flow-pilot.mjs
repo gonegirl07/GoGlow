@@ -282,7 +282,7 @@ async function collectAllGeneratedItems(page, selector, { targetKey = null, maxS
         // Read the browser's current URL directly. Flow can serve a cached editor
         // route without emitting a fresh network response, so response listeners
         // and page-context waitForFunction are not authoritative for navigation.
-        const editRoute = /\\/edit\\/([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})(?:[/?#]|$)/i;
+        const editRoute = /\/edit\/([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})(?:[/?#]|$)/i;
         await page.waitForURL(url => editRoute.test(new URL(url).pathname), { timeout: 8000 }).catch(() => {});
         const currentUrl = page.url();
         const match = currentUrl.match(editRoute);
