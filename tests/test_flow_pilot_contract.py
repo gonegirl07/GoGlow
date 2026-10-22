@@ -620,16 +620,40 @@ class FlowPilotContractTests(unittest.TestCase):
         )
 
     def test_edit_route_fallback_waits_then_force_clicks_animated_tile(self):
-        self.assertIn("await tile.scrollIntoViewIfNeeded({ timeout: 2500 })", self.script)
-        self.assertIn("await page.waitForTimeout(500);", self.script)
-        self.assertIn("await tile.click({ timeout: 3000, force: true });", self.script)
-        self.assertIn("timeout: 5000", self.script)
+        self.assertIn("await tile.scrollIntoViewIfNeeded({ timeout: 3500 })", self.script)
+        self.assertIn("for (let attempt = 1; attempt <= 3; attempt += 1)", self.script)
+        self.assertIn("await tile.click({ timeout: 4000, force: true });", self.script)
+        self.assertIn("timeout: 8000", self.script)
+        self.assertIn("after 3 attempts", self.script)
 
     def test_asset_uuid_lookup_waits_for_lazy_loaded_thumbnail_and_rejects_ambiguity(self):
         self.assertIn("const thumbnailDeadline = Date.now() + 7000;", self.script)
         self.assertIn("flow-content/image/<uuid>", self.script)
         self.assertIn("if (existingCount === 1 && existingUuids.size === 1)", self.script)
         self.assertIn("else if (existingUuids.size > 1 || existingCount > 1)", self.script)
+
+    def test_job_can_pin_existing_flow_asset_uuids_by_path(self):
+        self.assertIn("reference_asset_uuids", self.script)
+        self.assertIn("flow_asset_uuid", self.script)
+        self.assertIn("asset_library_reused_explicit_uuid", self.script)
+        self.assertIn("Job explicitly requested Flow asset UUID", self.script)
+        self.assertIn("Conflicting Flow asset UUID declarations", self.script)
+
+    def test_upload_uuid_detection_checks_all_same_name_cards(self):
+        self.assertIn("Inspect every same-name card, not only the first one", self.script)
+        self.assertIn("const cards = Array.from(document.querySelectorAll(selector)).filter(asset =>", self.script)
+        self.assertIn("uuids.some(uuid => !oldUuids.includes(uuid))", self.script)
+
+    def test_baseline_reports_uuid_count_sample_and_retries_tile_open(self):
+        self.assertIn("baseline_media_inventory_summary", self.script)
+        self.assertIn("uuid_count: baselineUuids.length", self.script)
+        self.assertIn("uuid_sample_first_5: baselineUuids.slice(0, 5)", self.script)
+        self.assertIn("reached_bottom: initialScan.reachedBottom", self.script)
+        self.assertIn("Retrying media UUID lookup for tile index", self.script)
+
+    def test_account_button_visibility_is_retried_without_changing_page_fields(self):
+        self.assertIn("Google account button remained unavailable after 3 read-only visibility checks", self.script)
+        self.assertIn("await page.keyboard.press(\"Escape\")", self.script)
 
     def test_cleanup_uses_observed_empty_state_when_click_times_out(self):
         self.assertIn("afterClickChips !== 0", self.script)
