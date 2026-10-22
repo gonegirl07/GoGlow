@@ -445,7 +445,8 @@ class FlowPilotContractTests(unittest.TestCase):
         self.assertIn('variant_count: variantCount', self.script)
         self.assertIn('selected_variant: null', self.script)
         self.assertIn('variantIndex, variantCount,', self.script)
-        self.assertIn('variantCount > 1 ? `${safeScene}__v${variantIndex}${extension}`', self.script)
+        self.assertIn('const targetName = `${safeScene}__${safeAttempt}${extension}`', self.script)
+        self.assertIn('Refusing to overwrite an existing scene/attempt download', self.script)
 
     def test_seated_shots_get_head_to_knees_framing_and_wide_knee_margins(self):
         self.assertIn('scene.framing_helper_applied', self.script)
@@ -516,6 +517,9 @@ class FlowPilotContractTests(unittest.TestCase):
     def test_failed_variant_stops_batch_and_records_refund_pending_when_provider_says_refund(self):
         self.assertIn("refundPending", self.script)
         self.assertIn('"refunded_pending"', self.script)
+        self.assertIn('"provider_policy_prominent_people"', self.script)
+        self.assertIn("POLICY REFUSAL: Flow flagged this request under its prominent-people policy", self.script)
+        self.assertIn("no automatic retry or reference/prompt substitution", self.script)
         self.assertIn("args._stopVariants = true", self.script)
         self.assertIn("if (args._stopVariants) break", self.script)
         self.assertIn("later variants will NOT be submitted with the same prompt", self.script)

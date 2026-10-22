@@ -374,7 +374,16 @@ function makeGenerationLedgerRecord({ scene, projectId, ledgerProjectId, prompt,
     result: {
       status: resultStatus,
       provider_message: resultStatus === "failed" ? rawProviderMessage(timeoutError) : (timeoutError || null),
-      failure: resultStatus === "failed" ? { category: "browser_automation", message: timeoutError || downloadError || "Flow result was not verified.", provider_error_code: null, retryable: false, suggested_prompt_revision: null, revision_rationale: null } : null,
+      failure: resultStatus === "failed" ? {
+        category: /prominent people|might violate our policies/i.test(String(timeoutError || "")) ? "provider_policy_prominent_people" : "browser_automation",
+        message: timeoutError || downloadError || "Flow result was not verified.",
+        provider_error_code: null,
+        retryable: false,
+        suggested_prompt_revision: null,
+        revision_rationale: /prominent people|might violate our policies/i.test(String(timeoutError || ""))
+          ? "Stop the batch. Do not retry automatically or alter references/prompt to evade the policy decision. Review the content and Flow policy; any new attempt requires a human-reviewed, policy-compliant revision and fresh confirmation."
+          : null,
+      } : null,
     },
     credits: {
       estimated_amount: estimatedCost,
@@ -817,7 +826,13 @@ async function uploadSceneReferencesUnsafe(page, selectors, referenceImages) {
     console.log(`Reference upload started: ${filename}`);
     await openIngredientsPicker(page, selectors);
     const picker = page.locator(selectors.ingredient_library_item);
-    const matchingAssets = picker.filter({ hasText: filename });
+    const filenameStem = path.parse(filename).name;
+    let matchingAssets = picker.filter({ hasText: filename });
+    // Some Flow library cards display the filename without its extension. Fall back
+    // to the stem only when the exact filename has no match; UUID uniqueness still gates reuse.
+    if (await matchingAssets.count().catch(() => 0) === 0 && filenameStem !== filename) {
+      matchingAssets = picker.filter({ hasText: filenameStem });
+    }
     const existingUuids = new Set();
     const existingCount = await matchingAssets.count().catch(() => 0);
     for (let i = 0; i < existingCount; i += 1) {
@@ -826,6 +841,12 @@ async function uploadSceneReferencesUnsafe(page, selectors, referenceImages) {
       if (uuid) existingUuids.add(uuid);
     }
 
+    console.log(JSON.stringify({
+      event: "asset_library_inventory_before_upload",
+      filename,
+      existing_uuids_before_upload: Array.from(existingUuids),
+      matching_asset_count: existingCount,
+    }));
     let reusedExistingUuid = null;
     if (existingUuids.size === 1) {
       // The library already contains one unambiguous asset with this exact local filename.
@@ -847,16 +868,38 @@ async function uploadSceneReferencesUnsafe(page, selectors, referenceImages) {
       await chooser.setFiles(imagePath);
       const uuidWaitStartedAt = Date.now();
       try {
-        await page.waitForFunction(({ selector, filename, oldUuids }) => {
-          const newestMatch = Array.from(document.querySelectorAll(selector)).find(asset =>
-            (asset.innerText || asset.textContent || "").includes(filename));
+        await page.waitForFunction(({ selector, filename, filenameStem, oldUuids }) => {
+          const newestMatch = Array.from(document.querySelectorAll(selector)).find(asset => {
+            const label = (asset.innerText || asset.textContent || "").toLowerCase();
+            const image = asset.querySelector("img");
+            const metadata = [image?.getAttribute("alt"), image?.getAttribute("title"),
+              asset.getAttribute("aria-label"), asset.getAttribute("title")].filter(Boolean).join(" ").toLowerCase();
+            return label.includes(filename.toLowerCase()) || label.includes(filenameStem.toLowerCase())
+              || metadata.includes(filename.toLowerCase()) || metadata.includes(filenameStem.toLowerCase());
+          });
           if (!newestMatch) return false;
           const src = newestMatch.querySelector("img")?.getAttribute("src") || "";
           const match = src.match(/[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}/i);
           return Boolean(match && !oldUuids.includes(match[0].toLowerCase()));
-        }, { selector: selectors.ingredient_library_item, filename, oldUuids: Array.from(existingUuids) }, { timeout: ASSET_READY_TIMEOUT_MS });
+        }, { selector: selectors.ingredient_library_item, filename, filenameStem, oldUuids: Array.from(existingUuids) }, { timeout: ASSET_READY_TIMEOUT_MS });
         console.log(`Reference UUID ready: ${filename} in ${Date.now() - uuidWaitStartedAt}ms`);
       } catch {
+        const diagnostics = [];
+        const countAfterTimeout = await picker.count().catch(() => 0);
+        for (let i = 0; i < countAfterTimeout; i += 1) {
+          const label = await picker.nth(i).innerText().catch(() => "");
+          if (!label.toLowerCase().includes(filename.toLowerCase()) && !label.toLowerCase().includes(filenameStem.toLowerCase())) continue;
+          const src = await picker.nth(i).locator("img").first().getAttribute("src").catch(() => null);
+          const uuid = assetUuidFromUrl(src);
+          if (uuid) diagnostics.push(uuid);
+        }
+        console.warn(JSON.stringify({
+          event: "asset_library_match_diagnostics",
+          filename,
+          existing_uuids_before_upload: Array.from(existingUuids),
+          matching_uuids_after_timeout: diagnostics,
+          note: "A UUID is reusable only when it was present before upload and uniquely matched the asset label.",
+        }));
         throw new Error("Upload " + filename + " did not expose a new UUID within " + ASSET_READY_TIMEOUT_MS + "ms and no reusable same-name asset UUID was verifiable. Stopping before prompt fill/Create.");
       }
     }
@@ -1501,7 +1544,11 @@ async function prepare(args, browser, rl) {
           process.exitCode = 2;
         }
       } else if (resultStatus === "failed") {
-        console.error("Flow generation failure was detected and recorded in the ledger. Do NOT retry automatically.");
+        if (/prominent people|might violate our policies/i.test(String(timeoutError || ""))) {
+          console.error("POLICY REFUSAL: Flow flagged this request under its prominent-people policy. The refusal is recorded in the ledger; this batch stops and no automatic retry or reference/prompt substitution will be attempted. Review Flow policy and the content before manually starting a new, policy-compliant attempt.");
+        } else {
+          console.error("Flow generation failure was detected and recorded in the ledger. Do NOT retry automatically.");
+        }
         if (variantCount > 1) {
           args._stopVariants = true;
           console.error(`Stopping variant batch after variant ${variantIndex}/${variantCount} failed; later variants will NOT be submitted with the same prompt.`);
