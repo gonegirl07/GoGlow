@@ -289,7 +289,7 @@ async function collectAllGeneratedItems(page, selector, { targetKey = null, maxS
           currentTokens = await page.locator(selector).evaluateAll(elements => elements.slice(0, 6).map(element => {
             const source = element.querySelector("img")?.getAttribute("src") || "";
             if (!source) return "";
-            const asb = source.match(/\\/asb\\/([^/?#]+)/i);
+            const asb = source.match(/\/asb\/([^/?#]+)/i);
             if (asb) return `asb:${asb[1]}`;
             try { return new URL(source, location.href).pathname; }
             catch { return source.split(/[?#]/, 1)[0]; }
@@ -1999,7 +1999,7 @@ async function prepare(args, browser, rl) {
           elements.slice(0, 3).map(element => {
             const source = element.querySelector("img")?.getAttribute("src") || "";
             if (!source) return "";
-            const asb = source.match(/\\/asb\\/([^/?#]+)/i);
+            const asb = source.match(/\/asb\/([^/?#]+)/i);
             if (asb) return `asb:${asb[1]}`;
             try { return new URL(source, location.href).pathname; }
             catch { return source.split(/[?#]/, 1)[0]; }
