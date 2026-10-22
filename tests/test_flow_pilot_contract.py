@@ -645,7 +645,7 @@ class FlowPilotContractTests(unittest.TestCase):
         self.assertIn("after 3 attempts", self.script)
 
     def test_asset_uuid_lookup_waits_for_lazy_loaded_thumbnail_and_rejects_ambiguity(self):
-        self.assertIn("const thumbnailDeadline = Date.now() + 7000;", self.script)
+        self.assertIn("const thumbnailDeadline = networkUuidShortcut ? Date.now() : Date.now() + 7000;", self.script)
         self.assertIn("flow-content/image/<uuid>", self.script)
         self.assertIn("if (existingCount === 1 && existingUuids.size === 1)", self.script)
         self.assertIn("else if (existingUuids.size > 1 || existingCount > 1)", self.script)
