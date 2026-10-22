@@ -1369,7 +1369,42 @@ async function uploadSceneReferencesUnsafe(page, selectors, referenceImages, ref
       beforeAttachChipUuids.push(uuid);
     }
     await asset.click({ timeout: 2500 });
-    const addToPrompt = await exactVisibleLocator(page, selectors.ingredient_add_to_prompt, "Add to prompt button");
+
+    // Flow updates the selected-card state and mounts "Add to prompt" asynchronously.
+    // Do not assert uniqueness against the pre-selection picker state: wait up to 5s
+    // for this exact asset to report aria-selected=true and at least one visible button.
+    const addToPromptSelector = selectors.ingredient_add_to_prompt;
+    const addToPromptCandidates = page.locator(addToPromptSelector);
+    const selectionWaitStartedAt = Date.now();
+    let selectedAssetAriaSelected = null;
+    let addToPromptVisibleCount = 0;
+    let referenceSelectionReady = false;
+    while (Date.now() - selectionWaitStartedAt < 5000) {
+      selectedAssetAriaSelected = await asset.getAttribute("aria-selected").catch(() => null);
+      const candidateCount = await addToPromptCandidates.count().catch(() => 0);
+      addToPromptVisibleCount = 0;
+      for (let i = 0; i < candidateCount; i += 1) {
+        if (await addToPromptCandidates.nth(i).isVisible().catch(() => false)) addToPromptVisibleCount += 1;
+      }
+      if (selectedAssetAriaSelected === "true" && addToPromptVisibleCount > 0) {
+        referenceSelectionReady = true;
+        break;
+      }
+      await page.waitForTimeout(200);
+    }
+    console.log(JSON.stringify({
+      event: "reference_asset_selection_ready",
+      filename,
+      selected_asset_aria_selected: selectedAssetAriaSelected,
+      add_to_prompt_visible_count: addToPromptVisibleCount,
+      wait_ms: Date.now() - selectionWaitStartedAt,
+      ready: referenceSelectionReady,
+    }));
+    if (!referenceSelectionReady) {
+      throw new Error(`Reference asset selection was not confirmed within 5000ms for ${filename}; aria-selected=${JSON.stringify(selectedAssetAriaSelected)}, visible Add to prompt buttons=${addToPromptVisibleCount}. Stopping safely before prompt fill/Create.`);
+    }
+    // Count/visibility is authoritative only after the selection state has settled.
+    const addToPrompt = await exactVisibleLocator(page, addToPromptSelector, "Add to prompt button", 1000);
     let attachedAfterClick = false;
     let lastClickError = null;
     for (let clickAttempt = 0; clickAttempt < 3; clickAttempt += 1) {
