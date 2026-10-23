@@ -1434,7 +1434,8 @@ async function openIngredientsPicker(page, selectors) {
       lastError = error;
       if (attempt < 3) {
         await page.waitForTimeout(350);
-        addButton = await exactVisibleLocator(page, selectors.ingredient_add_button, "add ingredients button retry");
+        const refreshed = await exactVisibleLocator(page, selectors.ingredient_add_button, "add ingredients button retry").catch(() => null);
+        if (refreshed) addButton = refreshed;
       }
     }
   }
