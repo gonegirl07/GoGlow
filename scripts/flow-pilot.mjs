@@ -1669,25 +1669,53 @@ async function uploadSceneReferencesUnsafe(page, selectors, referenceImages, ref
       const containers = Array.from(document.querySelectorAll(containerSelector)).filter(visible);
       const tiles = containers.flatMap(container => Array.from(container.querySelectorAll(tileSelector)).filter(visible)
         .filter(tile => String(tile.innerText || tile.textContent || "").toLowerCase().includes(filename.toLowerCase())));
+      const paneNodes = Array.from(document.querySelectorAll("body *")).filter(visible);
+      const previewNodes = paneNodes.filter(node => node.children.length < 8
+        && /Preview of\\s+.+\\.(?:png|jpe?g|webp|gif|avif)/i.test(String(node.innerText || node.textContent || "")));
+      const addNodes = paneNodes.filter(node => /add to prompt/i.test(String(node.innerText || node.getAttribute("aria-label") || ""))
+        && /^(BUTTON|[A-Z0-9-]+)$/.test(node.tagName) && visible(node));
+      const summarizeAncestors = node => {
+        const out = [];
+        for (let current = node, depth = 0; current && depth < 4; current = current.parentElement, depth += 1) {
+          const text = String(current.innerText || current.textContent || "").replace(/\\s+/g, " ").trim();
+          const rect = current.getBoundingClientRect();
+          out.push({ depth, tag: current.tagName.toLowerCase(), role: current.getAttribute("role"),
+            class_name: String(current.className?.baseVal || current.className || "").slice(0, 100),
+            box: { x: Math.round(rect.x), y: Math.round(rect.y), width: Math.round(rect.width), height: Math.round(rect.height) },
+            has_preview_label: /Preview of\\s+.+\\.(?:png|jpe?g|webp|gif|avif)/i.test(text),
+            has_add_button: Array.from(current.querySelectorAll("button,[role='button']")).some(el => visible(el)
+              && /add to prompt/i.test(String(el.innerText || el.getAttribute("aria-label") || ""))),
+            text: text.slice(0, 240) });
+        }
+        return out;
+      };
       const pane = containers.map(container => {
-          const text = String(container.innerText || "").replace(/\s+/g, " ").trim();
-          const hasPreview = /Preview of\s+.+\.(?:png|jpe?g|webp|gif|avif)/i.test(text);
-          const addButtons = Array.from(container.querySelectorAll("button,[role='button']")).filter(visible)
-            .filter(el => /add to prompt/i.test(String(el.innerText || el.getAttribute("aria-label") || ""))).length;
-          return { role: container.getAttribute("role"), has_preview_label: hasPreview, visible_add_button_count: addButtons, text: text.slice(0, 180) };
-        });
+        const text = String(container.innerText || "").replace(/\\s+/g, " ").trim();
+        return { role: container.getAttribute("role"), has_preview_label: /Preview of\\s+.+\\.(?:png|jpe?g|webp|gif|avif)/i.test(text),
+          visible_add_button_count: Array.from(container.querySelectorAll("button,[role='button']")).filter(visible)
+            .filter(el => /add to prompt/i.test(String(el.innerText || el.getAttribute("aria-label") || ""))).length,
+          text: text.slice(0, 180) };
+      });
       const hit = Number.isFinite(x) && Number.isFinite(y) ? document.elementFromPoint(x, y) : null;
       return {
         visible_picker_count: containers.length, matching_visible_tile_count: tiles.length,
         matching_tiles: tiles.slice(0, 4).map(tile => { const r = tile.getBoundingClientRect(); return {
           aria_selected: tile.getAttribute("aria-selected"),
           box: { x: Math.round(r.x), y: Math.round(r.y), width: Math.round(r.width), height: Math.round(r.height) },
-          text: String(tile.innerText || tile.textContent || "").replace(/\s+/g, " ").trim().slice(0, 120) }; }),
-        detail_pane: pane.filter(item => item.has_preview_label || item.visible_add_button_count > 0),
-      picker_container_diagnostics: pane,
+          outer_html: tile.outerHTML.slice(0, 700),
+          parent_html: tile.parentElement?.outerHTML.slice(0, 900) || "",
+          grandparent_html: tile.parentElement?.parentElement?.outerHTML.slice(0, 1100) || "",
+          selected_ancestors: [tile, tile.parentElement, tile.parentElement?.parentElement].filter(Boolean)
+            .map(node => ({ tag: node.tagName.toLowerCase(), role: node.getAttribute("role"), aria_selected: node.getAttribute("aria-selected"), tabindex: node.getAttribute("tabindex") })),
+          text: String(tile.innerText || tile.textContent || "").replace(/\\s+/g, " ").trim().slice(0, 120) }; }),
+        detail_pane: Array.from(new Set([...previewNodes, ...addNodes])).slice(0, 5).map(node => ({
+          tag: node.tagName.toLowerCase(), text: String(node.innerText || node.textContent || "").replace(/\\s+/g, " ").trim().slice(0, 200),
+          ancestors: summarizeAncestors(node) })),
+        add_button_contexts: addNodes.slice(0, 3).map(node => ({ text: String(node.innerText || node.getAttribute("aria-label") || "").slice(0, 100), ancestors: summarizeAncestors(node) })),
+        picker_container_diagnostics: pane,
         click_hit_inside_matching_tile: Boolean(hit && tiles.some(tile => tile === hit || tile.contains(hit))),
         click_hit_tag: hit?.tagName?.toLowerCase() || null,
-        click_hit_text: String(hit?.innerText || hit?.textContent || "").replace(/\s+/g, " ").trim().slice(0, 100)
+        click_hit_text: String(hit?.innerText || hit?.textContent || "").replace(/\\s+/g, " ").trim().slice(0, 100)
       };
     }, { containerSelector: pickerContainerSelector, tileSelector: selectors.ingredient_library_item, filename,
       x: tileBox ? tileBox.x + tileBox.width / 2 : null, y: tileBox ? tileBox.y + tileBox.height / 2 : null })
@@ -1759,6 +1787,10 @@ async function uploadSceneReferencesUnsafe(page, selectors, referenceImages, ref
         if (await addCandidates.nth(i).isVisible({ timeout: 150 }).catch(() => false)) { addToPromptVisibleCount += 1; visibleButton = addCandidates.nth(i); }
       }
       previewContext = addToPromptVisibleCount === 1 && visibleButton ? await inspectAddToPromptContext(visibleButton) : null;
+      if (previewContext) console.log(JSON.stringify({ event: "ingredients_picker_preview_context", filename,
+        depth: previewContext.depth, context_tag: previewContext.context_tag, context_role: previewContext.context_role,
+        context_text: previewContext.context_text, preview_labels: previewContext.preview_labels, uuids: previewContext.uuids,
+        image_sources: previewContext.image_sources?.slice(0, 8) || [] }));
       const previewLabels = (previewContext?.preview_labels || []).map(label => String(label).trim().toLowerCase());
       const labelMatches = previewLabels.includes(targetFilename);
       const uuidMatches = Boolean(expectedPreviewUuid && previewContext?.uuids?.includes(expectedPreviewUuid));
@@ -1793,6 +1825,42 @@ async function uploadSceneReferencesUnsafe(page, selectors, referenceImages, ref
         }
         console.log(JSON.stringify({ event: "ingredients_picker_click_target", step: "retry", filename, clicked_interactive_ancestor: ancestorCount === 1, ...await readPickerDiagnostics(currentBox) }));
         console.log(JSON.stringify({ event: "ingredients_picker_step_diagnostics", step: "after_retry_click", hit_test_inside_tile: hitTest, ...(await readPickerDiagnostics(currentBox)) }));
+        const fallbackMethods = ["focus_enter", "focus_space", "thumbnail_click", "option_double_click"];
+        for (const method of fallbackMethods) {
+          if (Date.now() >= selectionDeadline) break;
+          const latest = await freshTile();
+          if (!latest) break;
+          activeAsset = latest.tile;
+          const option = activeAsset.locator('xpath=ancestor-or-self::*[@role="option" or @role="button" or self::button or @tabindex][1]').first();
+          const optionCount = await option.count().catch(() => 0);
+          const target = optionCount === 1 ? option : activeAsset;
+          try {
+            if (method === "focus_enter" || method === "focus_space") {
+              await target.focus({ timeout: 250 });
+              await target.press(method === "focus_enter" ? "Enter" : "Space", { timeout: 250 });
+            } else if (method === "thumbnail_click") {
+              const img = activeAsset.locator("img").first();
+              if (await img.count().catch(() => 0) === 1 && await img.isVisible({ timeout: 150 }).catch(() => false)) await img.click({ timeout: 300 });
+              else await target.click({ timeout: 300 });
+            } else await target.dblclick({ timeout: 350 });
+          } catch (error) {
+            console.log(JSON.stringify({ event: "ingredients_picker_activation_attempt", filename, method, action_error: String(error.message || error).slice(0, 180) }));
+          }
+          await page.waitForTimeout(Math.min(180, Math.max(0, selectionDeadline - Date.now())));
+          const after = await freshTile();
+          const afterSelected = after ? await after.tile.getAttribute("aria-selected", { timeout: 150 }).catch(() => null) : null;
+          const afterAddCount = after ? await countVisibleMatches(after.container, selectors.ingredient_add_to_prompt) : 0;
+          const afterAdd = after && afterAddCount === 1 ? after.container.locator(selectors.ingredient_add_to_prompt).first() : null;
+          const afterPreview = afterAdd ? await inspectAddToPromptContext(afterAdd) : null;
+          console.log(JSON.stringify({ event: "ingredients_picker_activation_attempt", filename, method,
+            selected_aria_selected: afterSelected, add_to_prompt_visible_count: afterAddCount,
+            preview_context: afterPreview ? { depth: afterPreview.depth, context_tag: afterPreview.context_tag,
+              context_role: afterPreview.context_role, context_text: afterPreview.context_text,
+              preview_labels: afterPreview.preview_labels, uuids: afterPreview.uuids,
+              image_sources: afterPreview.image_sources?.slice(0, 8) } : null,
+            ...(await readPickerDiagnostics(currentBox)) }));
+          if (afterSelected === "true" || (afterPreview?.preview_labels || []).some(label => label.toLowerCase() === targetFilename)) break;
+        }
       }
       await page.waitForTimeout(Math.min(100, Math.max(0, selectionDeadline - Date.now())));
     }
