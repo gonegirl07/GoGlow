@@ -1347,7 +1347,9 @@ function assetUuidFromUrl(value) {
   return match?.[0]?.toLowerCase() || null;
 }
 
-function thumbnailIdentityToken(value) {
+function thumbnailIdentityToken(value, mediaUuidHint = null) {
+  const hintedUuid = assetUuidFromUrl(mediaUuidHint);
+  if (hintedUuid) return `media:${hintedUuid}`;
   const source = String(value || "");
   // Flow may replace /image/<uuid> with a signed /asb/<token> URL for the same
   // media tile. Prefer the durable media UUID whenever either URL carries one.
@@ -2713,23 +2715,29 @@ async function prepare(args, browser, rl) {
         return chosen.page.locator(selectors.generated_video_items).evaluateAll(elements => ({
           tileCount: elements.length,
           tokens: elements.slice(0, 3).map(element => {
-            // Inspect tile identity as well as thumbnail src: Flow may replace
-            // /image/<uuid> with an opaque signed /asb/ URL after render.
+            // Prefer the tile's own media/edit URL or data ID; thumbnail src is
+            // only a fallback because Flow can rotate /image/<uuid> to /asb/<token>.
             const sources = [
-              element.getAttribute("data-id"),
-              element.getAttribute("data-uuid"),
               element.getAttribute("data-media-id"),
+              element.getAttribute("data-asset-id"),
+              element.getAttribute("data-uuid"),
+              element.getAttribute("data-id"),
               element.getAttribute("href"),
-              element.querySelector("a[href]")?.getAttribute("href"),
-              element.querySelector("video")?.getAttribute("src"),
-              element.querySelector("img")?.getAttribute("src"),
+              ...Array.from(element.querySelectorAll('a[href*="/edit/"], a[href*="/video/"]'))
+                .map(anchor => anchor.getAttribute("href")),
+              ...Array.from(element.querySelectorAll("[data-media-id], [data-asset-id], [data-uuid], [data-id]"))
+                .flatMap(node => ["data-media-id", "data-asset-id", "data-uuid", "data-id"]
+                  .map(name => node.getAttribute(name))),
             ].filter(Boolean).map(String);
-            if (!sources.length) return null;
             for (const value of sources) {
               const uuid = value.match(/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/i);
               if (uuid) return `media:${uuid[0].toLowerCase()}`;
             }
-            const source = sources[sources.length - 1];
+            const source = element.querySelector("img")?.getAttribute("src") || "";
+            if (!source) return null;
+            const imageUuid = source.match(/\/image\/([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})(?:[/?#]|$)/i)
+              || source.match(/\/asb\/([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})(?:[/?#]|$)/i);
+            if (imageUuid) return `media:${imageUuid[1].toLowerCase()}`;
             const asb = source.match(/\/asb\/([^/?#]+)/i);
             if (asb) return `asb:${asb[1]}`;
             try { return new URL(source, location.href).pathname; }
