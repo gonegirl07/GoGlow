@@ -2873,7 +2873,9 @@ async function prepare(args, browser, rl) {
         visible_tile_count: preCreateSnapshot.tileCount,
         stable_first_token: preCreateSnapshot.stableFirstToken || preCreateSnapshot.fullyStable,
         accepted_by_neighbor_rule: preCreateSnapshot.acceptedByNeighborRule,
-        accepted_by_media_uuid_neighbor_identity: sameFirstRowMediaIdentity,\n        baseline_first_three_media_keys: baselineMediaKeys.slice(0, 3),\n        current_first_three_media_keys: currentMediaKeys.slice(0, 3),
+        accepted_by_media_uuid_neighbor_identity: sameFirstRowMediaIdentity,
+        baseline_first_three_media_keys: baselineMediaKeys.slice(0, 3),
+        current_first_three_media_keys: currentMediaKeys.slice(0, 3),
         baseline_dom_tile_count: args._waitInitialDomTileCount,
         wait_ms: preCreateSnapshot.waitMs,
         read_only_dom_check: true,
@@ -2885,7 +2887,7 @@ async function prepare(args, browser, rl) {
         throw new Error("Pre-Create first tile identity differs from the validated baseline; stable-neighbor identity check did not confirm a thumbnail-only change. Refusing to click Create.");
       }
       args._waitInitialItemCount = args._waitInitialItemKeys.length;
-      console.log(sameFirstTileAfterThumbnailRotation
+      console.log(sameFirstTileAfterThumbnailRotation || sameFirstRowMediaIdentity
         ? `Pre-Create first tile passed stable-neighbor identity check; preserving ${args._waitInitialItemKeys.length} baseline UUIDs.`
         : `Pre-Create first tile token matches baseline; preserving ${args._waitInitialItemKeys.length} baseline UUIDs.`);
     }
