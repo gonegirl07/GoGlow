@@ -2567,6 +2567,7 @@ async function prepare(args, browser, rl) {
       }
       args._waitInitialBalance = initialBalance;
       args._waitInitialItemKeys = initialItems;
+      args._waitInitialDomTileCount = await chosen.page.locator(selectors.generated_video_items).count();
       args._waitInitialThumbnailTokens = initialScan.items.map(item => item.mediaUuid ? `media:${item.mediaUuid}` : (item.thumbnailSrc ? thumbnailIdentityToken(item.thumbnailSrc) : null)).filter(Boolean);
       if (args._waitInitialThumbnailTokens.length !== initialScan.items.length) {
         throw new Error("First-row baseline requires a loaded thumbnail token for each of the three tiles.");
@@ -2738,6 +2739,11 @@ async function prepare(args, browser, rl) {
       }, ms => chosen.page.waitForTimeout(ms), 10000);
       const currentTokens = preCreateSnapshot.tokens;
       const currentFirstToken = currentTokens[0] || null;
+      const baselineTokens = args._waitInitialThumbnailTokens || [];
+      const sameFirstTileAfterThumbnailRotation = firstTileMatchesByStableNeighbors({
+        expectedToken: expectedFirstToken, currentToken: currentFirstToken, baselineTokens, currentTokens,
+        baselineTileCount: args._waitInitialDomTileCount, currentTileCount: preCreateSnapshot.tileCount,
+      });
       const stableCurrentGrid = preCreateSnapshot.fullyStable || preCreateSnapshot.acceptedByNeighborRule;
       console.log(JSON.stringify({
         event: "pre_create_first_tile_identity_recheck",
@@ -2747,17 +2753,21 @@ async function prepare(args, browser, rl) {
         visible_tile_count: preCreateSnapshot.tileCount,
         stable_first_token: preCreateSnapshot.stableFirstToken || preCreateSnapshot.fullyStable,
         accepted_by_neighbor_rule: preCreateSnapshot.acceptedByNeighborRule,
+        accepted_by_media_uuid_neighbor_identity: sameFirstTileAfterThumbnailRotation,
+        baseline_dom_tile_count: args._waitInitialDomTileCount,
         wait_ms: preCreateSnapshot.waitMs,
         read_only_dom_check: true,
       }, null, 2));
       if (!stableCurrentGrid || preCreateSnapshot.tileCount < 3 || !currentFirstToken) {
         throw new Error(`Pre-Create recheck could not confirm a stable first tile and three-tile row (observed ${preCreateSnapshot.tileCount}); refusing to click Create.`);
       }
-      if (currentFirstToken !== expectedFirstToken) {
-        throw new Error("Pre-Create first tile thumbnail token differs from the validated baseline; refusing to click Create.");
+      if (currentFirstToken !== expectedFirstToken && !sameFirstTileAfterThumbnailRotation) {
+        throw new Error("Pre-Create first tile identity differs from the validated baseline; stable-neighbor identity check did not confirm a thumbnail-only change. Refusing to click Create.");
       }
       args._waitInitialItemCount = args._waitInitialItemKeys.length;
-      console.log(`Pre-Create first tile token matches baseline; preserving ${args._waitInitialItemKeys.length} baseline UUIDs.`);
+      console.log(sameFirstTileAfterThumbnailRotation
+        ? `Pre-Create first tile passed stable-neighbor identity check; preserving ${args._waitInitialItemKeys.length} baseline UUIDs.`
+        : `Pre-Create first tile token matches baseline; preserving ${args._waitInitialItemKeys.length} baseline UUIDs.`);
     }
     args._waitCreateClickedAt = new Date().toISOString();
     console.log(`Pre-Create baseline UUID count: ${args._waitInitialItemKeys?.length ?? 0}. Create timestamp: ${args._waitCreateClickedAt}`);
