@@ -157,18 +157,22 @@ async function readCreditBalance(page, selectors) {
 async function generatedItemKeys(page, selector) {
   return page.locator(selector).evaluateAll(elements => elements.map(element => {
     const sources = [
-      element.getAttribute("href"),
-      element.querySelector("a[href]")?.getAttribute("href"),
       element.querySelector("video")?.getAttribute("src"),
       element.getAttribute("data-id"),
       element.querySelector("img")?.getAttribute("src"),
+      element.getAttribute("href"),
+      element.querySelector("a[href]")?.getAttribute("href"),
     ].filter(Boolean).map(String);
     const uuidFrom = value => {
       const matches = value.match(/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/ig);
       return matches && matches.length ? matches[matches.length - 1].toLowerCase() : null;
     };
     const mediaUuid = sources.map(uuidFrom).find(Boolean);
-    return mediaUuid ? `media:${mediaUuid}` : String(sources[0] || "").trim();
+    if (mediaUuid) return `media:${mediaUuid}`;
+    const textNode = element.cloneNode(true);
+    textNode.querySelectorAll("a,button,[role=button],[aria-label]").forEach(node => node.remove());
+    const tileText = String(textNode.innerText || textNode.textContent || "").replace(/\s+/g, " ").trim();
+    return tileText ? `tile-text:${tileText.slice(0, 220)}` : "";
   }));
 }
 
@@ -424,8 +428,11 @@ async function collectAllGeneratedItems(page, selector, { targetKey = null, maxS
       const thumbnailSrc = element.querySelector("img")?.getAttribute("src") || null;
       const mediaUuid = sources.map(uuidFrom).find(Boolean);
       const text = String(element.innerText || element.textContent || "").replace(/\s+/g, " ").trim();
+      const identityNode = element.cloneNode(true);
+      identityNode.querySelectorAll("a,button,[role=button],[aria-label]").forEach(node => node.remove());
+      const identityText = String(identityNode.innerText || identityNode.textContent || "").replace(/\s+/g, " ").trim();
       const hint = [text, ...sources].join("|");
-      const key = mediaUuid ? `media:${mediaUuid}` : (thumbnailSrc || sources[0] || "");
+      const key = mediaUuid ? `media:${mediaUuid}` : (identityText ? `tile-text:${identityText.slice(0, 220)}` : (thumbnailSrc || ""));
       const state = [element.getAttribute("data-status"), element.getAttribute("data-state"),
         element.getAttribute("aria-label"), element.getAttribute("title")].filter(Boolean).join(" ");
       const progress = Boolean(element.querySelector('[role="progressbar"], progress, [aria-valuenow]'));
@@ -597,13 +604,18 @@ function nextLedgerAttemptNumber(pathname, sceneId) {
 }
 
 function rawProviderMessage(value) {
-  const message = String(value || "");
+  let message = String(value || "");
   const tileMarker = " reports failure: ";
   const tileIndex = message.indexOf(tileMarker);
-  if (tileIndex >= 0) return message.slice(tileIndex + tileMarker.length).trim();
+  if (tileIndex >= 0) message = message.slice(tileIndex + tileMarker.length);
   const pageMarker = "Flow displayed a generation/policy failure: ";
   const pageIndex = message.indexOf(pageMarker);
-  if (pageIndex >= 0) return message.slice(pageIndex + pageMarker.length).trim();
+  if (pageIndex >= 0) message = message.slice(pageIndex + pageMarker.length);
+  message = message
+    .replace(/\bTrack status here\b/ig, " ")
+    .replace(/\b(?:refresh|undo|delete_forever|more_vert|download)\b/ig, " ")
+    .replace(/\s+/g, " ")
+    .trim();
   return message || null;
 }
 
@@ -768,21 +780,25 @@ async function waitForGenerationAndDownload(page, selectors, { beforeKeys, befor
     // metadata, then identify the new result strictly by set difference vs baseline.
     const topItemsNow = scan.items || scan.topItems || [];
     const baselineKeys = new Set(beforeKeys || []);
+    const baselineKeyCounts = new Map();
+    for (const key of beforeKeys || []) baselineKeyCounts.set(key, (baselineKeyCounts.get(key) || 0) + 1);
     const newUuidItems = topItemsNow.filter(item => item?.mediaUuid && item.key && !baselineKeys.has(item.key));
     if (newUuidItems.length > 0) onSubmissionEvidence({ kind: "new_media_uuid", keys: newUuidItems.map(item => item.key) });
     const newItems = findNewCompletedMediaItems(topItemsNow, beforeKeys);
-    // Failed tiles often have no media UUID. Compare their DOM key with the full
-    // pre-Create inventory so a newly inserted policy-refusal tile stops polling now.
+    // Failed cards may have no UUID and generic action links. Use cleaned tile-local
+    // text as identity and occurrence counts so duplicate failures remain detectable.
     const newFailedTile = topItemsNow.find(item => {
-      if (!item?.key || baselineKeys.has(item.key)) return false;
+      if (!item?.key) return false;
       const state = `${item.state || ""} ${item.text || ""}`;
-      return /\bfailed\b/i.test(state) || isGenerationFailureText(state);
+      if (!(/\bfailed\b/i.test(state) || isGenerationFailureText(state))) return false;
+      const occurrence = topItemsNow.slice(0, item.index + 1).filter(candidate => candidate?.key === item.key).length;
+      return occurrence > (baselineKeyCounts.get(item.key) || 0);
     });
     if (newFailedTile) {
       const failureText = `${newFailedTile.text || ""} ${newFailedTile.state || ""}`.replace(/\s+/g, " ").trim();
       const failureReason = /prominent people|might violate our policies|you will be refunded/i.test(failureText)
         ? "policy_prominent_people" : "provider_generation_failed";
-      throw new Error(`FLOW_GENERATION_FAILED: ${failureReason}: new Flow tile ${newFailedTile.key} reports failure: ${failureText}`);
+      throw new Error(`FLOW_GENERATION_FAILED: ${failureReason}: new Flow tile at position ${newFailedTile.index} [${newFailedTile.key}] reports failure: ${failureText}`);
     }
     // UUID-backed failures remain covered by this check; no failed item is eligible
     // for download even if Flow exposes it as a completed media record.
@@ -2039,6 +2055,10 @@ async function loadInputs(args) {
   if (!["include", "hybrid", "reference_only"].includes(faceDescriptionMode)) {
     throw new Error("face_description_mode must be 'include', 'hybrid', or 'reference_only'.");
   }
+  const referenceLanguageMode = scene.reference_language_mode ?? "identity_preserving";
+  if (!["identity_preserving", "neutral_reference"].includes(referenceLanguageMode)) {
+    throw new Error("reference_language_mode must be 'identity_preserving' or 'neutral_reference'.");
+  }
   if (typeof scene.character_description !== "string") {
     throw new Error("Scene JSON must contain character_description as a string (it may be empty when face_description_mode is 'reference_only').");
   }
@@ -2154,11 +2174,13 @@ async function loadInputs(args) {
   scene.face_reference_id = faceReferenceImages[0];
   scene.character_description = scene.character_description.trim();
   scene.scene_prompt = scene.prompt;
-  const faceAnchorInstructions = faceReferenceImages.length > 1
-    ? "The first attached image shows the character. Keep the same character as the reference image: facial structure, eye shape and spacing, nose, lips, cheeks, and jawline. The other selected face reference images show the same character from additional angles. Use them to understand the character's features; do not mix them with supporting references."
-    : "The first attached image shows the character. Keep the same character as the reference image: facial structure, eye shape and spacing, nose, lips, cheeks, and jawline.";
+  const faceAnchorInstructions = referenceLanguageMode === "neutral_reference"
+    ? "Use the character shown in the reference image as a visual guide."
+    : faceReferenceImages.length > 1
+      ? "The first attached image shows the character. Keep the same character as the reference image: facial structure, eye shape and spacing, nose, lips, cheeks, and jawline. The other selected face reference images show the same character from additional angles. Use them to understand the character's features; do not mix them with supporting references."
+      : "The first attached image shows the character. Keep the same character as the reference image: facial structure, eye shape and spacing, nose, lips, cheeks, and jawline.";
   const characterDescriptionSection = faceDescriptionMode === "reference_only" || !scene.character_description
-    ? "Use the attached reference images for all appearance details; do not invent or reinterpret facial features."
+    ? "Use the reference image as the visual guide for the character's overall appearance."
     : faceDescriptionMode === "hybrid"
       ? `HYBRID FACE DESCRIPTION (brief matching traits only; reference images remain authoritative): ${scene.character_description.trim().replace(/[.\s]+$/, "")}. Match the reference images and do not add conflicting traits.`
       : `CHARACTER DESCRIPTION (supporting traits only; do not override the face reference): ${scene.character_description}`;
@@ -2188,7 +2210,9 @@ async function loadInputs(args) {
     ? "Use remaining attached images only as supporting references for clothing, body, or context."
     : "";
   const supportingReferencePrefix = supportingReferenceSection ? `${supportingReferenceSection} ` : "";
-  scene.prompt = `PRIMARY FACE REFERENCE: ${faceAnchorInstructions} Keep the same person throughout the clip.\n\n${characterDescriptionSection}\n\nSCENE: ${scene.prompt.trim()}${expressionSection}\n\n${supportingReferencePrefix}Keep the same character, hair, and skin tone throughout. Do not substitute a different person.`;
+  scene.prompt = referenceLanguageMode === "neutral_reference"
+    ? `${faceAnchorInstructions}\n\n${characterDescriptionSection}\n\nSCENE: ${scene.prompt.trim()}${expressionSection}\n\n${supportingReferencePrefix}Keep the overall visual design and clothing consistent with the reference images.`
+    : `PRIMARY FACE REFERENCE: ${faceAnchorInstructions} Keep the same person throughout the clip.\n\n${characterDescriptionSection}\n\nSCENE: ${scene.prompt.trim()}${expressionSection}\n\n${supportingReferencePrefix}Keep the same character, hair, and skin tone throughout. Do not substitute a different person.`;
   if (!/^[\x00-\x7F]+$/.test(scene.prompt)) throw new Error("Composed prompt must contain ASCII characters only.");
   if (scene.model !== "Omni 1.1 Flash" || scene.resolution !== "360p") {
     throw new Error("Phase 3 pilot is restricted to model='Omni 1.1 Flash' and resolution='360p'.");
