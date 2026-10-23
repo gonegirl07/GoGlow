@@ -1671,18 +1671,18 @@ async function uploadSceneReferencesUnsafe(page, selectors, referenceImages, ref
         .filter(tile => String(tile.innerText || tile.textContent || "").toLowerCase().includes(filename.toLowerCase())));
       const paneNodes = Array.from(document.querySelectorAll("body *")).filter(visible);
       const previewNodes = paneNodes.filter(node => node.children.length < 8
-        && /Preview of\\s+.+\\.(?:png|jpe?g|webp|gif|avif)/i.test(String(node.innerText || node.textContent || "")));
+        && /Preview of\s+.+\.(?:png|jpe?g|webp|gif|avif)/i.test(String(node.innerText || node.textContent || "")));
       const addNodes = paneNodes.filter(node => /add to prompt/i.test(String(node.innerText || node.getAttribute("aria-label") || ""))
         && /^(BUTTON|[A-Z0-9-]+)$/.test(node.tagName) && visible(node));
       const summarizeAncestors = node => {
         const out = [];
         for (let current = node, depth = 0; current && depth < 4; current = current.parentElement, depth += 1) {
-          const text = String(current.innerText || current.textContent || "").replace(/\\s+/g, " ").trim();
+          const text = String(current.innerText || current.textContent || "").replace(/\s+/g, " ").trim();
           const rect = current.getBoundingClientRect();
           out.push({ depth, tag: current.tagName.toLowerCase(), role: current.getAttribute("role"),
             class_name: String(current.className?.baseVal || current.className || "").slice(0, 100),
             box: { x: Math.round(rect.x), y: Math.round(rect.y), width: Math.round(rect.width), height: Math.round(rect.height) },
-            has_preview_label: /Preview of\\s+.+\\.(?:png|jpe?g|webp|gif|avif)/i.test(text),
+            has_preview_label: /Preview of\s+.+\.(?:png|jpe?g|webp|gif|avif)/i.test(text),
             has_add_button: Array.from(current.querySelectorAll("button,[role='button']")).some(el => visible(el)
               && /add to prompt/i.test(String(el.innerText || el.getAttribute("aria-label") || ""))),
             text: text.slice(0, 240) });
@@ -1690,8 +1690,8 @@ async function uploadSceneReferencesUnsafe(page, selectors, referenceImages, ref
         return out;
       };
       const pane = containers.map(container => {
-        const text = String(container.innerText || "").replace(/\\s+/g, " ").trim();
-        return { role: container.getAttribute("role"), has_preview_label: /Preview of\\s+.+\\.(?:png|jpe?g|webp|gif|avif)/i.test(text),
+        const text = String(container.innerText || "").replace(/\s+/g, " ").trim();
+        return { role: container.getAttribute("role"), has_preview_label: /Preview of\s+.+\.(?:png|jpe?g|webp|gif|avif)/i.test(text),
           visible_add_button_count: Array.from(container.querySelectorAll("button,[role='button']")).filter(visible)
             .filter(el => /add to prompt/i.test(String(el.innerText || el.getAttribute("aria-label") || ""))).length,
           text: text.slice(0, 180) };
@@ -1707,15 +1707,15 @@ async function uploadSceneReferencesUnsafe(page, selectors, referenceImages, ref
           grandparent_html: tile.parentElement?.parentElement?.outerHTML.slice(0, 1100) || "",
           selected_ancestors: [tile, tile.parentElement, tile.parentElement?.parentElement].filter(Boolean)
             .map(node => ({ tag: node.tagName.toLowerCase(), role: node.getAttribute("role"), aria_selected: node.getAttribute("aria-selected"), tabindex: node.getAttribute("tabindex") })),
-          text: String(tile.innerText || tile.textContent || "").replace(/\\s+/g, " ").trim().slice(0, 120) }; }),
+          text: String(tile.innerText || tile.textContent || "").replace(/\s+/g, " ").trim().slice(0, 120) }; }),
         detail_pane: Array.from(new Set([...previewNodes, ...addNodes])).slice(0, 5).map(node => ({
-          tag: node.tagName.toLowerCase(), text: String(node.innerText || node.textContent || "").replace(/\\s+/g, " ").trim().slice(0, 200),
+          tag: node.tagName.toLowerCase(), text: String(node.innerText || node.textContent || "").replace(/\s+/g, " ").trim().slice(0, 200),
           ancestors: summarizeAncestors(node) })),
         add_button_contexts: addNodes.slice(0, 3).map(node => ({ text: String(node.innerText || node.getAttribute("aria-label") || "").slice(0, 100), ancestors: summarizeAncestors(node) })),
         picker_container_diagnostics: pane,
         click_hit_inside_matching_tile: Boolean(hit && tiles.some(tile => tile === hit || tile.contains(hit))),
         click_hit_tag: hit?.tagName?.toLowerCase() || null,
-        click_hit_text: String(hit?.innerText || hit?.textContent || "").replace(/\\s+/g, " ").trim().slice(0, 100)
+        click_hit_text: String(hit?.innerText || hit?.textContent || "").replace(/\s+/g, " ").trim().slice(0, 100)
       };
     }, { containerSelector: pickerContainerSelector, tileSelector: selectors.ingredient_library_item, filename,
       x: tileBox ? tileBox.x + tileBox.width / 2 : null, y: tileBox ? tileBox.y + tileBox.height / 2 : null })
