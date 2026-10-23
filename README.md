@@ -53,7 +53,7 @@ node scripts/flow-pilot.mjs --dry-run --wait --tab 2 \
   --expected-project "2c77da50-fb9e-4cc2-bf50-8ce67649c32e"
 
 # Only after reviewing the passing dry-run and explicitly deciding to submit:
-printf 'CONFIRM ACCOUNT pink HAS CREDIT\\nCREATE ONE VIDEO FOR mai-seated-breath-v15v-policy-review\\n' | \
+printf 'CONFIRM ACCOUNT pink HAS CREDIT\nCREATE ONE VIDEO FOR mai-seated-breath-v15v-policy-review\n' | \
 node scripts/flow-pilot.mjs --execute --wait --wait-timeout-ms 600000 --tab 2 \
   --scene examples/mai-job-v15v-policy-review.example.json \
   --selectors local/flow-selectors.json --account-label "pink" \
