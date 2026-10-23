@@ -796,7 +796,7 @@ class FlowPilotContractTests(unittest.TestCase):
         self.assertIn("topLimit: 3, selectors", self.script)
         self.assertIn("initialScan.items.length < 3", self.script)
         self.assertIn('baseline_strategy: "visible_first_row_min_3"', self.script)
-        self.assertIn("args._waitInitialThumbnailTokens = initialScan.items.map(item => item.thumbnailSrc ? thumbnailIdentityToken(item.thumbnailSrc) : null).filter(Boolean);", self.script)
+        self.assertIn("args._waitInitialThumbnailTokens = initialScan.items.map(item => item.mediaUuid ? `media:${item.mediaUuid}` : (item.thumbnailSrc ? thumbnailIdentityToken(item.thumbnailSrc) : null)).filter(Boolean);", self.script)
 
     def test_pre_create_recheck_is_read_only_and_uses_bounded_neighbor_fallback(self):
         self.assertIn('event: "pre_create_first_tile_identity_recheck"', self.script)
