@@ -2717,21 +2717,26 @@ async function prepare(args, browser, rl) {
           tokens: elements.slice(0, 3).map(element => {
             // Prefer the tile's own media/edit URL or data ID; thumbnail src is
             // only a fallback because Flow can rotate /image/<uuid> to /asb/<token>.
-            const sources = [
+            const dataValues = [
               element.getAttribute("data-media-id"),
               element.getAttribute("data-asset-id"),
               element.getAttribute("data-uuid"),
               element.getAttribute("data-id"),
-              element.getAttribute("href"),
-              ...Array.from(element.querySelectorAll('a[href*="/edit/"], a[href*="/video/"]'))
-                .map(anchor => anchor.getAttribute("href")),
               ...Array.from(element.querySelectorAll("[data-media-id], [data-asset-id], [data-uuid], [data-id]"))
                 .flatMap(node => ["data-media-id", "data-asset-id", "data-uuid", "data-id"]
                   .map(name => node.getAttribute(name))),
             ].filter(Boolean).map(String);
-            for (const value of sources) {
+            for (const value of dataValues) {
               const uuid = value.match(/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/i);
               if (uuid) return `media:${uuid[0].toLowerCase()}`;
+            }
+            const routeHrefs = Array.from(element.querySelectorAll('a[href*="/edit/"], a[href*="/video/"]'))
+              .map(anchor => anchor.getAttribute("href")).filter(Boolean);
+            const ownHref = element.getAttribute("href");
+            if (ownHref && /\/(?:edit|video)\//i.test(ownHref)) routeHrefs.unshift(ownHref);
+            for (const href of routeHrefs) {
+              const routeUuid = String(href).match(/\/(?:edit|video)\/([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})(?:[/?#]|$)/i);
+              if (routeUuid) return `media:${routeUuid[1].toLowerCase()}`;
             }
             const source = element.querySelector("img")?.getAttribute("src") || "";
             if (!source) return null;
