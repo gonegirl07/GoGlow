@@ -2766,18 +2766,23 @@ async function prepare(args, browser, rl) {
       if (chosen.page.url() !== originalUrl) {
         await chosen.page.goBack({ waitUntil: "domcontentloaded", timeout: 15000 }).catch(() => {});
       }
-      // Start the polling budget only after navigation recovery has had its chance.
-      const balanceDeadline = Date.now() + 30000;
-      do {
+      // A confirmed provider failure needs one balance snapshot for the ledger, not
+      // another 30-second submission-evidence poll. Keep polling only ambiguous outcomes.
+      if (resultStatus === "failed") {
         try { afterBalance = await readCreditBalance(chosen.page, selectors); } catch {}
-        if (afterBalance !== null && args._waitInitialBalance !== null && afterBalance < args._waitInitialBalance) {
-          submissionEvidence = true;
-          appendEvent(args.log, { event: "submission_confirmed_by_credit_decrease", scene_id: scene.scene_id,
-            before_balance: args._waitInitialBalance, after_balance: afterBalance });
-          break;
-        }
-        await chosen.page.waitForTimeout(1000);
-      } while (Date.now() < balanceDeadline);
+      } else {
+        const balanceDeadline = Date.now() + 30000;
+        do {
+          try { afterBalance = await readCreditBalance(chosen.page, selectors); } catch {}
+          if (afterBalance !== null && args._waitInitialBalance !== null && afterBalance < args._waitInitialBalance) {
+            submissionEvidence = true;
+            appendEvent(args.log, { event: "submission_confirmed_by_credit_decrease", scene_id: scene.scene_id,
+              before_balance: args._waitInitialBalance, after_balance: afterBalance });
+            break;
+          }
+          await chosen.page.waitForTimeout(1000);
+        } while (Date.now() < balanceDeadline);
+      }
       if (!submissionEvidence && resultStatus !== "failed") {
         resultStatus = "create_not_confirmed";
         args._stopVariants = true;
