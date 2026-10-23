@@ -972,6 +972,8 @@ assert.deepEqual(findNewCompletedMediaItems([
         self.assertIn('"policy_prominent_people" : "provider_generation_failed"', waiter)
         self.assertIn("FLOW_GENERATION_FAILED: ${failureReason}", waiter)
         self.assertIn('failure_reason: /prominent people|might violate our policies|you will be refunded/i.test(String(timeoutError || "")) ? "policy_prominent_people" : "provider_generation_failed"', self.script)
+        self.assertIn('if (resultStatus === "failed") {', self.script)
+        self.assertIn("another 30-second submission-evidence poll", self.script)
 
     def test_execute_usage_example_includes_required_wait_flag(self):
         usage = self.script.split("Actual one-scene submission", 1)[1].split(
