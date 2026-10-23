@@ -1420,8 +1420,36 @@ async function verifyAttachedReferenceUuids(page, selectors, expectedUuids, time
 
 async function openIngredientsPicker(page, selectors) {
   const addButton = await exactVisibleLocator(page, selectors.ingredient_add_button, "add ingredients button");
-  await addButton.click({ timeout: 2500 });
-  await page.locator(selectors.ingredient_library_item).first().waitFor({ state: "visible", timeout: 5000 }).catch(() => {});
+  // The prompt bar can keep animating/re-rendering after long grid preflight work.
+  // Playwright's trial click waits for visibility, enabled state, and a stable hit target
+  // without dispatching a click; only click for real after that stability check passes.
+  let lastError = null;
+  for (let attempt = 1; attempt <= 3; attempt += 1) {
+    try {
+      await addButton.waitFor({ state: "visible", timeout: 10000 });
+      await addButton.click({ trial: true, timeout: 10000 });
+      await addButton.click({ timeout: 10000 });
+      await page.locator(selectors.ingredient_library_item).first().waitFor({ state: "visible", timeout: 8000 });
+      return;
+    } catch (error) {
+      lastError = error;
+      if (attempt < 3) {
+        // Re-resolve after a failed stability check in case Flow replaced the button node.
+        await page.waitForTimeout(350);
+        const refreshed = await exactVisibleLocator(page, selectors.ingredient_add_button, "add ingredients button retry").catch(() => null);
+        if (refreshed) {
+          try {
+            await refreshed.waitFor({ state: "visible", timeout: 10000 });
+            await refreshed.click({ trial: true, timeout: 10000 });
+            await refreshed.click({ timeout: 10000 });
+            await page.locator(selectors.ingredient_library_item).first().waitFor({ state: "visible", timeout: 8000 });
+            return;
+          } catch (retryError) { lastError = retryError; }
+        }
+      }
+    }
+  }
+  throw new Error(`Could not open Ingredients picker after stability checks: ${lastError?.message || lastError}`);
 }
 
 async function uploadSceneReferencesUnsafe(page, selectors, referenceImages, referenceAssetUuids = new Map()) {
@@ -2458,9 +2486,10 @@ async function prepare(args, browser, rl) {
       if (args.waitForResult && initialBalance === null) throw new Error("Could not read an integer credit balance.");
       if (typeof selectors.generated_video_items !== "string" || !selectors.generated_video_items.trim()) throw new Error("Dry-run baseline scan requires a configured generated_video_items selector.");
       const videosTabState = await activateVideosTab(chosen.page, selectors);
-      const waitForFirstRowThumbnailTokens = async (reason, maxWaitMs = 10000) => {
+      const waitForFirstRowThumbnailTokens = async (reason, maxWaitMs = 15000) => {
         const startedAt = Date.now();
         let snapshot = [];
+        let previousReadySnapshot = null;
         while (Date.now() - startedAt < maxWaitMs) {
           snapshot = await chosen.page.locator(selectors.generated_video_items).evaluateAll(elements => elements.slice(0, 3).map(element => {
             const source = element.querySelector("img")?.getAttribute("src") || "";
@@ -2475,16 +2504,23 @@ async function prepare(args, browser, rl) {
               return /^https?:$/.test(url.protocol) ? url.pathname : null;
             } catch { return null; }
           })).catch(() => []);
-          if (snapshot.length >= 3 && snapshot.every(Boolean)) {
+          // Lazy-loaded thumbnails can arrive one tile at a time. Require all three
+          // tokens in two consecutive snapshots so we don't capture a transient null
+          // just as Flow finishes painting the final tile.
+          if (snapshot.length >= 3 && snapshot.every(Boolean)
+            && previousReadySnapshot?.length === snapshot.length
+            && snapshot.every((token, index) => token === previousReadySnapshot[index])) {
             console.log(JSON.stringify({
               event: "baseline_thumbnail_tokens_ready",
               reason,
               tile_count: snapshot.length,
               thumbnail_tokens: snapshot,
               wait_ms: Date.now() - startedAt,
+              stable_snapshots: 2,
             }));
             return snapshot;
           }
+          previousReadySnapshot = snapshot.length >= 3 && snapshot.every(Boolean) ? [...snapshot] : null;
           await chosen.page.waitForTimeout(250);
         }
         console.warn(JSON.stringify({
