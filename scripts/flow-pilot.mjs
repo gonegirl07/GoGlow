@@ -1685,44 +1685,78 @@ async function uploadSceneReferencesUnsafe(page, selectors, referenceImages, ref
     let asset = matchingAssets.first();
     if (reusedExistingUuid) {
       let reuseIndex = -1;
-      let currentCount = await matchingAssets.count().catch(() => 0);
-      // Flow can briefly unmount/rebuild the library list while the preview pane
-      // closes. Re-query for a unique visible name match before treating that as
-      // genuine ambiguity; the attached chip UUID is still verified after selection.
+      let currentCount = 0;
       let stableUniqueCountReads = 0;
-      const settleDeadline = Date.now() + 2500;
-      while (Date.now() < settleDeadline) {
-        currentCount = await matchingAssets.count().catch(() => 0);
-        if (currentCount === 1) {
-          stableUniqueCountReads += 1;
-          if (stableUniqueCountReads >= 2) break;
-        } else {
-          stableUniqueCountReads = 0;
+      let matchingLabels = [];
+      let freshMatching = null;
+      let refreshedPickerContainer = null;
+      let reopenAttempted = false;
+      const inspectFreshPicker = async () => {
+        // The picker can be unmounted/rebuilt when Flow closes a preview pane.
+        // Re-resolve the visible container and filename locator on every poll;
+        // never keep polling a locator tied to a detached container.
+        const resolved = await resolveVisibleIngredientsPicker(page, selectors, filename, filenameStem);
+        refreshedPickerContainer = resolved.container;
+        const tiles = refreshedPickerContainer.locator(`${selectors.ingredient_library_item}:visible`);
+        let fresh = tiles.filter({ hasText: filename });
+        if (await fresh.count().catch(() => 0) === 0 && filenameStem !== filename) {
+          fresh = tiles.filter({ hasText: filenameStem });
         }
-        await page.waitForTimeout(150);
-      }
-      const matchingLabels = [];
-      for (let i = 0; i < currentCount; i += 1) {
-        const candidate = matchingAssets.nth(i);
-        const label = (await candidate.innerText().catch(() => "")).replace(/\\s+/g, " ").trim().slice(0, 180);
-        const aria = await candidate.getAttribute("aria-label").catch(() => null);
-        matchingLabels.push({ index: i, label, aria_label: aria,
-          uuid: await assetUuidFromLocator(candidate).catch(() => null) });
-        if (matchingLabels[matchingLabels.length - 1].uuid === reusedExistingUuid) reuseIndex = i;
+        freshMatching = fresh;
+        currentCount = await freshMatching.count().catch(() => 0);
+        matchingLabels = [];
+        reuseIndex = -1;
+        for (let i = 0; i < currentCount; i += 1) {
+          const candidate = freshMatching.nth(i);
+          const label = (await candidate.innerText().catch(() => "")).replace(/\\s+/g, " ").trim().slice(0, 180);
+          const aria = await candidate.getAttribute("aria-label").catch(() => null);
+          const uuid = await assetUuidFromLocator(candidate).catch(() => null);
+          matchingLabels.push({ index: i, label, aria_label: aria, uuid });
+          if (uuid === reusedExistingUuid) reuseIndex = i;
+        }
+      };
+      const settleFreshPicker = async (durationMs) => {
+        const deadline = Date.now() + durationMs;
+        stableUniqueCountReads = 0;
+        let previousCount = null;
+        while (Date.now() < deadline) {
+          try {
+            await inspectFreshPicker();
+          } catch {
+            currentCount = 0;
+            matchingLabels = [];
+            freshMatching = null;
+            reuseIndex = -1;
+          }
+          if (currentCount === 1 && currentCount === previousCount) {
+            stableUniqueCountReads += 1;
+            if (stableUniqueCountReads >= 2) return;
+          } else {
+            stableUniqueCountReads = currentCount === 1 ? 1 : 0;
+          }
+          previousCount = currentCount;
+          await page.waitForTimeout(200);
+        }
+      };
+      await settleFreshPicker(4500);
+      if (currentCount !== 1 && !reuseIndex && !reopenAttempted) {
+        reopenAttempted = true;
+        console.warn(JSON.stringify({ event: "asset_library_reuse_picker_reopen", filename,
+          pinned_uuid: reusedExistingUuid, reason: "fresh picker inventory did not settle to one matching tile" }));
+        await resetIngredientsPicker(page, selectors);
+        await openIngredientsPicker(page, selectors, filename);
+        await settleFreshPicker(4500);
       }
       console.log(JSON.stringify({ event: "asset_library_reuse_recheck", filename, pinned_uuid: reusedExistingUuid,
         currentCount, matching_labels: matchingLabels, stable_unique_count_reads: stableUniqueCountReads,
-        settle_wait_ms: Math.min(2500, 2500 - Math.max(0, settleDeadline - Date.now())) }));
-      if (reuseIndex < 0) {
-        if (currentCount !== 1) {
-          throw new Error(`Reusable asset UUID ${reusedExistingUuid} is not readable from the current thumbnail and matching-name count did not settle to exactly one; currentCount=${currentCount}; matching_labels=${JSON.stringify(matchingLabels)}. Refusing to select an ambiguous item.`);
-        }
-        // A single same-name card may have a tokenized /asb thumbnail; the job-pinned
-        // UUID is verified against the attached Ingredients chip immediately after selection.
-        asset = matchingAssets.first();
-      } else {
-        asset = matchingAssets.nth(reuseIndex);
+        fresh_container_resolved: Boolean(refreshedPickerContainer), reopen_attempted: reopenAttempted,
+        settle_wait_ms: 9000 - Math.max(0, 9000 - Math.min(9000, Date.now() - assetStartedAt)) }));
+      if (!freshMatching || currentCount !== 1) {
+        throw new Error(`Reusable asset UUID ${reusedExistingUuid} is not readable from the refreshed picker; matching-name count did not settle to exactly one after fresh inventory and ${reopenAttempted ? "one reopen" : "initial settle"}; currentCount=${currentCount}; matching_labels=${JSON.stringify(matchingLabels)}. Refusing to select an ambiguous item.`);
       }
+      // A single same-name card may have a tokenized /asb thumbnail; the pinned
+      // UUID is verified against the attached Ingredients chip immediately after selection.
+      asset = reuseIndex >= 0 ? freshMatching.nth(reuseIndex) : freshMatching.first();
     }
     const requestedAssetUuidForPin = requestedAssetUuid || null;
     const networkCandidates = networkAssetRecords.filter(record =>
