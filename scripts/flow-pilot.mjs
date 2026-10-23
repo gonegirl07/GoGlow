@@ -1669,6 +1669,7 @@ async function uploadSceneReferencesUnsafe(page, selectors, referenceImages, ref
       const containers = Array.from(document.querySelectorAll(containerSelector)).filter(visible);
       const tiles = containers.flatMap(container => Array.from(container.querySelectorAll(tileSelector)).filter(visible)
         .filter(tile => String(tile.innerText || tile.textContent || "").toLowerCase().includes(filename.toLowerCase())));
+      const detailPanes = Array.from(document.querySelectorAll("flow-add-menu-detail-pane")).filter(visible);
       const paneNodes = Array.from(document.querySelectorAll("body *")).filter(visible);
       const previewNodes = paneNodes.filter(node => node.children.length < 8
         && /Preview of\s+.+\.(?:png|jpe?g|webp|gif|avif)/i.test(String(node.innerText || node.textContent || "")));
@@ -1708,9 +1709,8 @@ async function uploadSceneReferencesUnsafe(page, selectors, referenceImages, ref
           selected_ancestors: [tile, tile.parentElement, tile.parentElement?.parentElement].filter(Boolean)
             .map(node => ({ tag: node.tagName.toLowerCase(), role: node.getAttribute("role"), aria_selected: node.getAttribute("aria-selected"), tabindex: node.getAttribute("tabindex") })),
           text: String(tile.innerText || tile.textContent || "").replace(/\s+/g, " ").trim().slice(0, 120) }; }),
-        detail_pane: Array.from(new Set([...previewNodes, ...addNodes])).slice(0, 5).map(node => ({
-          tag: node.tagName.toLowerCase(), text: String(node.innerText || node.textContent || "").replace(/\s+/g, " ").trim().slice(0, 200),
-          ancestors: summarizeAncestors(node) })),
+        detail_pane: detailPanes.map(node => ({ tag: node.tagName.toLowerCase(), text: String(node.innerText || node.textContent || "").replace(/\s+/g, " ").trim().slice(0, 240), preview_labels: Array.from(node.querySelectorAll("img[alt]")).map(img => img.getAttribute("alt")).filter(alt => /Preview of/i.test(alt || "")), image_sources: Array.from(node.querySelectorAll("img")).map(img => ({ src: img.getAttribute("src"), current_src: img.currentSrc, alt: img.getAttribute("alt") })).slice(0, 8), ancestors: summarizeAncestors(node) })),
+        preview_nodes: previewNodes.slice(0, 3).map(node => ({ tag: node.tagName.toLowerCase(), text: String(node.innerText || node.textContent || "").replace(/\s+/g, " ").trim().slice(0, 160) })),
         add_button_contexts: addNodes.slice(0, 3).map(node => ({ text: String(node.innerText || node.getAttribute("aria-label") || "").slice(0, 100), ancestors: summarizeAncestors(node) })),
         picker_container_diagnostics: pane,
         click_hit_inside_matching_tile: Boolean(hit && tiles.some(tile => tile === hit || tile.contains(hit))),
@@ -1825,41 +1825,56 @@ async function uploadSceneReferencesUnsafe(page, selectors, referenceImages, ref
         }
         console.log(JSON.stringify({ event: "ingredients_picker_click_target", step: "retry", filename, clicked_interactive_ancestor: ancestorCount === 1, ...await readPickerDiagnostics(currentBox) }));
         console.log(JSON.stringify({ event: "ingredients_picker_step_diagnostics", step: "after_retry_click", hit_test_inside_tile: hitTest, ...(await readPickerDiagnostics(currentBox)) }));
-        const fallbackMethods = ["focus_enter", "focus_space", "thumbnail_click", "option_double_click"];
+        const fallbackMethods = ["thumbnail_hover_click", "thumbnail_pointer_sequence", "option_double_click", "focus_space"];
         for (const method of fallbackMethods) {
           if (Date.now() >= selectionDeadline) break;
           const latest = await freshTile();
-          if (!latest) break;
+          if (!latest) {
+            console.log(JSON.stringify({ event: "ingredients_picker_activation_attempt", filename, method, skipped: true, reason: "picker_closed_or_tile_missing" }));
+            break;
+          }
           activeAsset = latest.tile;
           const option = activeAsset.locator('xpath=ancestor-or-self::*[@role="option" or @role="button" or self::button or @tabindex][1]').first();
           const optionCount = await option.count().catch(() => 0);
           const target = optionCount === 1 ? option : activeAsset;
+          const img = activeAsset.locator("img").first();
           try {
-            if (method === "focus_enter" || method === "focus_space") {
-              await target.focus({ timeout: 250 });
-              await target.press(method === "focus_enter" ? "Enter" : "Space", { timeout: 250 });
-            } else if (method === "thumbnail_click") {
-              const img = activeAsset.locator("img").first();
-              if (await img.count().catch(() => 0) === 1 && await img.isVisible({ timeout: 150 }).catch(() => false)) await img.click({ timeout: 300 });
-              else await target.click({ timeout: 300 });
-            } else await target.dblclick({ timeout: 350 });
-          } catch (error) {
-            console.log(JSON.stringify({ event: "ingredients_picker_activation_attempt", filename, method, action_error: String(error.message || error).slice(0, 180) }));
-          }
-          await page.waitForTimeout(Math.min(180, Math.max(0, selectionDeadline - Date.now())));
+            if (method === "thumbnail_hover_click") {
+              if (await img.count().catch(() => 0) === 1 && await img.isVisible({ timeout: 150 }).catch(() => false)) {
+                await img.hover({ timeout: 250 });
+                await img.click({ timeout: 300 });
+              } else { await target.hover({ timeout: 250 }); await target.click({ timeout: 300 }); }
+            } else if (method === "thumbnail_pointer_sequence") {
+              const hasImg = await img.count().catch(() => 0) === 1 && await img.isVisible({ timeout: 150 }).catch(() => false);
+              const eventTarget = hasImg ? img : target;
+              await eventTarget.evaluate(node => {
+                const r = node.getBoundingClientRect();
+                const init = { bubbles: true, cancelable: true, composed: true, view: window, clientX: r.left + r.width / 2, clientY: r.top + r.height / 2, button: 0, buttons: 1, pointerId: 1, pointerType: "mouse" };
+                node.dispatchEvent(new PointerEvent("pointerover", { ...init, buttons: 0 }));
+                node.dispatchEvent(new PointerEvent("pointerenter", { ...init, buttons: 0 }));
+                node.dispatchEvent(new MouseEvent("mouseover", { ...init, buttons: 0 }));
+                node.dispatchEvent(new MouseEvent("mouseenter", { ...init, buttons: 0 }));
+                node.dispatchEvent(new PointerEvent("pointerdown", init));
+                node.dispatchEvent(new MouseEvent("mousedown", init));
+                node.dispatchEvent(new PointerEvent("pointerup", { ...init, buttons: 0 }));
+                node.dispatchEvent(new MouseEvent("mouseup", { ...init, buttons: 0 }));
+                node.dispatchEvent(new MouseEvent("click", { ...init, buttons: 0 }));
+              }, { timeout: 350 });
+            } else if (method === "option_double_click") await target.dblclick({ timeout: 350 });
+            else { await target.focus({ timeout: 250 }); await target.press("Space", { timeout: 250 }); }
+          } catch (error) { console.log(JSON.stringify({ event: "ingredients_picker_activation_attempt", filename, method, action_error: String(error.message || error).slice(0, 180) })); }
+          await page.waitForTimeout(Math.min(150, Math.max(0, selectionDeadline - Date.now())));
           const after = await freshTile();
           const afterSelected = after ? await after.tile.getAttribute("aria-selected", { timeout: 150 }).catch(() => null) : null;
           const afterAddCount = after ? await countVisibleMatches(after.container, selectors.ingredient_add_to_prompt) : 0;
           const afterAdd = after && afterAddCount === 1 ? after.container.locator(selectors.ingredient_add_to_prompt).first() : null;
           const afterPreview = afterAdd ? await inspectAddToPromptContext(afterAdd) : null;
-          console.log(JSON.stringify({ event: "ingredients_picker_activation_attempt", filename, method,
+          console.log(JSON.stringify({ event: "ingredients_picker_activation_attempt", filename, method, picker_still_open: Boolean(after),
             selected_aria_selected: afterSelected, add_to_prompt_visible_count: afterAddCount,
-            preview_context: afterPreview ? { depth: afterPreview.depth, context_tag: afterPreview.context_tag,
-              context_role: afterPreview.context_role, context_text: afterPreview.context_text,
-              preview_labels: afterPreview.preview_labels, uuids: afterPreview.uuids,
-              image_sources: afterPreview.image_sources?.slice(0, 8) } : null,
+            preview_context: afterPreview ? { depth: afterPreview.depth, context_tag: afterPreview.context_tag, context_role: afterPreview.context_role,
+              context_text: afterPreview.context_text, preview_labels: afterPreview.preview_labels, uuids: afterPreview.uuids, image_sources: afterPreview.image_sources?.slice(0, 8) } : null,
             ...(await readPickerDiagnostics(currentBox)) }));
-          if (afterSelected === "true" || (afterPreview?.preview_labels || []).some(label => label.toLowerCase() === targetFilename)) break;
+          if (!after || afterSelected === "true" || (afterPreview?.preview_labels || []).some(label => label.toLowerCase() === targetFilename)) break;
         }
       }
       await page.waitForTimeout(Math.min(100, Math.max(0, selectionDeadline - Date.now())));
