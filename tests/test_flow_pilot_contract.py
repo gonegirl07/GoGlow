@@ -189,7 +189,7 @@ class FlowPilotContractTests(unittest.TestCase):
         self.assertIn("const topItemsNow = scan.items || scan.topItems || [];", self.script)
         self.assertIn("const newItems = findNewCompletedMediaItems(topItemsNow, beforeKeys);", self.script)
         self.assertIn("Normalize media URLs to their stable UUID", self.script)
-        self.assertIn("thumbnailSrc || sources[0]", self.script)
+        self.assertIn("identityText.slice(0, 220)", self.script)
         self.assertIn("const mediaUuid = sources.map(uuidFrom).find(Boolean)", self.script)
         self.assertIn("baseline_media_keys: initialItems", self.script)
         self.assertIn("ignored_failed_tile_keys: failedBaselineItems.map(item => item.key)", self.script)
@@ -305,6 +305,7 @@ class FlowPilotContractTests(unittest.TestCase):
     def test_generation_ledger_records_face_reference_configuration(self):
         self.assertIn("face_reference_ids: faceReferenceIds", self.script)
         self.assertIn('face_description_mode: scene.face_description_mode || "include"', self.script)
+        self.assertIn('reference_language_mode: scene.reference_language_mode || "identity_preserving"', self.script)
         self.assertIn("expression: scene.expression || null", self.script)
         self.assertIn("reference_set_key: referenceSetKey", self.script)
         self.assertIn("other_reference_ids: otherReferenceIds", self.script)
@@ -369,7 +370,7 @@ class FlowPilotContractTests(unittest.TestCase):
         self.assertIn('["include", "hybrid", "reference_only"].includes(faceDescriptionMode)', self.script)
         self.assertIn('face_description_mode is \'reference_only\'', self.script)
         self.assertIn('faceDescriptionMode === "reference_only" || !scene.character_description', self.script)
-        self.assertIn("Use the attached reference images for all appearance details; do not invent or reinterpret facial features.", self.script)
+        self.assertIn("Use the reference image as the visual guide for the character", self.script)
 
     def test_dry_run_reports_selected_face_reference_and_order(self):
         self.assertIn("face_reference_id: scene.face_reference_id", self.script)
@@ -966,14 +967,23 @@ assert.deepEqual(findNewCompletedMediaItems([
         waiter = self.script.split("async function waitForGenerationAndDownload", 1)[1].split(
             "function ", 1
         )[0]
+        self.assertIn("const baselineKeyCounts = new Map();", waiter)
         self.assertIn("const newFailedTile = topItemsNow.find(item =>", waiter)
-        self.assertIn("if (!item?.key || baselineKeys.has(item.key)) return false;", waiter)
+        self.assertIn("const occurrence = topItemsNow.slice(0, item.index + 1).filter(candidate => candidate?.key === item.key).length;", waiter)
         self.assertIn('failureReason = /prominent people|might violate our policies|you will be refunded/i.test(failureText)', waiter)
+        self.assertIn("new Flow tile at position ${newFailedTile.index}", waiter)
+        self.assertIn('textNode.querySelectorAll("a,button,[role=button],[aria-label]")', self.script)
+        self.assertIn("Track status here", self.script)
         self.assertIn('"policy_prominent_people" : "provider_generation_failed"', waiter)
-        self.assertIn("FLOW_GENERATION_FAILED: ${failureReason}", waiter)
         self.assertIn('failure_reason: /prominent people|might violate our policies|you will be refunded/i.test(String(timeoutError || "")) ? "policy_prominent_people" : "provider_generation_failed"', self.script)
         self.assertIn('if (resultStatus === "failed") {', self.script)
         self.assertIn("another 30-second submission-evidence poll", self.script)
+
+    def test_neutral_reference_mode_uses_short_non_identity_lock_language(self):
+        self.assertIn('["identity_preserving", "neutral_reference"].includes(referenceLanguageMode)', self.script)
+        self.assertIn('"Use the character shown in the reference image as a visual guide."', self.script)
+        self.assertIn("Keep the overall visual design and clothing consistent with the reference images.", self.script)
+        self.assertIn('reference_language_mode: scene.reference_language_mode || "identity_preserving"', self.script)
 
     def test_execute_usage_example_includes_required_wait_flag(self):
         usage = self.script.split("Actual one-scene submission", 1)[1].split(
