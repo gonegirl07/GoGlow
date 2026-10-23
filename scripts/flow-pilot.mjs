@@ -995,29 +995,30 @@ async function closeIngredientsPicker(page, selectors) {
 
 async function resetIngredientsPicker(page, selectors) {
   const containerSelector = '[role="dialog"], [aria-modal="true"], .cdk-overlay-pane';
-  const hasVisiblePickerTiles = async () => page.locator(containerSelector).evaluateAll((containers, tileSelector) =>
+  // A detail/preview pane may remain mounted after its library tiles disappear.
+  // Treat either visible library tiles or a visible Add-to-prompt action as an open picker.
+  const hasVisiblePickerSurface = async () => page.locator(containerSelector).evaluateAll((containers, args) =>
     containers.some(container => {
-      const style = getComputedStyle(container);
-      const rect = container.getBoundingClientRect();
-      if (style.display === "none" || style.visibility === "hidden" || Number(style.opacity || 1) <= 0 || !rect.width || !rect.height) return false;
-      return Array.from(container.querySelectorAll(tileSelector)).some(tile => {
-        const tileStyle = getComputedStyle(tile);
-        const tileRect = tile.getBoundingClientRect();
-        return tileStyle.display !== "none" && tileStyle.visibility !== "hidden"
-          && Number(tileStyle.opacity || 1) > 0 && tileRect.width > 0 && tileRect.height > 0;
-      });
-    }), selectors.ingredient_library_item).catch(() => false);
-  if (!(await hasVisiblePickerTiles())) return;
+      const visible = node => {
+        const style = getComputedStyle(node), rect = node.getBoundingClientRect();
+        return node.isConnected && style.display !== "none" && style.visibility !== "hidden"
+          && Number(style.opacity || 1) > 0 && rect.width > 0 && rect.height > 0;
+      };
+      if (!visible(container)) return false;
+      return Array.from(container.querySelectorAll(args.tileSelector)).some(visible)
+        || (args.addToPromptSelector && Array.from(container.querySelectorAll(args.addToPromptSelector)).some(visible));
+    }), { tileSelector: selectors.ingredient_library_item, addToPromptSelector: selectors.ingredient_add_to_prompt }).catch(() => false);
+  if (!(await hasVisiblePickerSurface())) return;
   await page.keyboard.press("Escape").catch(() => {});
   const escapeDeadline = Date.now() + 1800;
-  while (Date.now() < escapeDeadline && await hasVisiblePickerTiles()) await page.waitForTimeout(100);
-  if (await hasVisiblePickerTiles()) await closeIngredientsPicker(page, selectors);
-  const deadline = Date.now() + 2200;
-  while (Date.now() < deadline && await hasVisiblePickerTiles()) await page.waitForTimeout(100);
-  if (await hasVisiblePickerTiles()) {
-    throw new Error("Ingredients picker did not fully unmount after Escape/backdrop close; refusing to reuse a stale preview/Add to prompt action.");
+  while (Date.now() < escapeDeadline && await hasVisiblePickerSurface()) await page.waitForTimeout(100);
+  if (await hasVisiblePickerSurface()) await closeIngredientsPicker(page, selectors);
+  const deadline = Date.now() + 3500;
+  while (Date.now() < deadline && await hasVisiblePickerSurface()) await page.waitForTimeout(100);
+  if (await hasVisiblePickerSurface()) {
+    throw new Error("Ingredients picker/detail pane did not fully close after Escape/backdrop close; refusing to reuse a stale preview/Add to prompt action.");
   }
-  console.log(JSON.stringify({ event: "ingredients_picker_reset_verified", closed: true }));
+  console.log(JSON.stringify({ event: "ingredients_picker_reset_verified", closed: true, detail_pane_checked: true }));
 }
 
 async function inspectAddToPromptContext(button) {
@@ -1418,9 +1419,8 @@ async function verifyAttachedReferenceUuids(page, selectors, expectedUuids, time
   return actualUuids;
 }
 
-async function openIngredientsPicker(page, selectors) {
+async function openIngredientsPicker(page, selectors, filename = "reference asset") {
   let addButton = await exactVisibleLocator(page, selectors.ingredient_add_button, "add ingredients button");
-  // The prompt bar can keep animating/re-rendering after long grid preflight work.
   // Trial clicks wait for a stable hit target without dispatching a real click.
   let lastError = null;
   let stable = false;
@@ -1440,10 +1440,30 @@ async function openIngredientsPicker(page, selectors) {
     }
   }
   if (!stable) throw new Error(`Add-ingredients button did not stabilize after retries: ${lastError?.message || lastError}`);
-  // Dispatch exactly one real click. If the picker renders slowly, wait for it;
-  // never repeat the click because that could toggle the picker closed.
+  // Confirm a scoped dialog/overlay contains visible library tiles; a global
+  // ingredient_library_item match can accidentally resolve against stale UI.
   await addButton.click({ timeout: 10000 });
-  await page.locator(selectors.ingredient_library_item).first().waitFor({ state: "visible", timeout: 12000 });
+  const containerSelector = '[role="dialog"], [aria-modal="true"], .cdk-overlay-pane';
+  const deadline = Date.now() + 12000;
+  let scopedTileCount = 0;
+  while (Date.now() < deadline) {
+    scopedTileCount = await page.locator(containerSelector).evaluateAll((containers, tileSelector) =>
+      containers.reduce((sum, container) => {
+        const style = getComputedStyle(container), rect = container.getBoundingClientRect();
+        if (style.display === "none" || style.visibility === "hidden" || Number(style.opacity || 1) <= 0 || !rect.width || !rect.height) return sum;
+        return sum + Array.from(container.querySelectorAll(tileSelector)).filter(tile => {
+          const tileStyle = getComputedStyle(tile), tileRect = tile.getBoundingClientRect();
+          return tileStyle.display !== "none" && tileStyle.visibility !== "hidden"
+            && Number(tileStyle.opacity || 1) > 0 && tileRect.width > 0 && tileRect.height > 0;
+        }).length;
+      }, 0), selectors.ingredient_library_item).catch(() => 0);
+    if (scopedTileCount > 0) {
+      console.log(JSON.stringify({ event: "ingredients_picker_open_verified", scoped_visible_tiles: scopedTileCount, filename }));
+      return;
+    }
+    await page.waitForTimeout(150);
+  }
+  throw new Error(`Ingredients picker did not expose visible library tiles inside a scoped dialog/overlay within 12000ms for ${filename}; scoped_visible_tiles=${scopedTileCount}.`);
 }
 
 async function uploadSceneReferencesUnsafe(page, selectors, referenceImages, referenceAssetUuids = new Map()) {
@@ -1489,8 +1509,8 @@ async function uploadSceneReferencesUnsafe(page, selectors, referenceImages, ref
     // Reset/unmount any previous picker before each asset so a stale preview action
     // cannot remain bound to the prior reference.
     await resetIngredientsPicker(page, selectors);
-    await openIngredientsPicker(page, selectors);
     const filenameStem = path.parse(filename).name;
+    await openIngredientsPicker(page, selectors, filename);
     const pickerResolution = await resolveVisibleIngredientsPicker(page, selectors, filename, filenameStem);
     const picker = pickerResolution.container.locator(`${selectors.ingredient_library_item}:visible`);
     const pickerContainer = pickerResolution.container;
