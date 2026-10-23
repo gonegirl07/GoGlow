@@ -2375,7 +2375,11 @@ async function readCreditCost(page) {
 }
 
 function firstTileMatchesByStableNeighbors({ expectedToken, currentToken, baselineTokens, currentTokens, baselineTileCount, currentTileCount }) {
-  return Boolean(expectedToken?.startsWith("media:")
+  // The baseline is a thumbnail identity, not necessarily a media UUID. Flow can
+  // expose the same tile as an "asb:" URL at capture and a "media:" UUID elsewhere.
+  // Permit signed-thumbnail rotation when both adjacent thumbnail identities and
+  // the overall tile count remain unchanged.
+  return Boolean((expectedToken?.startsWith("media:") || expectedToken?.startsWith("asb:"))
     && currentToken?.startsWith("asb:")
     && Array.isArray(baselineTokens) && baselineTokens.length >= 3
     && Array.isArray(currentTokens) && currentTokens.length >= 3
@@ -2654,7 +2658,11 @@ async function prepare(args, browser, rl) {
       args._waitInitialBalance = initialBalance;
       args._waitInitialItemKeys = initialItems;
       args._waitInitialDomTileCount = await chosen.page.locator(selectors.generated_video_items).count();
-      args._waitInitialThumbnailTokens = initialScan.items.map(item => item.mediaUuid ? `media:${item.mediaUuid}` : (item.thumbnailSrc ? thumbnailIdentityToken(item.thumbnailSrc) : null)).filter(Boolean);
+      // Keep this field in the same identity domain as the pre-Create DOM snapshot:
+      // thumbnail URLs first (especially signed /asb/ tokens), media UUID only as fallback.
+      args._waitInitialThumbnailTokens = initialScan.items.map(item => item.thumbnailSrc
+        ? thumbnailIdentityToken(item.thumbnailSrc)
+        : (item.mediaUuid ? `media:${item.mediaUuid}` : null)).filter(Boolean);
       if (args._waitInitialThumbnailTokens.length !== initialScan.items.length) {
         throw new Error("First-row baseline requires a loaded thumbnail token for each of the three tiles.");
       }
@@ -3072,5 +3080,8 @@ async function main() {
 
 main().catch(error => {
   console.error(`Flow Pilot stopped safely: ${error.message}`);
-  process.exitCode = 2;
+  // Playwright/CDP or Chromium background handles can keep Node alive after a
+  // guarded pre-Create failure. All normal cleanup has already run through main's
+  // finally block; force a non-zero exit so a safe-stop cannot hang indefinitely.
+  process.exit(2);
 });
