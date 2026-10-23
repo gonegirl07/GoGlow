@@ -961,5 +961,23 @@ assert.deepEqual(findNewCompletedMediaItems([
             upload_fn.index("await addToPrompt.click({ timeout: 6000 });"),
         )
 
+
+    def test_new_failed_flow_tile_without_uuid_stops_polling_and_classifies_policy(self):
+        waiter = self.script.split("async function waitForGenerationAndDownload", 1)[1].split(
+            "function ", 1
+        )[0]
+        self.assertIn("const newFailedTile = topItemsNow.find(item =>", waiter)
+        self.assertIn("if (!item?.key || baselineKeys.has(item.key)) return false;", waiter)
+        self.assertIn('failureReason = /prominent people|might violate our policies|you will be refunded/i.test(failureText)', waiter)
+        self.assertIn('"policy_prominent_people" : "provider_generation_failed"', waiter)
+        self.assertIn("FLOW_GENERATION_FAILED: ${failureReason}", waiter)
+        self.assertIn('failure_reason: /prominent people|might violate our policies|you will be refunded/i.test(String(timeoutError || "")) ? "policy_prominent_people" : "provider_generation_failed"', self.script)
+
+    def test_execute_usage_example_includes_required_wait_flag(self):
+        usage = self.script.split("Actual one-scene submission", 1)[1].split(
+            "Selector-only preflight", 1
+        )[0]
+        self.assertIn("--execute --wait --wait-timeout-ms 600000", usage)
+
 if __name__ == "__main__":
     unittest.main()
