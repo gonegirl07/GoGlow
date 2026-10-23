@@ -275,6 +275,18 @@ async function collectAllGeneratedItems(page, selector, { targetKey = null, maxS
     const gridUrl = page.url();
     const scrollTop = await readScrollTop();
     let lastError = null;
+    // Lazy thumbnails must load before attempting route-based tile re-identification.
+    // Generic tile text is not a stable media identity and is never used as a key.
+    if (!identity?.thumbnailSrc && Number.isInteger(index) && index >= 0) {
+      for (let tokenWait = 0; tokenWait < 20; tokenWait += 1) {
+        const source = await page.locator(selector).nth(index).locator("img").getAttribute("src").catch(() => null);
+        if (source) {
+          identity = { ...(identity || {}), thumbnailSrc: source };
+          break;
+        }
+        await page.waitForTimeout(250);
+      }
+    }
     for (let attempt = 1; attempt <= 5; attempt += 1) {
       try {
         // Re-enter the project grid and Videos tab for each attempt, then re-find
@@ -329,13 +341,8 @@ async function collectAllGeneratedItems(page, selector, { targetKey = null, maxS
               return token === expected;
             }), expectedToken).catch(() => -1);
         }
-        if (currentIndex < 0 && identity?.text) {
-          const normalizedTargetText = String(identity.text).replace(/\s+/g, " ").trim();
-          const matchingIndices = await page.locator(selector).evaluateAll((elements, targetText) =>
-            elements.map((element, i) => ({ i, text: String(element.innerText || element.textContent || "").replace(/\s+/g, " ").trim() }))
-              .filter(item => item.text === targetText).map(item => item.i), normalizedTargetText).catch(() => []);
-          if (matchingIndices.length === 1) currentIndex = matchingIndices[0];
-        }
+        // Text labels (e.g. generic play/duration text) are not identity.
+        // Re-identification must use a loaded thumbnail token or validated neighbors.
         // A signed /asb/ token may rotate for the same media. For a middle tile,
         // permit index fallback only when both neighboring tile tokens and the
         // DOM tile count still match the original row snapshot.
@@ -363,7 +370,13 @@ async function collectAllGeneratedItems(page, selector, { targetKey = null, maxS
             currentIndex = index;
           }
         }
-        if (currentIndex < 0 && !identity?.thumbnailSrc && !identity?.text) currentIndex = index;
+        if (currentIndex < 0 && !identity?.thumbnailSrc) {
+          const tokenAfterWait = currentTokens[index] || null;
+          if (tokenAfterWait) {
+            const matchingIndex = currentTokens.findIndex(token => token === tokenAfterWait);
+            if (matchingIndex >= 0) currentIndex = matchingIndex;
+          }
+        }
         if (currentIndex < 0) throw new Error("Could not re-identify the same tile by thumbnail token/text after returning to the project grid.");
         const tile = page.locator(selector).nth(currentIndex);
         await tile.scrollIntoViewIfNeeded({ timeout: 3500 });
@@ -432,7 +445,7 @@ async function collectAllGeneratedItems(page, selector, { targetKey = null, maxS
       identityNode.querySelectorAll("a,button,[role=button],[aria-label]").forEach(node => node.remove());
       const identityText = String(identityNode.innerText || identityNode.textContent || "").replace(/\s+/g, " ").trim();
       const hint = [text, ...sources].join("|");
-      const key = mediaUuid ? `media:${mediaUuid}` : (identityText ? `tile-text:${identityText.slice(0, 220)}` : (thumbnailSrc || ""));
+      const key = mediaUuid ? `media:${mediaUuid}` : (thumbnailSrc ? `thumbnail:${thumbnailSrc.split(/[?#]/, 1)[0]}` : "");
       const state = [element.getAttribute("data-status"), element.getAttribute("data-state"),
         element.getAttribute("aria-label"), element.getAttribute("title")].filter(Boolean).join(" ");
       const progress = Boolean(element.querySelector('[role="progressbar"], progress, [aria-valuenow]'));
@@ -2849,21 +2862,13 @@ async function prepare(args, browser, rl) {
         expectedToken: expectedFirstToken, currentToken: currentFirstToken, baselineTokens, currentTokens,
         baselineTileCount: args._waitInitialDomTileCount, currentTileCount: preCreateSnapshot.tileCount,
       });
-      // The preflight baseline is keyed by media UUID, while the DOM-only thumbnail
-      // reader can see only an asb token on some variants. Resolve the visible first
-      // row through the same read-only inventory routine used for the baseline, then
-      // compare stable media keys directly. This does not open a tile or alter Flow UI.
-      const currentIdentityScan = await collectAllGeneratedItems(chosen.page, selectors.generated_video_items, {
-        uuidCache: args._waitUuidCache || new Map(), topLimit: 3, selectors, skipUuidResolution: false,
-      });
+      // Do not open any media tile after prompt/references are attached: Flow
+      // discards the composer when returning from an editor route. UUID resolution
+      // already ran during wait-selector preflight, before attachment. At this stage
+      // use only the read-only thumbnail/neighbor snapshot and preserve composer state.
       const baselineMediaKeys = args._waitInitialItemKeys || [];
-      const currentMediaKeys = (currentIdentityScan.items || []).map(item => item.key);
-      const sameFirstRowMediaIdentity = Boolean(
-        currentIdentityScan.topLimited
-        && baselineMediaKeys.length >= 3 && currentMediaKeys.length >= 3
-        && baselineMediaKeys.slice(0, 3).every((key, index) => key && key === currentMediaKeys[index])
-        && args._waitInitialDomTileCount === preCreateSnapshot.tileCount
-      );
+      const currentMediaKeys = [];
+      const sameFirstRowMediaIdentity = false;
       const stableCurrentGrid = preCreateSnapshot.fullyStable || preCreateSnapshot.acceptedByNeighborRule;
       console.log(JSON.stringify({
         event: "pre_create_first_tile_identity_recheck",
@@ -2893,8 +2898,22 @@ async function prepare(args, browser, rl) {
     }
     args._waitCreateClickedAt = new Date().toISOString();
     console.log(`Pre-Create baseline UUID count: ${args._waitInitialItemKeys?.length ?? 0}. Create timestamp: ${args._waitCreateClickedAt}`);
-    createMayHaveBeenClicked = true; // Conservatively preserve state if the click result is ambiguous.
-    await finalButton.click({ timeout: 2500 });
+    try {
+      await finalButton.click({ timeout: 2500 });
+      createMayHaveBeenClicked = true;
+    } catch (clickError) {
+      // A Playwright actionability timeout while disabled means no click was dispatched.
+      const message = String(clickError?.message || clickError);
+      const disabledBeforeDispatch = /waiting for element to be enabled|element is not enabled|button.*disabled|disabled.*button/i.test(message);
+      if (disabledBeforeDispatch) {
+        createMayHaveBeenClicked = false;
+        appendEvent(args.log, { event: "create_click_blocked_disabled", scene_id: scene.scene_id,
+          status: "not_submitted", error: message });
+      } else {
+        createMayHaveBeenClicked = true; // Other click errors can be ambiguous.
+      }
+      throw clickError;
+    }
     appendEvent(args.log, { event: "create_click_returned", scene_id: scene.scene_id, model: scene.model,
       resolution: scene.resolution, status: "click_returned_unconfirmed",
       note: "The UI click returned; this is not proof that Flow accepted a generation." });
