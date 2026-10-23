@@ -804,6 +804,8 @@ class FlowPilotContractTests(unittest.TestCase):
         self.assertIn("if (currentFirstToken !== expectedFirstToken)", self.script)
         self.assertIn("read_only_dom_check: true", self.script)
         self.assertIn("waitForPreCreateThumbnailSnapshot", self.script)
+        self.assertIn('a[href*="/edit/"], a[href*="/video/"]', self.script)
+        self.assertIn('thumbnailIdentityToken(item.thumbnailSrc) : null', self.script)
         self.assertIn("accepted_by_neighbor_rule: preCreateSnapshot.acceptedByNeighborRule", self.script)
         self.assertIn("acceptedByNeighborRule: stableFirstToken && (Number(lastSnapshot.tileCount) || 0) >= 3", self.script)
         self.assertIn("}, ms => chosen.page.waitForTimeout(ms), 10000);", self.script)
@@ -998,6 +1000,9 @@ const uuid = '4d8c7d18-d76a-479a-8164-8414f9ddaff7';
 assert.equal(thumbnailIdentityToken('/image/' + uuid), 'media:' + uuid);
 assert.equal(thumbnailIdentityToken('https://flow.google.com/asb/opaque-signed-token'), 'asb:opaque-signed-token');
 assert.equal(thumbnailIdentityToken('https://flow.google.com/asb/' + uuid), 'media:' + uuid);
+// Baseline was identified by the tile's media UUID, while the same tile now
+// exposes only an opaque signed thumbnail URL: the tile UUID must win.
+assert.equal(thumbnailIdentityToken('https://flow.google.com/asb/ANqvLObmDmk_6XQl', uuid), 'media:' + uuid);
 """
         result = subprocess.run(["node", "--input-type=module", "-e", node_test],
                                 capture_output=True, text=True, check=False, timeout=5)
