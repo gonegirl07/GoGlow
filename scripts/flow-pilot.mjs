@@ -2773,20 +2773,30 @@ async function prepare(args, browser, rl) {
           const routeHrefs = Array.from(element.querySelectorAll('a[href*="/edit/"], a[href*="/video/"]'))
             .map(anchor => anchor.getAttribute("href")).filter(Boolean);
           const ownHref = element.getAttribute("href");
-          if (ownHref && /\\/(?:edit|video)\\//i.test(ownHref)) routeHrefs.unshift(ownHref);
+          if (ownHref && (ownHref.includes("/edit/") || ownHref.includes("/video/"))) routeHrefs.unshift(ownHref);
           for (const href of routeHrefs) {
-            const routeUuid = String(href).match(/\\/(?:edit|video)\\/([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})(?:[/?#]|$)/i);
-            if (routeUuid) return `media:${routeUuid[1].toLowerCase()}`;
+            const parts = String(href).split("/").filter(Boolean);
+            const routeIndex = parts.findIndex(part => part === "edit" || part === "video");
+            const routeUuid = routeIndex >= 0 ? parts[routeIndex + 1] : null;
+            if (routeUuid && /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(routeUuid)) {
+              return `media:${routeUuid.toLowerCase()}`;
+            }
           }
           const source = element.querySelector("img")?.getAttribute("src") || "";
           if (!source) return null;
-          const imageUuid = source.match(/\\/image\\/([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})(?:[/?#]|$)/i)
-            || source.match(/\\/asb\\/([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})(?:[/?#]|$)/i);
-          if (imageUuid) return `media:${imageUuid[1].toLowerCase()}`;
-          const asb = source.match(/\\/asb\\/([^/?#]+)/i);
-          if (asb) return `asb:${asb[1]}`;
-          try { return new URL(source, location.href).pathname; }
-          catch { return source.split(/[?#]/, 1)[0] || null; }
+          let pathname = source;
+          try { pathname = new URL(source, location.href).pathname; } catch {}
+          const segments = pathname.split("/").filter(Boolean);
+          const assetIndex = segments.findIndex(part => part === "image" || part === "asb");
+          if (assetIndex < 0 || !segments[assetIndex + 1]) {
+            try { return new URL(source, location.href).pathname; }
+            catch { return source.split(/[?#]/, 1)[0] || null; }
+          }
+          const token = segments[assetIndex + 1];
+          if (/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(token)) {
+            return `media:${token.toLowerCase()}`;
+          }
+          return segments[assetIndex] === "asb" ? `asb:${token}` : pathname;
         }),
       })).catch(() => ({ tileCount: 0, tokens: [] }));
       args._waitInitialThumbnailTokens = domThumbnailBaseline.tokens;
