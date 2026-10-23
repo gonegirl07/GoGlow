@@ -2465,13 +2465,19 @@ function firstTileMatchesByStableNeighbors({ expectedToken, currentToken, baseli
   // expose the same tile as an "asb:" URL at capture and a "media:" UUID elsewhere.
   // Permit signed-thumbnail rotation when both adjacent thumbnail identities and
   // the overall tile count remain unchanged.
+  const validToken = token => typeof token === "string" && token.length > 0;
+  const secondNeighborMatches = validToken(baselineTokens?.[1]) && baselineTokens[1] === currentTokens?.[1];
+  const thirdNeighborMatches = validToken(baselineTokens?.[2]) && validToken(currentTokens?.[2])
+    && baselineTokens[2] === currentTokens[2];
+  // If Flow has not loaded the third thumbnail yet, accept only when the second
+  // neighbor is an exact match and the grid count/order has stayed unchanged.
+  const thirdNeighborStillLoading = currentTokens?.[2] == null;
   return Boolean((expectedToken?.startsWith("media:") || expectedToken?.startsWith("asb:"))
     && currentToken?.startsWith("asb:")
     && Array.isArray(baselineTokens) && baselineTokens.length >= 3
     && Array.isArray(currentTokens) && currentTokens.length >= 3
     && Number.isInteger(baselineTileCount) && baselineTileCount === currentTileCount
-    && baselineTokens[1] === currentTokens[1]
-    && baselineTokens[2] === currentTokens[2]);
+    && secondNeighborMatches && (thirdNeighborMatches || thirdNeighborStillLoading));
 }
 
 async function waitForPreCreateThumbnailSnapshot(readSnapshot, wait, maxWaitMs = 10000) {
@@ -2744,14 +2750,52 @@ async function prepare(args, browser, rl) {
       args._waitInitialBalance = initialBalance;
       args._waitInitialItemKeys = initialItems;
       args._waitInitialDomTileCount = await chosen.page.locator(selectors.generated_video_items).count();
-      // Keep this field in the same identity domain as the pre-Create DOM snapshot:
-      // thumbnail URLs first (especially signed /asb/ tokens), media UUID only as fallback.
-      args._waitInitialThumbnailTokens = initialScan.items.map(item => item.thumbnailSrc
-        ? thumbnailIdentityToken(item.thumbnailSrc)
-        : (item.mediaUuid ? `media:${item.mediaUuid}` : null)).filter(Boolean);
-      if (args._waitInitialThumbnailTokens.length !== initialScan.items.length) {
-        throw new Error("First-row baseline requires a loaded thumbnail token for each of the three tiles.");
+      // Capture the baseline with the exact same DOM identity precedence used by
+      // the pre-Create check. Do not substitute media UUIDs here: Flow may expose
+      // the same card as a media UUID during network inventory and an /asb/ token
+      // in the visible grid, making a cross-domain comparison impossible.
+      const domThumbnailBaseline = await chosen.page.locator(selectors.generated_video_items).evaluateAll(elements => ({
+        tileCount: elements.length,
+        tokens: elements.slice(0, 3).map(element => {
+          const dataValues = [
+            element.getAttribute("data-media-id"),
+            element.getAttribute("data-asset-id"),
+            element.getAttribute("data-uuid"),
+            element.getAttribute("data-id"),
+            ...Array.from(element.querySelectorAll("[data-media-id], [data-asset-id], [data-uuid], [data-id]"))
+              .flatMap(node => ["data-media-id", "data-asset-id", "data-uuid", "data-id"]
+                .map(name => node.getAttribute(name))),
+          ].filter(Boolean).map(String);
+          for (const value of dataValues) {
+            const uuid = value.match(/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/i);
+            if (uuid) return `media:${uuid[0].toLowerCase()}`;
+          }
+          const routeHrefs = Array.from(element.querySelectorAll('a[href*="/edit/"], a[href*="/video/"]'))
+            .map(anchor => anchor.getAttribute("href")).filter(Boolean);
+          const ownHref = element.getAttribute("href");
+          if (ownHref && /\\/(?:edit|video)\\//i.test(ownHref)) routeHrefs.unshift(ownHref);
+          for (const href of routeHrefs) {
+            const routeUuid = String(href).match(/\\/(?:edit|video)\\/([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})(?:[/?#]|$)/i);
+            if (routeUuid) return `media:${routeUuid[1].toLowerCase()}`;
+          }
+          const source = element.querySelector("img")?.getAttribute("src") || "";
+          if (!source) return null;
+          const imageUuid = source.match(/\\/image\\/([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})(?:[/?#]|$)/i)
+            || source.match(/\\/asb\\/([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})(?:[/?#]|$)/i);
+          if (imageUuid) return `media:${imageUuid[1].toLowerCase()}`;
+          const asb = source.match(/\\/asb\\/([^/?#]+)/i);
+          if (asb) return `asb:${asb[1]}`;
+          try { return new URL(source, location.href).pathname; }
+          catch { return source.split(/[?#]/, 1)[0] || null; }
+        }),
+      })).catch(() => ({ tileCount: 0, tokens: [] }));
+      args._waitInitialThumbnailTokens = domThumbnailBaseline.tokens;
+      if (domThumbnailBaseline.tileCount < 3 || args._waitInitialThumbnailTokens.length < 3
+        || args._waitInitialThumbnailTokens.slice(0, 3).some(token => !token)) {
+        throw new Error(`First-row baseline requires loaded DOM thumbnail identities for all three tiles; observed tile count=${domThumbnailBaseline.tileCount}, tokens=${JSON.stringify(args._waitInitialThumbnailTokens)}.`);
       }
+      console.log(JSON.stringify({ event: "baseline_dom_thumbnail_identity", tile_count: domThumbnailBaseline.tileCount,
+        first_three_tokens: args._waitInitialThumbnailTokens.slice(0, 3), identity_source: "same_precreate_dom_precedence" }));
       args._waitUuidCache = baselineUuidCache;
       args._waitInitialItemCount = initialItems.length - failedBaselineItems.length;
       console.log(args.waitForResult
