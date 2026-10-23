@@ -319,7 +319,7 @@ class FlowPilotContractTests(unittest.TestCase):
         self.assertIn("unkeyedItemsDetected", self.script)
         self.assertIn("duplicateVisibleKeyDetected", self.script)
         self.assertIn("First-row baseline requires unique, stable media UUIDs/keys", self.script)
-        self.assertIn("thumbnailSrc || sources[0]", self.script)
+        self.assertIn("identityText.slice(0, 220)", self.script)
 
     def test_generation_failure_is_detected_and_logged_without_retry(self):
         self.assertIn("function isGenerationFailureText(value)", self.script)
