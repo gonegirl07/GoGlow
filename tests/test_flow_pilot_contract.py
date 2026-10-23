@@ -643,7 +643,7 @@ class FlowPilotContractTests(unittest.TestCase):
         self.assertIn('event: "ingredients_picker_click_target"', upload_fn)
         self.assertIn('closest(\'[role="option"],[role="button"],button,[tabindex]\')', upload_fn)
         self.assertIn('clicked_interactive_ancestor: ancestorCount === 1', upload_fn)
-        self.assertIn('has_preview_label: /Preview of\\\\s+.+\\\\.(?:png|jpe?g|webp|gif|avif)/i.test(text)', upload_fn)
+        self.assertIn('const previewNodes = paneNodes.filter', upload_fn)
         self.assertIn('detail_pane: Array.from(new Set([...previewNodes, ...addNodes]))', upload_fn)
         self.assertIn('add_button_contexts:', upload_fn)
         self.assertIn('await activeAsset.scrollIntoViewIfNeeded({ timeout: 400 })', upload_fn)
