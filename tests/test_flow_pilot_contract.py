@@ -891,6 +891,9 @@ assert.deepEqual(findNewCompletedMediaItems([
         self.assertIn("expected_thumbnail_token: expectedToken", resolver)
         self.assertIn("visible_first_six_thumbnail_tokens: currentTokens.slice(0, 6)", resolver)
         self.assertIn("function thumbnailIdentityToken(value)", self.script)
+        self.assertIn("const mediaUuid = assetUuidFromUrl(source);", self.script)
+        self.assertIn('element.getAttribute("data-media-id")', self.script)
+        self.assertIn('return `media:${uuid[0].toLowerCase()}`', self.script)
         self.assertIn(r"source.match(/\/asb\/([^/?#]+)/i)", self.script)
 
     def test_middle_tile_rotated_thumbnail_token_uses_neighbor_and_count_validation(self):
@@ -984,6 +987,25 @@ assert.deepEqual(findNewCompletedMediaItems([
         self.assertIn('"Use the character shown in the reference image as a visual guide."', self.script)
         self.assertIn("Keep the overall visual design and clothing consistent with the reference images.", self.script)
         self.assertIn('reference_language_mode: scene.reference_language_mode || "identity_preserving"', self.script)
+
+    def test_thumbnail_identity_uses_media_uuid_across_image_and_signed_asb_urls(self):
+        helper = self.script.split("function assetUuidFromUrl", 1)[1].split(
+            "async function assetUuidFromLocator", 1
+        )[0]
+        node_test = "function assetUuidFromUrl" + helper + r"""
+const assert = await import('node:assert/strict');
+const uuid = '4d8c7d18-d76a-479a-8164-8414f9ddaff7';
+assert.equal(thumbnailIdentityToken('/image/' + uuid), 'media:' + uuid);
+assert.equal(thumbnailIdentityToken('https://flow.google.com/asb/opaque-signed-token'), 'asb:opaque-signed-token');
+assert.equal(thumbnailIdentityToken('https://flow.google.com/asb/' + uuid), 'media:' + uuid);
+"""
+        result = subprocess.run(["node", "--input-type=module", "-e", node_test],
+                                capture_output=True, text=True, check=False, timeout=5)
+        self.assertEqual(result.returncode, 0, msg=result.stdout + result.stderr)
+
+    def test_neutral_reference_open_eyes_does_not_override_neutral_expression_with_smile(self):
+        self.assertIn("const smileRequested =", self.script)
+        self.assertIn('${smileRequested ? "she looks directly at the camera and smiles warmly with teeth visible', self.script)
 
     def test_execute_usage_example_includes_required_wait_flag(self):
         usage = self.script.split("Actual one-scene submission", 1)[1].split(
