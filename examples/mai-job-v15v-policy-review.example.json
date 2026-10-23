@@ -1,0 +1,21 @@
+{
+  "job_id": "mai-seated-breath-v15v-policy-review",
+  "scene_id": "mai-seated-breath-v15v-policy-review",
+  "variants": 1,
+  "framing_helper": true,
+  "reference_images": [
+    "/workspace/mai-fitness/refs/REPLACE_WITH_mai-face-u1.jpg",
+    "/workspace/mai-fitness/refs/REPLACE_WITH_ref-3-u1.png"
+  ],
+  "face_reference_ids": [
+    "/workspace/mai-fitness/refs/REPLACE_WITH_mai-face-u1.jpg"
+  ],
+  "face_description_mode": "reference_only",
+  "reference_language_mode": "neutral_reference",
+  "character_description": "",
+  "model": "Omni 1.1 Flash",
+  "resolution": "360p",
+  "duration": "8s",
+  "prompt": "A fictional adult character sits cross-legged on a yoga mat in a simple indoor studio. One continuous shot, stable camera, natural subtle movement, soft daylight. Keep the full body and both knees comfortably inside the frame with generous space around the subject. Keep the chest fully covered with a high, closed neckline. No cuts, text, or logos.",
+  "expression": "Relaxed neutral expression, eyes open."
+}
