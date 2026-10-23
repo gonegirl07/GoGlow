@@ -2304,6 +2304,16 @@ async function readCreditCost(page) {
   return match ? Number(match[1]) : null;
 }
 
+function firstTileMatchesByStableNeighbors({ expectedToken, currentToken, baselineTokens, currentTokens, baselineTileCount, currentTileCount }) {
+  return Boolean(expectedToken?.startsWith("media:")
+    && currentToken?.startsWith("asb:")
+    && Array.isArray(baselineTokens) && baselineTokens.length >= 3
+    && Array.isArray(currentTokens) && currentTokens.length >= 3
+    && Number.isInteger(baselineTileCount) && baselineTileCount === currentTileCount
+    && baselineTokens[1] === currentTokens[1]
+    && baselineTokens[2] === currentTokens[2]);
+}
+
 async function waitForPreCreateThumbnailSnapshot(readSnapshot, wait, maxWaitMs = 10000) {
   const startedAt = Date.now();
   let previousTokens = null;
