@@ -65,14 +65,12 @@ Dry-run (validates account, project, settings and prompt; stops before Create):
     --selectors local/flow-selectors.json --account-label "my Flow account" \\\
     --expected-email "you@example.com" --expected-project "project-uuid"
 
-Actual one-scene submission (requires a separate second confirmation):
-  node scripts/flow-pilot.mjs --execute --tab 4 --scene path/to/scene.json \\\
-    --selectors local/flow-selectors.json --account-label "my Flow account" \\\
-    --expected-email "you@example.com" --expected-project "project-uuid"
-
-Wait for completion, download 360p Original size, and append a credit/media ledger record:
-  node scripts/flow-pilot.mjs --execute --wait --wait-timeout-ms 600000 \\
-    --download-dir local/flow-downloads --ledger-output local/flow-generation-ledger.jsonl ...
+Actual one-scene submission (requires a separate second confirmation; --wait is required):
+  node scripts/flow-pilot.mjs --execute --wait --wait-timeout-ms 600000 --tab 4 \\
+    --scene path/to/scene.json --selectors local/flow-selectors.json \\
+    --account-label "my Flow account" --expected-email "you@example.com" \\
+    --expected-project "project-uuid" --download-dir local/flow-downloads \\
+    --ledger-output local/flow-generation-ledger.jsonl
 
 Selector-only preflight (no Create click; validates balance and stable tile identities):
   node scripts/flow-pilot.mjs --dry-run --wait --tab 4 --scene path/to/scene.json \\\
@@ -667,6 +665,7 @@ function makeGenerationLedgerRecord({ scene, projectId, ledgerProjectId, prompt,
       provider_message: resultStatus === "failed" ? rawProviderMessage(timeoutError) : (timeoutError || null),
       failure: resultStatus === "failed" ? {
         category: /prominent people|might violate our policies/i.test(String(timeoutError || "")) ? "provider_policy_prominent_people" : "browser_automation",
+        failure_reason: /prominent people|might violate our policies|you will be refunded/i.test(String(timeoutError || "")) ? "policy_prominent_people" : "provider_generation_failed",
         message: timeoutError || downloadError || "Flow result was not verified.",
         provider_error_code: null,
         retryable: false,
@@ -772,12 +771,25 @@ async function waitForGenerationAndDownload(page, selectors, { beforeKeys, befor
     const newUuidItems = topItemsNow.filter(item => item?.mediaUuid && item.key && !baselineKeys.has(item.key));
     if (newUuidItems.length > 0) onSubmissionEvidence({ kind: "new_media_uuid", keys: newUuidItems.map(item => item.key) });
     const newItems = findNewCompletedMediaItems(topItemsNow, beforeKeys);
-    // Failed tiles already in the pre-Create UUID baseline are not new results.
-    // A newly failed UUID is still detected below and stops the batch safely.
+    // Failed tiles often have no media UUID. Compare their DOM key with the full
+    // pre-Create inventory so a newly inserted policy-refusal tile stops polling now.
+    const newFailedTile = topItemsNow.find(item => {
+      if (!item?.key || baselineKeys.has(item.key)) return false;
+      const state = `${item.state || ""} ${item.text || ""}`;
+      return /\\bfailed\\b/i.test(state) || isGenerationFailureText(state);
+    });
+    if (newFailedTile) {
+      const failureText = `${newFailedTile.text || ""} ${newFailedTile.state || ""}`.replace(/\\s+/g, " ").trim();
+      const failureReason = /prominent people|might violate our policies|you will be refunded/i.test(failureText)
+        ? "policy_prominent_people" : "provider_generation_failed";
+      throw new Error(`FLOW_GENERATION_FAILED: ${failureReason}: new Flow tile ${newFailedTile.key} reports failure: ${failureText}`);
+    }
+    // UUID-backed failures remain covered by this check; no failed item is eligible
+    // for download even if Flow exposes it as a completed media record.
     const candidateItems = newItems.filter(item =>
-      !(/\bfailed\b/i.test(`${item.state} ${item.text}`) || isGenerationFailureText(`${item.state} ${item.text}`)));
+      !(/\\bfailed\\b/i.test(`${item.state} ${item.text}`) || isGenerationFailureText(`${item.state} ${item.text}`)));
     const failedTile = newItems.find(item =>
-      /\bfailed\b/i.test(`${item.state} ${item.text}`)
+      /\\bfailed\\b/i.test(`${item.state} ${item.text}`)
       || isGenerationFailureText(`${item.state} ${item.text}`));
     if (failedTile) {
       throw new Error(`FLOW_GENERATION_FAILED: new Flow tile ${failedTile.key} reports failure: ${failedTile.text || failedTile.state}`);
