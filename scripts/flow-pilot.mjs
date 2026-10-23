@@ -1658,14 +1658,40 @@ async function uploadSceneReferencesUnsafe(page, selectors, referenceImages, ref
     let asset = matchingAssets.first();
     if (reusedExistingUuid) {
       let reuseIndex = -1;
-      const currentCount = await matchingAssets.count().catch(() => 0);
-      for (let i = 0; i < currentCount; i += 1) {
-        if (await assetUuidFromLocator(matchingAssets.nth(i)) === reusedExistingUuid) { reuseIndex = i; break; }
+      let currentCount = await matchingAssets.count().catch(() => 0);
+      // Flow can briefly unmount/rebuild the library list while the preview pane
+      // closes. Re-query for a unique visible name match before treating that as
+      // genuine ambiguity; the attached chip UUID is still verified after selection.
+      let stableUniqueCountReads = 0;
+      const settleDeadline = Date.now() + 2500;
+      while (Date.now() < settleDeadline) {
+        currentCount = await matchingAssets.count().catch(() => 0);
+        if (currentCount === 1) {
+          stableUniqueCountReads += 1;
+          if (stableUniqueCountReads >= 2) break;
+        } else {
+          stableUniqueCountReads = 0;
+        }
+        await page.waitForTimeout(150);
       }
+      const matchingLabels = [];
+      for (let i = 0; i < currentCount; i += 1) {
+        const candidate = matchingAssets.nth(i);
+        const label = (await candidate.innerText().catch(() => "")).replace(/\\s+/g, " ").trim().slice(0, 180);
+        const aria = await candidate.getAttribute("aria-label").catch(() => null);
+        matchingLabels.push({ index: i, label, aria_label: aria,
+          uuid: await assetUuidFromLocator(candidate).catch(() => null) });
+        if (matchingLabels[matchingLabels.length - 1].uuid === reusedExistingUuid) reuseIndex = i;
+      }
+      console.log(JSON.stringify({ event: "asset_library_reuse_recheck", filename, pinned_uuid: reusedExistingUuid,
+        currentCount, matching_labels: matchingLabels, stable_unique_count_reads: stableUniqueCountReads,
+        settle_wait_ms: Math.min(2500, 2500 - Math.max(0, settleDeadline - Date.now())) }));
       if (reuseIndex < 0) {
-        if (currentCount !== 1) throw new Error("Reusable asset UUID disappeared from the library and matching names are ambiguous; refusing to select an unverified item.");
-        // A single same-name card may have a tokenized /asb thumbnail; the UUID pin
-        // is checked against the attached Ingredients chip immediately after selection.
+        if (currentCount !== 1) {
+          throw new Error(`Reusable asset UUID ${reusedExistingUuid} is not readable from the current thumbnail and matching-name count did not settle to exactly one; currentCount=${currentCount}; matching_labels=${JSON.stringify(matchingLabels)}. Refusing to select an ambiguous item.`);
+        }
+        // A single same-name card may have a tokenized /asb thumbnail; the job-pinned
+        // UUID is verified against the attached Ingredients chip immediately after selection.
         asset = matchingAssets.first();
       } else {
         asset = matchingAssets.nth(reuseIndex);
@@ -2528,7 +2554,15 @@ async function prepare(args, browser, rl) {
         }));
         return snapshot;
       };
-      await waitForFirstRowThumbnailTokens("before_initial_capture");
+      // Force the first-row tile shells through the viewport so lazy image loading
+      // has a chance to populate every thumbnail before the first baseline snapshot.
+      const firstRowTiles = chosen.page.locator(selectors.generated_video_items);
+      const firstRowCount = await firstRowTiles.count().catch(() => 0);
+      for (let tileIndex = 0; tileIndex < Math.min(3, firstRowCount); tileIndex += 1) {
+        await firstRowTiles.nth(tileIndex).scrollIntoViewIfNeeded({ timeout: 2500 }).catch(() => {});
+        await chosen.page.waitForTimeout(100);
+      }
+      await waitForFirstRowThumbnailTokens("before_initial_capture_after_scroll");
       let initialScan = await collectAllGeneratedItems(chosen.page, selectors.generated_video_items, { uuidCache: baselineUuidCache, topLimit: 3, selectors });
       // If a thumbnail was still missing at capture time, wait and re-capture the row
       // rather than retrying tile re-identification forever with an expected null token.
