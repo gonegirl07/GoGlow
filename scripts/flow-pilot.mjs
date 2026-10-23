@@ -415,11 +415,11 @@ async function collectAllGeneratedItems(page, selector, { targetKey = null, maxS
       // Normalize media URLs to their stable UUID so deleted/Failed tiles and URL-shape
       // changes cannot make the same video look like a newly-created item.
       const sources = [
-        element.getAttribute("href"),
-        element.querySelector("a[href]")?.getAttribute("href"),
         element.querySelector("video")?.getAttribute("src"),
         element.getAttribute("data-id"),
         element.querySelector("img")?.getAttribute("src"),
+        element.getAttribute("href"),
+        element.querySelector("a[href]")?.getAttribute("href"),
       ].filter(Boolean).map(String);
       const uuidFrom = value => {
         const matches = value.match(/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/ig);
@@ -665,6 +665,7 @@ function makeGenerationLedgerRecord({ scene, projectId, ledgerProjectId, prompt,
         face_reference_id: faceReferenceIds[0] || null,
         face_reference_ids: faceReferenceIds,
         face_description_mode: scene.face_description_mode || "include",
+        reference_language_mode: scene.reference_language_mode || "identity_preserving",
         reference_set_key: referenceSetKey,
         expression: scene.expression || null,
         other_reference_ids: otherReferenceIds,
