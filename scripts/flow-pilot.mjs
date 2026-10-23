@@ -2849,6 +2849,21 @@ async function prepare(args, browser, rl) {
         expectedToken: expectedFirstToken, currentToken: currentFirstToken, baselineTokens, currentTokens,
         baselineTileCount: args._waitInitialDomTileCount, currentTileCount: preCreateSnapshot.tileCount,
       });
+      // The preflight baseline is keyed by media UUID, while the DOM-only thumbnail
+      // reader can see only an asb token on some variants. Resolve the visible first
+      // row through the same read-only inventory routine used for the baseline, then
+      // compare stable media keys directly. This does not open a tile or alter Flow UI.
+      const currentIdentityScan = await collectAllGeneratedItems(chosen.page, selectors.generated_video_items, {
+        uuidCache: args._waitUuidCache || new Map(), topLimit: 3, selectors, skipUuidResolution: false,
+      });
+      const baselineMediaKeys = args._waitInitialItemKeys || [];
+      const currentMediaKeys = (currentIdentityScan.items || []).map(item => item.key);
+      const sameFirstRowMediaIdentity = Boolean(
+        currentIdentityScan.topLimited
+        && baselineMediaKeys.length >= 3 && currentMediaKeys.length >= 3
+        && baselineMediaKeys.slice(0, 3).every((key, index) => key && key === currentMediaKeys[index])
+        && args._waitInitialDomTileCount === preCreateSnapshot.tileCount
+      );
       const stableCurrentGrid = preCreateSnapshot.fullyStable || preCreateSnapshot.acceptedByNeighborRule;
       console.log(JSON.stringify({
         event: "pre_create_first_tile_identity_recheck",
@@ -2858,7 +2873,7 @@ async function prepare(args, browser, rl) {
         visible_tile_count: preCreateSnapshot.tileCount,
         stable_first_token: preCreateSnapshot.stableFirstToken || preCreateSnapshot.fullyStable,
         accepted_by_neighbor_rule: preCreateSnapshot.acceptedByNeighborRule,
-        accepted_by_media_uuid_neighbor_identity: sameFirstTileAfterThumbnailRotation,
+        accepted_by_media_uuid_neighbor_identity: sameFirstRowMediaIdentity,\n        baseline_first_three_media_keys: baselineMediaKeys.slice(0, 3),\n        current_first_three_media_keys: currentMediaKeys.slice(0, 3),
         baseline_dom_tile_count: args._waitInitialDomTileCount,
         wait_ms: preCreateSnapshot.waitMs,
         read_only_dom_check: true,
@@ -2866,7 +2881,7 @@ async function prepare(args, browser, rl) {
       if (!stableCurrentGrid || preCreateSnapshot.tileCount < 3 || !currentFirstToken) {
         throw new Error(`Pre-Create recheck could not confirm a stable first tile and three-tile row (observed ${preCreateSnapshot.tileCount}); refusing to click Create.`);
       }
-      if (currentFirstToken !== expectedFirstToken && !sameFirstTileAfterThumbnailRotation) {
+      if (currentFirstToken !== expectedFirstToken && !sameFirstTileAfterThumbnailRotation && !sameFirstRowMediaIdentity) {
         throw new Error("Pre-Create first tile identity differs from the validated baseline; stable-neighbor identity check did not confirm a thumbnail-only change. Refusing to click Create.");
       }
       args._waitInitialItemCount = args._waitInitialItemKeys.length;
