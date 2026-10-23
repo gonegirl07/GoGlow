@@ -978,28 +978,57 @@ async function waitForCreateEnabled(page, create, timeout = 5000) {
 
 async function closeIngredientsPicker(page, selectors) {
   const backdropSelector = selectors.ingredient_picker_backdrop || ".cdk-overlay-backdrop-showing";
-  const backdrop = page.locator(backdropSelector);
-  const count = await backdrop.count().catch(() => 0);
-  if (count === 0) return;
-  const visible = await backdrop.last().isVisible().catch(() => false);
-  if (!visible) return;
-  const bounds = await backdrop.last().boundingBox().catch(() => null);
-  if (!bounds) throw new Error("Ingredients picker backdrop is visible but has no bounding box; cannot verify picker closure.");
-  await backdrop.last().click({ position: { x: 5, y: 5 }, timeout: 2500, force: true });
-  try {
-    await page.waitForFunction(selector => !Array.from(document.querySelectorAll(selector)).some(node => {
-      const style = window.getComputedStyle(node);
-      return style.visibility !== "hidden" && style.display !== "none" && Number(style.opacity || 1) > 0;
-    }), backdropSelector, { timeout: 2500 });
-  } catch {
-    throw new Error("Clicked the edge of the Ingredients picker backdrop, but the overlay is still open.");
+  const containerSelector = '[role="dialog"], [aria-modal="true"], .cdk-overlay-pane';
+  const hasVisiblePickerSurface = async () => page.locator(containerSelector).evaluateAll((containers, args) =>
+    containers.some(container => {
+      const visible = node => {
+        if (!node || !node.isConnected) return false;
+        const style = getComputedStyle(node), rect = node.getBoundingClientRect();
+        return style.display !== "none" && style.visibility !== "hidden"
+          && Number(style.opacity || 1) > 0 && rect.width > 0 && rect.height > 0;
+      };
+      if (!visible(container)) return false;
+      return Array.from(container.querySelectorAll(args.tileSelector)).some(visible)
+        || (args.addToPromptSelector && Array.from(container.querySelectorAll(args.addToPromptSelector)).some(visible));
+    }), { tileSelector: selectors.ingredient_library_item, addToPromptSelector: selectors.ingredient_add_to_prompt }).catch(() => false);
+  const hasVisibleBackdrop = async () => page.locator(backdropSelector).evaluateAll(nodes =>
+    nodes.some(node => {
+      const style = getComputedStyle(node), rect = node.getBoundingClientRect();
+      return node.isConnected && style.display !== "none" && style.visibility !== "hidden"
+        && Number(style.opacity || 1) > 0 && rect.width > 0 && rect.height > 0;
+    })).catch(() => false);
+  // Escape first so the active, possibly rebuilt overlay gets the close action.
+  await page.keyboard.press("Escape").catch(() => {});
+  const escapeDeadline = Date.now() + 1800;
+  while (Date.now() < escapeDeadline && (await hasVisiblePickerSurface() || await hasVisibleBackdrop())) {
+    await page.waitForTimeout(100);
   }
-  const remaining = await backdrop.count().catch(() => -1);
-  if (remaining > 0 && await backdrop.last().isVisible().catch(() => false)) {
-    throw new Error("Ingredients picker closure verification failed; backdrop remains visible.");
+  if (await hasVisiblePickerSurface() || await hasVisibleBackdrop()) {
+    // Re-query the current backdrop after Escape; never retain a locator to an old overlay.
+    const backdrops = page.locator(backdropSelector);
+    const count = await backdrops.count().catch(() => 0);
+    let clicked = false;
+    for (let i = count - 1; i >= 0; i -= 1) {
+      const backdrop = backdrops.nth(i);
+      if (!(await backdrop.isVisible().catch(() => false))) continue;
+      const bounds = await backdrop.boundingBox().catch(() => null);
+      if (!bounds) continue;
+      await backdrop.click({ position: { x: 5, y: 5 }, timeout: 2500, force: true }).catch(() => {});
+      clicked = true;
+      break;
+    }
+    if (!clicked && await hasVisiblePickerSurface()) {
+      throw new Error("Ingredients picker is still visible, but no current visible backdrop could be resolved for closure.");
+    }
+  }
+  const deadline = Date.now() + 3500;
+  while (Date.now() < deadline && (await hasVisiblePickerSurface() || await hasVisibleBackdrop())) {
+    await page.waitForTimeout(100);
+  }
+  if (await hasVisiblePickerSurface() || await hasVisibleBackdrop()) {
+    throw new Error("Ingredients picker closure verification failed; a current picker surface or backdrop remains visible.");
   }
 }
-
 async function resetIngredientsPicker(page, selectors) {
   const containerSelector = '[role="dialog"], [aria-modal="true"], .cdk-overlay-pane';
   // A detail/preview pane may remain mounted after its library tiles disappear.
@@ -2038,11 +2067,28 @@ async function uploadSceneReferencesUnsafe(page, selectors, referenceImages, ref
     if (!referenceSelectionReady) {
       throw new Error(`Reference selection did not verify the target preview for ${filename}; configured wait budget=${selectionWaitTimeoutMs}ms, actual elapsed=${Date.now() - selectionWaitStartedAt}ms, aria-selected=${JSON.stringify(selectedAssetAriaSelected)}, visible Add to prompt buttons=${addToPromptVisibleCount}, preview labels=${JSON.stringify(previewContext?.preview_labels || [])}, preview UUIDs=${JSON.stringify(previewContext?.uuids || [])}, selection_retried=${selectionRetried}. Stopping before Add/prompt fill/Create.`);
     }
-    const addToPrompt = pickerContainer.locator(addToPromptSelector);
-    if (await addToPrompt.count().catch(() => 0) !== 1 || !(await addToPrompt.isVisible().catch(() => false))) {
-      throw new Error("Ingredients picker Add to prompt button was not uniquely visible inside the active picker; stopping before chip attach.");
+    // Re-resolve the selected tile and action inside the current overlay. A reuse
+    // recheck may have closed/reopened the picker, detaching pickerResolution.container.
+    current = await freshTile();
+    if (!current) {
+      throw new Error("The current Ingredients picker no longer contains exactly one visible target tile; stopping before chip attach.");
     }
-    // Re-read identity from the exact action context immediately before click.
+    const activePickerContainer = current.container;
+    const addToPromptCandidatesFresh = activePickerContainer.locator(addToPromptSelector);
+    const addToPromptCandidateCount = await addToPromptCandidatesFresh.count().catch(() => 0);
+    let addToPrompt = null;
+    let finalVisibleAddCount = 0;
+    for (let i = 0; i < addToPromptCandidateCount; i += 1) {
+      const candidate = addToPromptCandidatesFresh.nth(i);
+      if (await candidate.isVisible().catch(() => false)) {
+        finalVisibleAddCount += 1;
+        addToPrompt = candidate;
+      }
+    }
+    if (finalVisibleAddCount !== 1 || !addToPrompt) {
+      throw new Error(`Ingredients picker Add to prompt must be uniquely visible in the current picker; visible count=${finalVisibleAddCount}, DOM matches=${addToPromptCandidateCount}. Stopping before chip attach.`);
+    }
+    // Re-read identity from the exact fresh action context immediately before click.
     previewContext = await inspectAddToPromptContext(addToPrompt);
     const immediatePreviewLabels = (previewContext?.preview_labels || []).map(label => String(label).trim().toLowerCase());
     const immediateLabelMatches = immediatePreviewLabels.includes(targetFilename);
@@ -2055,6 +2101,7 @@ async function uploadSceneReferencesUnsafe(page, selectors, referenceImages, ref
       preview_context: previewContext,
       identity_verified: immediateUuidMatches || immediateLabelMatches,
       identity_signal: immediateUuidMatches ? "uuid" : immediateLabelMatches ? "exact_preview_filename" : "unverified",
+      final_visible_add_button_count: finalVisibleAddCount,
       action_clicked: false,
     }));
     if (!immediateUuidMatches && !immediateLabelMatches) {
