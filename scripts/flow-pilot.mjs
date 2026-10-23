@@ -370,13 +370,7 @@ async function collectAllGeneratedItems(page, selector, { targetKey = null, maxS
             currentIndex = index;
           }
         }
-        if (currentIndex < 0 && !identity?.thumbnailSrc) {
-          const tokenAfterWait = currentTokens[index] || null;
-          if (tokenAfterWait) {
-            const matchingIndex = currentTokens.findIndex(token => token === tokenAfterWait);
-            if (matchingIndex >= 0) currentIndex = matchingIndex;
-          }
-        }
+
         if (currentIndex < 0) throw new Error("Could not re-identify the same tile by thumbnail token/text after returning to the project grid.");
         const tile = page.locator(selector).nth(currentIndex);
         await tile.scrollIntoViewIfNeeded({ timeout: 3500 });
