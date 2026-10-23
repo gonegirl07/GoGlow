@@ -1419,37 +1419,30 @@ async function verifyAttachedReferenceUuids(page, selectors, expectedUuids, time
 }
 
 async function openIngredientsPicker(page, selectors) {
-  const addButton = await exactVisibleLocator(page, selectors.ingredient_add_button, "add ingredients button");
+  let addButton = await exactVisibleLocator(page, selectors.ingredient_add_button, "add ingredients button");
   // The prompt bar can keep animating/re-rendering after long grid preflight work.
-  // Playwright's trial click waits for visibility, enabled state, and a stable hit target
-  // without dispatching a click; only click for real after that stability check passes.
+  // Trial clicks wait for a stable hit target without dispatching a real click.
   let lastError = null;
+  let stable = false;
   for (let attempt = 1; attempt <= 3; attempt += 1) {
     try {
       await addButton.waitFor({ state: "visible", timeout: 10000 });
       await addButton.click({ trial: true, timeout: 10000 });
-      await addButton.click({ timeout: 10000 });
-      await page.locator(selectors.ingredient_library_item).first().waitFor({ state: "visible", timeout: 8000 });
-      return;
+      stable = true;
+      break;
     } catch (error) {
       lastError = error;
       if (attempt < 3) {
-        // Re-resolve after a failed stability check in case Flow replaced the button node.
         await page.waitForTimeout(350);
-        const refreshed = await exactVisibleLocator(page, selectors.ingredient_add_button, "add ingredients button retry").catch(() => null);
-        if (refreshed) {
-          try {
-            await refreshed.waitFor({ state: "visible", timeout: 10000 });
-            await refreshed.click({ trial: true, timeout: 10000 });
-            await refreshed.click({ timeout: 10000 });
-            await page.locator(selectors.ingredient_library_item).first().waitFor({ state: "visible", timeout: 8000 });
-            return;
-          } catch (retryError) { lastError = retryError; }
-        }
+        addButton = await exactVisibleLocator(page, selectors.ingredient_add_button, "add ingredients button retry");
       }
     }
   }
-  throw new Error(`Could not open Ingredients picker after stability checks: ${lastError?.message || lastError}`);
+  if (!stable) throw new Error(`Add-ingredients button did not stabilize after retries: ${lastError?.message || lastError}`);
+  // Dispatch exactly one real click. If the picker renders slowly, wait for it;
+  // never repeat the click because that could toggle the picker closed.
+  await addButton.click({ timeout: 10000 });
+  await page.locator(selectors.ingredient_library_item).first().waitFor({ state: "visible", timeout: 12000 });
 }
 
 async function uploadSceneReferencesUnsafe(page, selectors, referenceImages, referenceAssetUuids = new Map()) {
