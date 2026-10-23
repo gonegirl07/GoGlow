@@ -326,9 +326,9 @@ async function collectAllGeneratedItems(page, selector, { targetKey = null, maxS
             }), expectedToken).catch(() => -1);
         }
         if (currentIndex < 0 && identity?.text) {
-          const normalizedTargetText = String(identity.text).replace(/\\s+/g, " ").trim();
+          const normalizedTargetText = String(identity.text).replace(/\s+/g, " ").trim();
           const matchingIndices = await page.locator(selector).evaluateAll((elements, targetText) =>
-            elements.map((element, i) => ({ i, text: String(element.innerText || element.textContent || "").replace(/\\s+/g, " ").trim() }))
+            elements.map((element, i) => ({ i, text: String(element.innerText || element.textContent || "").replace(/\s+/g, " ").trim() }))
               .filter(item => item.text === targetText).map(item => item.i), normalizedTargetText).catch(() => []);
           if (matchingIndices.length === 1) currentIndex = matchingIndices[0];
         }
@@ -776,10 +776,10 @@ async function waitForGenerationAndDownload(page, selectors, { beforeKeys, befor
     const newFailedTile = topItemsNow.find(item => {
       if (!item?.key || baselineKeys.has(item.key)) return false;
       const state = `${item.state || ""} ${item.text || ""}`;
-      return /\\bfailed\\b/i.test(state) || isGenerationFailureText(state);
+      return /\bfailed\b/i.test(state) || isGenerationFailureText(state);
     });
     if (newFailedTile) {
-      const failureText = `${newFailedTile.text || ""} ${newFailedTile.state || ""}`.replace(/\\s+/g, " ").trim();
+      const failureText = `${newFailedTile.text || ""} ${newFailedTile.state || ""}`.replace(/\s+/g, " ").trim();
       const failureReason = /prominent people|might violate our policies|you will be refunded/i.test(failureText)
         ? "policy_prominent_people" : "provider_generation_failed";
       throw new Error(`FLOW_GENERATION_FAILED: ${failureReason}: new Flow tile ${newFailedTile.key} reports failure: ${failureText}`);
@@ -787,9 +787,9 @@ async function waitForGenerationAndDownload(page, selectors, { beforeKeys, befor
     // UUID-backed failures remain covered by this check; no failed item is eligible
     // for download even if Flow exposes it as a completed media record.
     const candidateItems = newItems.filter(item =>
-      !(/\\bfailed\\b/i.test(`${item.state} ${item.text}`) || isGenerationFailureText(`${item.state} ${item.text}`)));
+      !(/\bfailed\b/i.test(`${item.state} ${item.text}`) || isGenerationFailureText(`${item.state} ${item.text}`)));
     const failedTile = newItems.find(item =>
-      /\\bfailed\\b/i.test(`${item.state} ${item.text}`)
+      /\bfailed\b/i.test(`${item.state} ${item.text}`)
       || isGenerationFailureText(`${item.state} ${item.text}`));
     if (failedTile) {
       throw new Error(`FLOW_GENERATION_FAILED: new Flow tile ${failedTile.key} reports failure: ${failedTile.text || failedTile.state}`);
