@@ -2966,16 +2966,52 @@ async function prepare(args, browser, rl) {
         }));
         return snapshot;
       };
+      // Save the grid scroll before forcing lazy thumbnails into view; the inventory
+      // helper restores its own entry position, which may already have been changed below.
+      const preflightScrollPosition = await chosen.page.evaluate(selectorText => {
+        const first = document.querySelector(selectorText);
+        let node = first?.parentElement || null;
+        while (node && node !== document.body) {
+          const style = getComputedStyle(node);
+          if (node.scrollHeight > node.clientHeight + 8 && /(auto|scroll|overlay)/.test(style.overflowY)) return { kind: "element", top: node.scrollTop };
+          node = node.parentElement;
+        }
+        return { kind: "document", top: (document.scrollingElement || document.documentElement).scrollTop };
+      }, selectors.generated_video_items).catch(() => null);
+      const restorePreflightScrollPosition = async () => {
+        if (!preflightScrollPosition) return { restored: false, reason: "initial_scroll_unavailable" };
+        return chosen.page.evaluate(({ selectorText, saved }) => {
+          const first = document.querySelector(selectorText);
+          let node = first?.parentElement || null;
+          while (node && node !== document.body) {
+            const style = getComputedStyle(node);
+            if (node.scrollHeight > node.clientHeight + 8 && /(auto|scroll|overlay)/.test(style.overflowY)) {
+              if (saved.kind === "element") node.scrollTop = saved.top;
+              return { restored: true, kind: "element", top: node.scrollTop };
+            }
+            node = node.parentElement;
+          }
+          const root = document.scrollingElement || document.documentElement;
+          if (saved.kind === "document") root.scrollTop = saved.top;
+          return { restored: true, kind: "document", top: root.scrollTop };
+        }, { selectorText: selectors.generated_video_items, saved: preflightScrollPosition }).catch(error => ({ restored: false, error: String(error?.message || error).slice(0, 300) }));
+      };
       // Force the first-row tile shells through the viewport so lazy image loading
       // has a chance to populate every thumbnail before the first baseline snapshot.
       const firstRowTiles = chosen.page.locator(selectors.generated_video_items);
       const firstRowCount = await firstRowTiles.count().catch(() => 0);
+      const firstRowScrollStartedAt = Date.now();
       for (let tileIndex = 0; tileIndex < Math.min(3, firstRowCount); tileIndex += 1) {
         await firstRowTiles.nth(tileIndex).scrollIntoViewIfNeeded({ timeout: 2500 }).catch(() => {});
         await chosen.page.waitForTimeout(100);
       }
+      console.log(JSON.stringify({ event: "wait_preflight_phase_timing", phase: "scroll_first_row", elapsed_ms: Date.now() - firstRowScrollStartedAt, tile_count: firstRowCount }));
+      const firstThumbnailWaitStartedAt = Date.now();
       await waitForFirstRowThumbnailTokens("before_initial_capture_after_scroll");
+      console.log(JSON.stringify({ event: "wait_preflight_phase_timing", phase: "first_row_thumbnail_wait", elapsed_ms: Date.now() - firstThumbnailWaitStartedAt }));
+      const initialInventoryStartedAt = Date.now();
       let initialScan = await collectAllGeneratedItems(chosen.page, selectors.generated_video_items, { uuidCache: baselineUuidCache, topLimit: 3, selectors });
+      console.log(JSON.stringify({ event: "wait_preflight_phase_timing", phase: "initial_media_inventory", elapsed_ms: Date.now() - initialInventoryStartedAt, item_count: initialScan.items.length, uuid_count: initialScan.items.filter(item => item.mediaUuid).length }));
       // If a thumbnail was still missing at capture time, wait and re-capture the row
       // rather than retrying tile re-identification forever with an expected null token.
       for (let thumbnailRetry = 1; thumbnailRetry <= 2
@@ -3020,6 +3056,8 @@ async function prepare(args, browser, rl) {
           uuidCache: baselineUuidCache, topLimit: 3, selectors,
         });
       }
+      const restoredPreflightScroll = await restorePreflightScrollPosition();
+      console.log(JSON.stringify({ event: "wait_preflight_scroll_restored", saved: preflightScrollPosition, result: restoredPreflightScroll }));
       // Keep every stable media UUID in the baseline, including Failed tiles, so a
       // later disappearing/refunded tile cannot make another existing card look new.
       // Failed tiles are diagnostics only and never count as usable video candidates.
