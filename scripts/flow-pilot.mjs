@@ -77,8 +77,8 @@ Selector-only preflight (no Create click; validates balance and stable tile iden
     --selectors local/flow-selectors.json --account-label "my Flow account" \\\
     --expected-email "you@example.com" --expected-project "project-uuid"
 
---wait requires selector keys: credit_balance, generated_video_items, download_media_button,
-and download_360p_original_button. Replace the example selectors and pass --dry-run --wait
+--wait requires selector keys: credit_balance, generated_video_items, and download_media_button.
+The download menu is selected dynamically by its visible "Original size" label. Pass --dry-run --wait
 to validate credit balance and existing tile identities before any real execute.
 Never run --execute until the dry-run and selector inspection have passed.
 `);
@@ -970,7 +970,7 @@ async function waitForGenerationAndDownload(page, selectors, { beforeKeys, befor
       throw new Error(`Expected exactly one visible non-upscaled Original size download option, found ${visibleOriginalOptions.length}; refusing ambiguous download choice.`);
     }
     const quality = visibleOriginalOptions[0];
-    const selectedDownloadLabel = (await quality.innerText().catch(() => "Original size")).replace(/\\s+/g, " ").trim();
+    const selectedDownloadLabel = (await quality.innerText().catch(() => "Original size")).replace(/\s+/g, " ").trim();
     console.log(JSON.stringify({ event: "download_quality_option_selected", label: selectedDownloadLabel }));
     const downloadPromise = page.waitForEvent("download", { timeout: 30000 });
     await quality.click({ timeout: 5000 });
