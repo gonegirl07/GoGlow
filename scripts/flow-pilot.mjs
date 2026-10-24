@@ -799,8 +799,8 @@ async function waitForGenerationAndDownload(page, selectors, { beforeKeys, befor
       throw new Error(`FLOW_REJECTED_UNUSUAL_ACTIVITY: Flow rejected this submission at visible tile position ${unusualActivityTile.index}: ${unusualActivityTile.text}`);
     }
     const newlyFailedTileWithoutIdentity = visibleTileFailures.find(item => {
-      const text = item.text.replace(/\\s+/g, " ").trim().toLowerCase();
-      return (/^failed\\b/i.test(text) || isGenerationFailureText(text)) && !baselineFailedTexts.has(text);
+      const text = item.text.replace(/\s+/g, " ").trim().toLowerCase();
+      return (/^failed\b/i.test(text) || isGenerationFailureText(text)) && !baselineFailedTexts.has(text);
     });
     if (newlyFailedTileWithoutIdentity) {
       throw new Error(`FLOW_GENERATION_FAILED: new Flow tile at position ${newlyFailedTileWithoutIdentity.index} reports failure without a stable media identity: ${newlyFailedTileWithoutIdentity.text}`);
@@ -2780,7 +2780,7 @@ async function prepare(args, browser, rl) {
       const baselineUuids = initialScan.items.map(item => item.mediaUuid).filter(Boolean);
       const failedBaselineItems = initialScan.items.filter(item =>
         /\bfailed\b/i.test(`${item.state} ${item.text}`) || isGenerationFailureText(`${item.state} ${item.text}`));
-      args._waitInitialFailedTileTexts = failedBaselineItems.map(item => String(item.text || "").replace(/\\s+/g, " ").trim().toLowerCase());
+      args._waitInitialFailedTileTexts = failedBaselineItems.map(item => String(item.text || "").replace(/\s+/g, " ").trim().toLowerCase());
       console.log(JSON.stringify({
         event: "baseline_media_inventory_summary",
         baseline_strategy: "visible_first_row_min_3",
