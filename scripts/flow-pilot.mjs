@@ -478,19 +478,21 @@ async function collectAllGeneratedItems(page, selector, { targetKey = null, maxS
     let visible = await page.locator(selector).evaluateAll(elements => elements.map((element, index) => {
       // Normalize media URLs to their stable UUID so deleted/Failed tiles and URL-shape
       // changes cannot make the same video look like a newly-created item.
-      const sources = [
+      const primarySources = [
         element.querySelector("video")?.getAttribute("src"),
         element.getAttribute("data-id"),
-        element.querySelector("img")?.getAttribute("src"),
         element.getAttribute("href"),
         element.querySelector("a[href]")?.getAttribute("href"),
       ].filter(Boolean).map(String);
+      const thumbnailSrc = element.querySelector("img")?.getAttribute("src") || null;
       const uuidFrom = value => {
-        const matches = value.match(/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/ig);
+        const matches = String(value || "").match(/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/ig);
         return matches && matches.length ? matches[matches.length - 1].toLowerCase() : null;
       };
-      const thumbnailSrc = element.querySelector("img")?.getAttribute("src") || null;
-      const mediaUuid = sources.map(uuidFrom).find(Boolean);
+      // Do not confuse /image/<uuid> thumbnail identifiers with video media UUIDs.
+      const mediaUuid = primarySources.map(uuidFrom).find(Boolean)
+        || (thumbnailSrc && !/\/image\//i.test(thumbnailSrc) ? uuidFrom(thumbnailSrc) : null);
+      const sources = [...primarySources, ...(thumbnailSrc ? [thumbnailSrc] : [])];
       const text = String(element.innerText || element.textContent || "").replace(/\s+/g, " ").trim();
       const identityNode = element.cloneNode(true);
       identityNode.querySelectorAll("a,button,[role=button],[aria-label]").forEach(node => node.remove());
