@@ -1506,6 +1506,7 @@ async function waitForChipImagesReady(page, selectors, timeout = 15000) {
 }
 
 async function verifyAttachedReferenceUuids(page, selectors, expectedUuids, timeout = 15000) {
+  const verificationStartedAt = Date.now();
   await waitForChipImagesReady(page, selectors, timeout);
   const chips = page.locator(selectors.ingredient_reference_items);
   const count = await chips.count();
@@ -1521,6 +1522,7 @@ async function verifyAttachedReferenceUuids(page, selectors, expectedUuids, time
   if (actualUuids.some((uuid, index) => uuid !== expectedUuids[index])) {
     throw new Error(`Ingredients chip UUID/order mismatch: expected ${expectedUuids.join(", ")}, observed ${actualUuids.join(", ")}.`);
   }
+  console.log(JSON.stringify({ event: "ingredient_chip_uuid_verification", expected_count: expectedUuids.length, elapsed_ms: Date.now() - verificationStartedAt, passed: true }));
   return actualUuids;
 }
 
