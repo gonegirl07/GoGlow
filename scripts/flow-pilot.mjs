@@ -1791,51 +1791,97 @@ async function uploadSceneReferencesUnsafe(page, selectors, referenceImages, ref
       let reopenAttempted = false;
       let settleElapsedMs = 0;
       const inspectFreshPicker = async () => {
-        // Re-discover the visible overlay on each poll; Flow may detach and rebuild it.
-        const containers = page.locator('[role="dialog"], [aria-modal="true"], .cdk-overlay-pane');
-        const containerCount = await containers.count().catch(() => 0);
-        let bestContainer = null;
-        let bestMatching = null;
-        let bestCount = 0;
-        for (let ci = 0; ci < containerCount; ci += 1) {
-          const container = containers.nth(ci);
-          if (!(await container.isVisible().catch(() => false))) continue;
-          const tiles = container.locator(selectors.ingredient_library_item + ':visible');
-          if (!(await tiles.count().catch(() => 0))) continue;
-          let matches = tiles.filter({ hasText: filename });
-          if (await matches.count().catch(() => 0) === 0 && filenameStem !== filename) matches = tiles.filter({ hasText: filenameStem });
-          const count = await matches.count().catch(() => 0);
-          if (count > bestCount || bestContainer === null) { bestContainer = container; bestMatching = matches; bestCount = count; }
-        }
-        refreshedPickerContainer = bestContainer;
-        freshMatching = bestMatching;
-        currentCount = bestCount;
-        matchingLabels = [];
-        reuseIndex = -1;
-        for (let i = 0; i < currentCount; i += 1) {
-          const candidate = freshMatching.nth(i);
-          const label = (await candidate.innerText().catch(() => '')).replace(/\\s+/g, ' ').trim().slice(0, 180);
-          const aria = await candidate.getAttribute('aria-label').catch(() => null);
-          const uuid = await assetUuidFromLocator(candidate).catch(() => null);
-          matchingLabels.push({ index: i, label, aria_label: aria, uuid });
-          if (uuid === reusedExistingUuid) reuseIndex = i;
-        }
+        // Read the whole visible picker inventory in one DOM round-trip. Repeated
+        // Playwright count/visibility/text/attribute calls against Flow's rebuilt
+        // overlay were taking tens of seconds per poll in some sessions.
+        const scanStarted = Date.now();
+        const snapshot = await page.evaluate(({ tileSelector, name, stem, pinnedUuid }) => {
+          const visible = element => {
+            const style = getComputedStyle(element), rect = element.getBoundingClientRect();
+            return style.display !== "none" && style.visibility !== "hidden"
+              && Number(style.opacity || 1) > 0 && rect.width > 0 && rect.height > 0;
+          };
+          const uuidFrom = value => String(value || "").match(/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/i)?.[0]?.toLowerCase() || null;
+          const overlays = Array.from(document.querySelectorAll('[role="dialog"], [aria-modal="true"], .cdk-overlay-pane'));
+          let best = { containerIndex: -1, matches: [], visibleTileCount: 0 };
+          overlays.forEach((overlay, containerIndex) => {
+            if (!visible(overlay)) return;
+            const tiles = Array.from(overlay.querySelectorAll(tileSelector)).filter(visible);
+            const matching = tiles.filter(tile => {
+              const text = String(tile.innerText || tile.textContent || "").replace(/\\s+/g, " ").trim().toLowerCase();
+              return text.includes(name.toLowerCase()) || (stem !== name && text.includes(stem.toLowerCase()));
+            }).map((tile, index) => {
+              const values = [];
+              const add = node => {
+                if (!node) return;
+                for (const attr of ["href", "src", "id", "data-id", "data-uuid", "data-asset-id", "data-media-id", "aria-label", "title", "alt"]) {
+                  const value = node.getAttribute?.(attr); if (value) values.push(value);
+                }
+              };
+              add(tile);
+              for (const node of [tile, ...tile.querySelectorAll("*")]) {
+                add(node);
+                for (const attr of Array.from(node.attributes || [])) values.push(attr.value);
+              }
+              const uuids = values.map(uuidFrom).filter(Boolean);
+              const uniqueUuids = Array.from(new Set(uuids));
+              return {
+                index,
+                label: String(tile.innerText || tile.textContent || "").replace(/\\s+/g, " ").trim().slice(0, 180),
+                aria_label: tile.getAttribute("aria-label"),
+                uuid: uniqueUuids.includes(pinnedUuid) ? pinnedUuid : (uniqueUuids[0] || null),
+              };
+            });
+            if (matching.length > best.matches.length || best.containerIndex < 0) {
+              best = { containerIndex, matches: matching, visibleTileCount: tiles.length };
+            }
+          });
+          return { ...best, overlayCount: overlays.length };
+        }, { tileSelector: selectors.ingredient_library_item, name: filename, stem: filenameStem, pinnedUuid: reusedExistingUuid });
+        const elapsedMs = Date.now() - scanStarted;
+        currentCount = snapshot.matches.length;
+        matchingLabels = snapshot.matches;
+        reuseIndex = snapshot.matches.findIndex(item => item.uuid === reusedExistingUuid);
+        refreshedPickerContainer = snapshot.containerIndex >= 0
+          ? page.locator('[role="dialog"], [aria-modal="true"], .cdk-overlay-pane').nth(snapshot.containerIndex)
+          : null;
+        freshMatching = snapshot.containerIndex >= 0
+          ? refreshedPickerContainer.locator(selectors.ingredient_library_item + ':visible').filter({ hasText: filename })
+          : null;
+        // Use the exact observed matching index after the fast DOM scan. If the
+        // picker matches the filename stem instead, the selection below falls back
+        // to the unique matching tile rather than guessing among duplicate names.
+        if (currentCount === 1 && reuseIndex < 0 && snapshot.matches[0]?.uuid === reusedExistingUuid) reuseIndex = 0;
+        return { elapsedMs, overlayCount: snapshot.overlayCount, visibleTileCount: snapshot.visibleTileCount };
       };
       const settleFreshPicker = async (durationMs) => {
         const started = Date.now();
         const deadline = started + durationMs;
-        let previousCount = null;
+        let previousSignature = null;
         stableUniqueCountReads = 0;
+        let slowestScanMs = 0;
+        let polls = 0;
         while (Date.now() < deadline) {
-          try { await inspectFreshPicker(); } catch { currentCount = 0; matchingLabels = []; freshMatching = null; reuseIndex = -1; }
-          if (currentCount === 1 && currentCount === previousCount) {
+          let scan = { elapsedMs: 0, overlayCount: 0, visibleTileCount: 0 };
+          try { scan = await inspectFreshPicker(); }
+          catch { currentCount = 0; matchingLabels = []; freshMatching = null; reuseIndex = -1; }
+          polls += 1;
+          slowestScanMs = Math.max(slowestScanMs, scan.elapsedMs || 0);
+          const signature = currentCount === 1 ? JSON.stringify(matchingLabels.map(item => ({ label: item.label, uuid: item.uuid }))) : null;
+          if (currentCount === 1 && reuseIndex >= 0 && signature && signature === previousSignature) {
             stableUniqueCountReads += 1;
-            if (stableUniqueCountReads >= 2) return Date.now() - started;
-          } else stableUniqueCountReads = currentCount === 1 ? 1 : 0;
-          previousCount = currentCount;
+            if (stableUniqueCountReads >= 1) {
+              const elapsedMs = Date.now() - started;
+              console.log(JSON.stringify({ event: "asset_library_picker_settle_timing", filename, elapsed_ms: elapsedMs, polls, slowest_scan_ms: slowestScanMs, final_count: currentCount, uuid_match: true, stable_unique_count_reads: stableUniqueCountReads }));
+              return elapsedMs;
+            }
+          } else stableUniqueCountReads = 0;
+          previousSignature = signature;
           await page.waitForTimeout(250);
         }
-        return Date.now() - started;
+        const elapsedMs = Date.now() - started;
+        console.log(JSON.stringify({ event: "asset_library_picker_settle_timing", filename, elapsed_ms: elapsedMs, polls, slowest_scan_ms: slowestScanMs, final_count: currentCount, uuid_match: reuseIndex >= 0, stable_unique_count_reads: stableUniqueCountReads, timeout: true }));
+        return elapsedMs;
       };
       settleElapsedMs += await settleFreshPicker(4500);
       if ((currentCount !== 1 || reuseIndex < 0) && !reopenAttempted) {
@@ -2434,9 +2480,10 @@ async function loadInputs(args) {
       .replace(/(?:[,;.]?\s*)eyes?\s+(?:stay|remain)\s+open\s*,?\s*(?:gentle|warm)?\s*smile\s+showing\s+teeth\b/ig, "")
       .trim().replace(/[.!?]+\s*$/, "")
     : rawNormalizedExpression;
-  const smileRequested = /\b(?:smile|smiles|smiling|grin|grins|grinning|teeth visible)\b/i.test(rawNormalizedExpression);
+  // The scene's expression is authoritative. The guard only enforces eye state;
+  // it must not inject a conflicting fixed smile (e.g. toothy smile vs small smile).
   const openEyesGuard = openEyesRequested
-    ? `Eyes remain clearly open throughout the entire shot; ${smileRequested ? "she looks directly at the camera and smiles warmly with teeth visible from the first frame to the final frame; " : ""}natural brief blinks only. No prolonged eye closure or eyes-closed meditation.`
+    ? "Eyes remain clearly open throughout the entire shot, with natural brief blinks only. No prolonged eye closure or eyes-closed meditation."
     : "";
   const expressionContent = [normalizedExpression, openEyesGuard].filter(Boolean).join(normalizedExpression ? ". " : "");
   const expressionSection = expressionContent
