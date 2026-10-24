@@ -118,42 +118,54 @@ function waitForSelectors(selectors, args) {
 async function readCreditBalance(page, selectors) {
   const selector = typeof selectors === "string" ? selectors : selectors.credit_balance;
   const parseBalance = text => {
-    const match = String(text || "").replace(/,/g, "").match(/(?:^|\D)(\d+)(?:\D|$)/);
-    return match ? Number(match[1]) : null;
+    const normalized = String(text || "").replace(/,/g, "").replace(/\s+/g, " ").trim();
+    const match = normalized.match(/^(\d+)\s*(?:Google Flow credits?|credits?)?$/i)
+      || normalized.match(/(?:^|\s)(\d+)\s+Google Flow credits?\b/i);
+    if (!match) return null;
+    const value = Number(match[1]);
+    return Number.isSafeInteger(value) && value >= 0 ? value : null;
   };
   const readVisible = async () => {
     try {
-      const locator = await exactVisibleLocator(page, selector, "credit balance");
-      return parseBalance(await locator.innerText({ timeout: 2500 }).catch(() => ""));
+      const locator = await exactVisibleLocator(page, selector, "credit balance", 1500);
+      const parsed = parseBalance(await locator.innerText({ timeout: 2000 }).catch(() => ""));
+      return parsed !== null ? parsed : parseBalance(await locator.textContent({ timeout: 1500 }).catch(() => ""));
     } catch { return null; }
   };
-  let balance = await readVisible();
-  if (balance !== null || typeof selectors === "string") return balance;
-  if (!selectors.account_panel_open || !selectors.account_panel_close) return null;
-  const opener = await exactVisibleLocator(page, selectors.account_panel_open, "account panel open button").catch(() => null);
-  if (!opener) return null;
-  // Wait for asynchronous credit rendering; retry opening the account panel once.
-  for (let attempt = 0; attempt < 2; attempt += 1) {
-    await opener.click({ timeout: 2500 }).catch(() => {});
-    try {
-      await page.locator(selector).first().waitFor({ state: "visible", timeout: 8000 });
-      const locator = await exactVisibleLocator(page, selector, "credit balance after opening account panel", 2500);
-      balance = parseBalance(await locator.innerText({ timeout: 2500 }).catch(() => ""));
+  for (let i = 0; i < 4; i += 1) {
+    const value = await readVisible();
+    if (value !== null || typeof selectors === "string") return value;
+    if (i < 3) await page.waitForTimeout(500);
+  }
+  if (typeof selectors === "string" || !selectors.account_panel_open || !selectors.account_panel_close) return null;
+  let openedByUs = false, balance = null;
+  for (let attempt = 0; attempt < 3 && balance === null; attempt += 1) {
+    if (!(await page.locator(selector).first().isVisible().catch(() => false))) {
+      const opener = await exactVisibleLocator(page, selectors.account_panel_open, "account panel open button", 2000).catch(() => null);
+      if (!opener) { await page.waitForTimeout(500); continue; }
+      await opener.click({ timeout: 2500 }).catch(() => {});
+      openedByUs = true;
+    }
+    const deadline = Date.now() + 7000;
+    while (Date.now() < deadline) {
+      balance = await readVisible();
       if (balance !== null) break;
-    } catch {
-      if (attempt === 1) break;
+      await page.waitForTimeout(350);
+    }
+    if (balance === null && attempt < 2) {
       await page.keyboard.press("Escape").catch(() => {});
-      await page.waitForTimeout(300).catch(() => {});
+      await page.waitForTimeout(400);
     }
   }
-  const closer = await exactVisibleLocator(page, selectors.account_panel_close, "account panel close button").catch(() => null);
-  if (closer) {
-    await closer.click({ timeout: 2500 }).catch(() => {});
-    await page.locator(selectors.account_panel_close).waitFor({ state: "hidden", timeout: 2500 }).catch(() => {});
+  if (openedByUs) {
+    const closer = await exactVisibleLocator(page, selectors.account_panel_close, "account panel close button", 1500).catch(() => null);
+    if (closer) {
+      await closer.click({ timeout: 2500 }).catch(() => {});
+      await page.locator(selectors.account_panel_close).waitFor({ state: "hidden", timeout: 2500 }).catch(() => {});
+    } else await page.keyboard.press("Escape").catch(() => {});
   }
   return balance;
 }
-
 async function generatedItemKeys(page, selector) {
   return page.locator(selector).evaluateAll(elements => elements.map(element => {
     const sources = [
@@ -543,10 +555,8 @@ async function collectAllGeneratedItems(page, selector, { targetKey = null, maxS
 }
 
 function isGenerationFailureText(value) {
-  // Match Flow's current policy-failure wording as well as older generic errors.
-  // Keep bare "Failed" out of this body-level matcher; old failed tiles can remain
-  // in the project. The per-new-tile check below handles that short status safely.
-  return /generation failed|failed to generate|couldn['’]?t generate|unable to generate|video failed|something went wrong|blocked by (?:policy|safety)|might violate|violate(?:s|d)? (?:our )?policies|violat(?:es|ed) (?:our )?(?:policy|policies|guidelines)|prominent people|you will be refunded|generation error/i.test(String(value || ""));
+  // Match provider failures, including Flow's unusual-activity/browser-extension rejection.
+  return /generation failed|failed to generate|couldn['’]?t generate|unable to generate|video failed|something went wrong|blocked by (?:policy|safety)|might violate|violate(?:s|d)? (?:our )?policies|violat(?:es|ed) (?:our )?(?:policy|policies|guidelines)|prominent people|you will be refunded|generation error|unusual activity|browser extensions? that modify the page/i.test(String(value || ""));
 }
 
 async function activateVideosTab(page, selectors) {
@@ -682,10 +692,12 @@ function makeGenerationLedgerRecord({ scene, projectId, ledgerProjectId, prompt,
     rule_ids: [],
     result: {
       status: resultStatus,
-      provider_message: resultStatus === "failed" ? rawProviderMessage(timeoutError) : (timeoutError || null),
-      failure: resultStatus === "failed" ? {
-        category: /prominent people|might violate our policies/i.test(String(timeoutError || "")) ? "provider_policy_prominent_people" : "browser_automation",
-        failure_reason: /prominent people|might violate our policies|you will be refunded/i.test(String(timeoutError || "")) ? "policy_prominent_people" : "provider_generation_failed",
+      provider_message: ["failed", "rejected_unusual_activity"].includes(resultStatus) ? rawProviderMessage(timeoutError) : (timeoutError || null),
+      failure: ["failed", "rejected_unusual_activity"].includes(resultStatus) ? {
+        category: resultStatus === "rejected_unusual_activity" ? "provider_anti_abuse_rejection"
+          : /prominent people|might violate our policies/i.test(String(timeoutError || "")) ? "provider_policy_prominent_people" : "browser_automation",
+        failure_reason: resultStatus === "rejected_unusual_activity" ? "unusual_activity"
+          : /prominent people|might violate our policies|you will be refunded/i.test(String(timeoutError || "")) ? "policy_prominent_people" : "provider_generation_failed",
         message: timeoutError || downloadError || "Flow result was not verified.",
         provider_error_code: null,
         retryable: false,
@@ -775,6 +787,16 @@ async function waitForGenerationAndDownload(page, selectors, { beforeKeys, befor
     // on every grid poll before comparing the new result against the pre-Create inventory.
     await activateVideosTab(page, selectors).catch(() => "not_found_no_tab_switch");
     await failIfVisible();
+    // Some failed cards have no UUID/thumbnail/key, so inspect visible tile text directly.
+    const visibleTileFailures = await page.locator(selectors.generated_video_items).evaluateAll(elements =>
+      elements.slice(0, 6).map((element, index) => ({
+        index, text: String(element.innerText || element.textContent || "").replace(/\s+/g, " ").trim(),
+      }))).catch(() => []);
+    const unusualActivityTile = visibleTileFailures.find(item =>
+      /unusual activity|browser extensions? that modify the page/i.test(item.text));
+    if (unusualActivityTile) {
+      throw new Error(\`FLOW_REJECTED_UNUSUAL_ACTIVITY: Flow rejected this submission at visible tile position \${unusualActivityTile.index}: \${unusualActivityTile.text}\`);
+    }
     const scan = await collectAllGeneratedItems(page, selectors.generated_video_items, {
       uuidCache, topLimit: 3, selectors, skipUuidResolution: true,
     }).catch(() => ({ items: [], topItems: [], reachedBottom: false, topLimited: false }));
@@ -2542,6 +2564,15 @@ async function prepare(args, browser, rl) {
   const settings = await exactVisibleLocator(chosen.page, selectors.settings_trigger, "settings trigger");
 
   const settingsStartedAt = Date.now();
+  // Diagnose image mode before video-only controls are queried.
+  const visibleModelBeforeSettings = chosen.page.locator(selectors.model);
+  if (await visibleModelBeforeSettings.count().catch(() => 0) === 1
+    && await visibleModelBeforeSettings.isVisible().catch(() => false)) {
+    const currentModelLabel = (await visibleModelBeforeSettings.innerText({ timeout: 2000 }).catch(() => "")).replace(/\s+/g, " ").trim();
+    if (/nano banana|imagen|image generation/i.test(currentModelLabel)) {
+      throw new Error(\`Composer is in Image mode (current model: \${JSON.stringify(currentModelLabel)}); switch to Video mode and select \${scene.model} before rerunning. Prompt and references were not changed.\`);
+    }
+  }
   // Normalize the settings overlay state. If its controls are already visible, toggle it
   // closed first. A separate account-menu overlay is not dismissed blindly; stop safely.
   const modelAlreadyVisible = await chosen.page.locator(selectors.model).count() === 1
@@ -2575,7 +2606,16 @@ async function prepare(args, browser, rl) {
     const resolution = await exactVisibleLocator(chosen.page, selectors.resolution, "resolution radio");
     const ingredients = await exactVisibleLocator(chosen.page, selectors.ingredients_mode, "Ingredients mode radio");
     const aspect = await exactVisibleLocator(chosen.page, selectors.aspect_9_16, "9:16 aspect radio");
-    const duration = await exactVisibleLocator(chosen.page, selectors.duration, "8s duration radio");
+    let duration;
+    try {
+      duration = await exactVisibleLocator(chosen.page, selectors.duration, "8s duration radio");
+    } catch (error) {
+      const visibleModelLabel = (await model.innerText({ timeout: 1500 }).catch(() => "")).replace(/\s+/g, " ").trim();
+      if (/nano banana|imagen|image generation/i.test(visibleModelLabel)) {
+        throw new Error(\`Composer is in Image mode (current model: \${JSON.stringify(visibleModelLabel)}); switch to Video mode and select \${scene.model} before rerunning.\`);
+      }
+      throw error;
+    }
     const radioChecks = await Promise.all([resolution, ingredients, aspect, duration].map(locator => locator.getAttribute("role")));
     if (radioChecks.some(role => role !== "radio")) {
       throw new Error("Resolution, Ingredients, 9:16 and duration selectors must all match role=radio controls.");
@@ -3082,15 +3122,17 @@ async function prepare(args, browser, rl) {
       } catch (error) {
         timeoutError = String(error.message || error);
         mediaUri = chosen.page.url();
-        if (timeoutError.startsWith("FLOW_GENERATION_FAILED:")) resultStatus = "failed";
+        if (timeoutError.startsWith("FLOW_REJECTED_UNUSUAL_ACTIVITY:")) resultStatus = "rejected_unusual_activity";
+        else if (timeoutError.startsWith("FLOW_GENERATION_FAILED:")) resultStatus = "failed";
         else if (timeoutError.startsWith("FLOW_SUBMITTED_UNIDENTIFIED:")) resultStatus = "submitted_unidentified";
         appendEvent(args.log, {
-          event: resultStatus === "failed" ? "generation_failed_detected"
-            : resultStatus === "submitted_unidentified" ? "submitted_unidentified"
-              : "generation_wait_unverified",
+          event: resultStatus === "rejected_unusual_activity" ? "flow_rejected_unusual_activity"
+            : resultStatus === "failed" ? "generation_failed_detected"
+              : resultStatus === "submitted_unidentified" ? "submitted_unidentified" : "generation_wait_unverified",
           scene_id: scene.scene_id,
-          status: resultStatus === "failed" ? "failed_do_not_retry"
-            : resultStatus === "submitted_unidentified" ? "submitted_unidentified_do_not_retry" : "unknown_do_not_retry",
+          status: resultStatus === "rejected_unusual_activity" ? "FLOW_REJECTED_UNUSUAL_ACTIVITY_DO_NOT_RETRY"
+            : resultStatus === "failed" ? "failed_do_not_retry"
+              : resultStatus === "submitted_unidentified" ? "submitted_unidentified_do_not_retry" : "unknown_do_not_retry",
           error: timeoutError,
         });
         console.error(`WAIT STOPPED SAFELY: ${timeoutError}`);
@@ -3151,6 +3193,11 @@ async function prepare(args, browser, rl) {
         console.error("Create was submitted, but no new media UUID could be identified before timeout. Receipt and ledger recorded; do NOT resubmit automatically.");
         process.exitCode = 2;
         if (variantCount > 1) args._stopVariants = true;
+      } else if (resultStatus === "rejected_unusual_activity") {
+        console.error("FLOW_REJECTED_UNUSUAL_ACTIVITY: Flow rejected this submission. The distinct status was recorded in the ledger; do not retry automatically or bypass anti-abuse checks.");
+        args._stopVariants = true;
+        process.exitCode = 2;
+        return;
       } else if (resultStatus === "failed") {
         if (/prominent people|might violate our policies/i.test(String(timeoutError || ""))) {
           console.error("POLICY REFUSAL: Flow flagged this request under its prominent-people policy. The refusal is recorded in the ledger; this batch stops and no automatic retry or reference/prompt substitution will be attempted. Review Flow policy and the content before manually starting a new, policy-compliant attempt.");
