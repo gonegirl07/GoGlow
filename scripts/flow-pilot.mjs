@@ -1575,6 +1575,8 @@ async function openIngredientsPicker(page, selectors, filename = "reference asse
 }
 
 async function uploadSceneReferencesUnsafe(page, selectors, referenceImages, referenceAssetUuids = new Map()) {
+  const batchStartedAt = Date.now();
+  console.log(JSON.stringify({ event: "reference_upload_batch_start", reference_count: referenceImages.length }));
   const chips = page.locator(selectors.ingredient_reference_items);
   const beforeCount = await chips.count().catch(() => -1);
   if (beforeCount !== 0) throw new Error(`Ingredients already contains ${beforeCount} reference chip(s); clear the prompt manually and rerun so this run can prove which images it attached.`);
@@ -1634,6 +1636,7 @@ async function uploadSceneReferencesUnsafe(page, selectors, referenceImages, ref
     phaseStartedAt = Date.now();
     const pickerResolution = await resolveVisibleIngredientsPicker(page, selectors, filename, filenameStem);
     logReferencePhase("resolve_picker", phaseStartedAt);
+    phaseStartedAt = Date.now();
     const picker = pickerResolution.container.locator(`${selectors.ingredient_library_item}:visible`);
     const pickerContainer = pickerResolution.container;
     let matchingAssets = picker.filter({ hasText: filename });
@@ -1679,6 +1682,7 @@ async function uploadSceneReferencesUnsafe(page, selectors, referenceImages, ref
           search_field_used: false, visible_matching_tiles: 0 }));
       }
     }
+    logReferencePhase("match_picker_tile_and_search", phaseStartedAt, { matching_asset_count: await matchingAssets.count().catch(() => 0), search_fallback_considered: true });
     const inventoryStartedAt = Date.now();
     const existingUuids = new Set();
     const existingCount = await matchingAssets.count().catch(() => 0);
@@ -2328,7 +2332,10 @@ async function uploadSceneReferencesUnsafe(page, selectors, referenceImages, ref
 
   const finalCount = await chips.count();
   if (finalCount !== referenceImages.length) throw new Error(`Ingredients chip count mismatch: expected ${referenceImages.length}, observed ${finalCount}. Stopping before prompt fill/Create.`);
+  const finalUuidVerifyStartedAt = Date.now();
   await verifyAttachedReferenceUuids(page, selectors, expectedUuids);
+  console.log(JSON.stringify({ event: "reference_batch_final_uuid_verification_timing", elapsed_ms: Date.now() - finalUuidVerifyStartedAt, reference_count: finalCount }));
+  console.log(JSON.stringify({ event: "reference_upload_batch_end", elapsed_ms: Date.now() - batchStartedAt, reference_count: finalCount, verified: true }));
   console.log(`Verified exact asset identity and loaded thumbnails for ${finalCount} reference chip(s).`);
   page.off("response", assetResponseListener);
   return expectedUuids;
