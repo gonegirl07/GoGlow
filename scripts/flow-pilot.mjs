@@ -300,6 +300,7 @@ async function collectAllGeneratedItems(page, selector, { targetKey = null, maxS
       }
     }
     for (let attempt = 1; attempt <= 5; attempt += 1) {
+      const reidentificationAttemptStartedAt = Date.now();
       try {
         // Re-enter the project grid and Videos tab for each attempt, then re-find
         // Prefer UUID/network metadata; thumbnail URL tokens are a hint only because /asb/ signatures can rotate.
@@ -340,6 +341,7 @@ async function collectAllGeneratedItems(page, selector, { targetKey = null, maxS
           expected_thumbnail_token: expectedToken,
           visible_first_six_thumbnail_tokens: currentTokens.slice(0, 6),
           visible_tile_count: await page.locator(selector).count().catch(() => 0),
+          elapsed_ms: Date.now() - reidentificationAttemptStartedAt,
         }));
         let currentIndex = -1;
         if (expectedToken) {
@@ -403,12 +405,15 @@ async function collectAllGeneratedItems(page, selector, { targetKey = null, maxS
         await restoreScrollTop(scrollTop);
         await page.waitForTimeout(250);
         if (uuid) {
+          console.log(JSON.stringify({ event: "media_tile_uuid_resolution_timing", tile_index: index, attempt, elapsed_ms: Date.now() - reidentificationAttemptStartedAt, outcome: "resolved", uuid }));
           if (attempt > 1) console.log(`Resolved tile index ${index} UUID after retry ${attempt}: ${uuid}`);
           return uuid;
         }
         lastError = new Error(`clicked tile did not expose an /edit/<uuid> URL (current URL: ${currentUrl})`);
+        console.warn(JSON.stringify({ event: "media_tile_uuid_resolution_timing", tile_index: index, attempt, elapsed_ms: Date.now() - reidentificationAttemptStartedAt, outcome: "unresolved", reason: lastError.message }));
       } catch (error) {
         lastError = error;
+        console.warn(JSON.stringify({ event: "media_tile_uuid_resolution_timing", tile_index: index, attempt, elapsed_ms: Date.now() - reidentificationAttemptStartedAt, outcome: "retryable_error", reason: String(error?.message || error).slice(0, 300) }));
         if (/\/edit\//i.test(page.url())) {
           await page.goBack({ waitUntil: "domcontentloaded", timeout: 10000 }).catch(() => {});
           await page.waitForFunction(pathname => location.pathname === pathname, new URL(gridUrl).pathname, { timeout: 10000 }).catch(() => {});
@@ -569,7 +574,7 @@ async function activateVideosTab(page, selectors) {
       const className = typeof node.className === "string" ? node.className : "";
       if (ariaSelected === "true" || ariaCurrent === "page" || ariaCurrent === "true"
         || /^(active|selected)$/i.test(dataState || "")
-        || /(^|\\s)(active|selected|is-active|is-selected)(\\s|$)/i.test(className)) return true;
+        || /(^|\s)(active|selected|is-active|is-selected)(\s|$)/i.test(className)) return true;
     }
     return false;
   }).catch(() => false);
@@ -2552,7 +2557,7 @@ async function loadInputs(args) {
   // The custom sentence is only appended when the helper is enabled for this scene.
   scene.framing_helper_applied = scene.framing_helper === false ? false : (scene.framing_helper === true || seatedShot);
   if (scene.framing_helper_applied) {
-    scene.prompt = scene.prompt.replace(/\\b(?:fills?|occupies?)\\s+(?:about\\s+)?\\d{1,3}\\s*(?:percent|%)\\s+of\\s+(?:the\\s+)?frame\\s+width\\b/gi, "is framed from head to knees");
+    scene.prompt = scene.prompt.replace(/\\b(?:fills?|occupies?)\s+(?:about\s+)?\\d{1,3}\s*(?:percent|%)\s+of\s+(?:the\s+)?frame\s+width\\b/gi, "is framed from head to knees");
     const defaultFramingSentence = "Medium-wide full-body shot. The person and yoga mat fill most of the frame while keeping the entire head, both knees, feet, and mat visible with a modest, clear margin on every side. Keep the face large enough for facial features to remain readable; do not leave excessive empty floor or make the person appear small. Do not crop the body or mat. Locked-off tripod shot from the first frame: the camera does not move, pan, tilt, dolly, or zoom at any time.";
     const framingSentence = typeof scene.framing_helper_text === "string" && scene.framing_helper_text.trim()
       ? scene.framing_helper_text.trim()
@@ -3131,6 +3136,24 @@ async function prepare(args, browser, rl) {
       }, null, 2));
       if (initialScan.unkeyedItemsDetected || initialScan.duplicateVisibleKeyDetected
         || baselineUuids.length !== initialScan.items.length || initialItems.some(key => !key) || new Set(initialItems).size !== initialItems.length) {
+        // Before Create, these are all pre-existing baseline tiles; none can be
+        // safely dismissed as unrelated because an unresolved tile could later
+        // disappear/refund and make another card look new. Log classification,
+        // but keep the baseline fail-closed until every tile has a stable identity.
+        console.warn(JSON.stringify({
+          event: "baseline_unresolved_tile_classification",
+          phase: "pre_create_existing_baseline",
+          policy: "unresolved_tiles_remain_safety_critical",
+          tiles: initialScan.items.map((item, index) => ({
+            index,
+            media_uuid_resolved: Boolean(item.mediaUuid),
+            key_resolved: Boolean(item.key),
+            classification: item.mediaUuid && item.key ? "stable_existing_baseline_tile" : "unknown_identity_fail_closed",
+            text: String(item.text || "").replace(/\s+/g, " ").trim().slice(0, 160),
+            thumbnail_token: item.thumbnailSrc ? thumbnailIdentityToken(item.thumbnailSrc) : null,
+            state: String(item.state || "").slice(0, 100),
+          })),
+        }));
         throw new Error(`First-row baseline requires unique, stable media UUIDs/keys (tiles=${initialScan.items.length}, UUIDs=${baselineUuids.length}, sample=${baselineUuids.slice(0, 6).join(",") || "none"}).`);
       }
       args._waitInitialBalance = initialBalance;
