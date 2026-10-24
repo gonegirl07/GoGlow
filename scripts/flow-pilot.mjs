@@ -1845,8 +1845,10 @@ async function uploadSceneReferencesUnsafe(page, selectors, referenceImages, ref
         refreshedPickerContainer = snapshot.containerIndex >= 0
           ? page.locator('[role="dialog"], [aria-modal="true"], .cdk-overlay-pane').nth(snapshot.containerIndex)
           : null;
+        const matchedByFullName = snapshot.matches.some(item => item.label.toLowerCase().includes(filename.toLowerCase()));
         freshMatching = snapshot.containerIndex >= 0
-          ? refreshedPickerContainer.locator(selectors.ingredient_library_item + ':visible').filter({ hasText: filename })
+          ? refreshedPickerContainer.locator(selectors.ingredient_library_item + ':visible')
+            .filter({ hasText: matchedByFullName ? filename : filenameStem })
           : null;
         // Use the exact observed matching index after the fast DOM scan. If the
         // picker matches the filename stem instead, the selection below falls back
