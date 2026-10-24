@@ -1689,17 +1689,53 @@ async function uploadSceneReferencesUnsafe(page, selectors, referenceImages, ref
     const pickerResolution = await resolveVisibleIngredientsPicker(page, selectors, filename, filenameStem);
     logReferencePhase("resolve_picker", phaseStartedAt);
     phaseStartedAt = Date.now();
-    const picker = pickerResolution.container.locator(`${selectors.ingredient_library_item}:visible`);
-    const pickerContainer = pickerResolution.container;
-    let matchingAssets = picker.filter({ hasText: filename });
-    // Some Flow library cards display the filename without its extension. Fall back
-    // to the stem only when the exact filename has no visible match.
-    if (await matchingAssets.count().catch(() => 0) === 0 && filenameStem !== filename) {
-      matchingAssets = picker.filter({ hasText: filenameStem });
+    // Prefer the matching locator produced by the scoped inventory. If the picker
+    // re-rendered between inventory and matching, re-resolve the visible dialog once
+    // rather than silently converting a locator error into a misleading zero count.
+    let pickerResolutionCurrent = pickerResolution;
+    let pickerContainer = pickerResolutionCurrent.container;
+    let picker = pickerContainer.locator(`${selectors.ingredient_library_item}:visible`);
+    let matchingAssets = pickerResolutionCurrent.matching;
+    const readMatchCount = async (stage) => {
+      try {
+        const count = await matchingAssets.count();
+        console.log(JSON.stringify({ event: "ingredients_picker_match_count", filename, stage, count,
+          container_visible: await pickerContainer.isVisible().catch(error => false),
+          tile_count: await picker.count().catch(error => -1) }));
+        return count;
+      } catch (error) {
+        console.warn(JSON.stringify({ event: "ingredients_picker_match_count_error", filename, stage,
+          error: String(error?.message || error).slice(0, 500) }));
+        return -1;
+      }
+    };
+    let matchCount = await readMatchCount("inventory_locator_initial");
+    if (matchCount <= 0) {
+      const previousContainerVisible = await pickerContainer.isVisible().catch(() => false);
+      const previousContainerTileCount = await picker.count().catch(() => -1);
+      console.warn(JSON.stringify({ event: "ingredients_picker_re_resolve", filename,
+        reason: "inventory_match_locator_empty_or_failed", previous_container_visible: previousContainerVisible,
+        previous_container_tile_count: previousContainerTileCount }));
+      pickerResolutionCurrent = await resolveVisibleIngredientsPicker(page, selectors, filename, filenameStem);
+      pickerContainer = pickerResolutionCurrent.container;
+      picker = pickerContainer.locator(`${selectors.ingredient_library_item}:visible`);
+      matchingAssets = pickerResolutionCurrent.matching;
+      matchCount = await readMatchCount("after_picker_re_resolve");
+    }
+    // Some Flow library cards display the filename without its extension. The scoped
+    // inventory already tries the exact filename then stem; keep a fresh-locator
+    // fallback for cases where the picker updated during its re-render.
+    if (matchCount <= 0 && filenameStem !== filename) {
+      matchingAssets = picker.filter({ hasText: filename });
+      matchCount = await readMatchCount("fresh_exact_filename");
+      if (matchCount <= 0) {
+        matchingAssets = picker.filter({ hasText: filenameStem });
+        matchCount = await readMatchCount("fresh_filename_stem");
+      }
     }
     // If the picker list does not expose the target yet, use a visible search field
-    // inside this picker only; never search or click a same-name tile in the main grid.
-    if (await matchingAssets.count().catch(() => 0) === 0) {
+    // inside this picker only; never search or click a same-name tile elsewhere.
+    if (matchCount <= 0) {
       const searchCandidates = pickerContainer.locator('input[type="search"], input[placeholder], input[aria-label]');
       const searchCount = await searchCandidates.count().catch(() => 0);
       let searchField = null;
@@ -1717,24 +1753,29 @@ async function uploadSceneReferencesUnsafe(page, selectors, referenceImages, ref
         }
       }
       if (searchField) {
-        await searchField.fill(filename, { timeout: 2000 }).catch(() => {});
+        await searchField.fill(filename, { timeout: 2000 }).catch(error => {
+          console.warn(JSON.stringify({ event: "ingredients_picker_search_fill_error", filename,
+            error: String(error?.message || error).slice(0, 400) }));
+        });
         const searchDeadline = Date.now() + 2500;
         while (Date.now() < searchDeadline) {
           matchingAssets = picker.filter({ hasText: filename });
-          if (await matchingAssets.count().catch(() => 0) === 0 && filenameStem !== filename) {
+          matchCount = await matchingAssets.count().catch(() => 0);
+          if (matchCount === 0 && filenameStem !== filename) {
             matchingAssets = picker.filter({ hasText: filenameStem });
+            matchCount = await matchingAssets.count().catch(() => 0);
           }
-          if (await matchingAssets.count().catch(() => 0) > 0) break;
+          if (matchCount > 0) break;
           await page.waitForTimeout(150);
         }
         console.log(JSON.stringify({ event: "ingredients_picker_search_fallback", filename,
-          search_field_used: true, visible_matching_tiles: await matchingAssets.count().catch(() => 0) }));
+          search_field_used: true, visible_matching_tiles: matchCount }));
       } else {
         console.log(JSON.stringify({ event: "ingredients_picker_search_fallback", filename,
           search_field_used: false, visible_matching_tiles: 0 }));
       }
     }
-    logReferencePhase("match_picker_tile_and_search", phaseStartedAt, { matching_asset_count: await matchingAssets.count().catch(() => 0), search_fallback_considered: true });
+    logReferencePhase("match_picker_tile_and_search", phaseStartedAt, { matching_asset_count: matchCount, search_fallback_considered: true });
     const inventoryStartedAt = Date.now();
     const existingUuids = new Set();
     const existingCount = await matchingAssets.count().catch(() => 0);
