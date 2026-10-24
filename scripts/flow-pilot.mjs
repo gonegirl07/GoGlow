@@ -347,7 +347,41 @@ async function collectAllGeneratedItems(page, selector, { targetKey = null, maxS
           elapsed_ms: Date.now() - reidentificationAttemptStartedAt,
         }));
         let currentIndex = -1;
-        if (expectedToken) {
+        // Prefer the stable media UUID over a signed thumbnail URL. Flow's /asb/
+        // thumbnail tokens can rotate when the project grid is re-entered.
+        const expectedUuid = identity?.mediaUuid
+          || String(identity?.key || "").match(/^media:([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})$/i)?.[1]
+          || null;
+        if (expectedUuid) {
+          const candidates = await page.locator(selector).evaluateAll(elements => elements.map((element, candidateIndex) => {
+            const nodes = [element, ...Array.from(element.querySelectorAll("*"))];
+            const values = [];
+            for (const node of nodes) {
+              for (const attr of ["data-media-id", "data-asset-id", "data-uuid", "data-id", "href", "src"]) {
+                const value = node.getAttribute?.(attr);
+                if (value) values.push(String(value));
+              }
+            }
+            const uuids = Array.from(new Set(values.flatMap(value =>
+              value.match(/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/ig) || []
+            ).map(value => value.toLowerCase())));
+            const textNode = element.cloneNode(true);
+            textNode.querySelectorAll("a,button,[role=button],[aria-label]").forEach(node => node.remove());
+            const text = String(textNode.innerText || textNode.textContent || "").replace(/\s+/g, " ").trim();
+            return { index: candidateIndex, uuids, text };
+          })).catch(() => []);
+          currentIndex = candidates.find(candidate => candidate.uuids.includes(expectedUuid.toLowerCase()))?.index ?? -1;
+          // Some Flow builds expose UUIDs only in list JSON. Use its uniquely
+          // matching text metadata as a second stable-identity source.
+          if (currentIndex < 0) {
+            const networkMatches = candidates.filter(candidate => resolveUuidFromNetwork({ text: candidate.text }) === expectedUuid.toLowerCase());
+            if (networkMatches.length === 1) currentIndex = networkMatches[0].index;
+          }
+          if (currentIndex >= 0) {
+            console.log(JSON.stringify({ event: "media_tile_reidentified_by_uuid", tile_index: index, expected_uuid: expectedUuid.toLowerCase(), matched_index: currentIndex, source: "dom_or_network_metadata" }));
+          }
+        }
+        if (currentIndex < 0 && expectedToken) {
           currentIndex = await page.locator(selector).evaluateAll((elements, expected) =>
             elements.findIndex(element => {
               const source = element.querySelector("img")?.getAttribute("src") || "";
@@ -3066,32 +3100,79 @@ async function prepare(args, browser, rl) {
       const initialInventoryStartedAt = Date.now();
       let initialScan = await collectAllGeneratedItems(chosen.page, selectors.generated_video_items, { uuidCache: baselineUuidCache, topLimit: 3, selectors });
       console.log(JSON.stringify({ event: "wait_preflight_phase_timing", phase: "initial_media_inventory", elapsed_ms: Date.now() - initialInventoryStartedAt, item_count: initialScan.items.length, uuid_count: initialScan.items.filter(item => item.mediaUuid).length }));
-      // If a thumbnail was still missing at capture time, wait and re-capture the row
-      // rather than retrying tile re-identification forever with an expected null token.
+      // If a thumbnail token is missing but all three media UUIDs are already
+      // resolved uniquely, refresh thumbnail URLs only. Re-opening every tile would
+      // trigger three editor round-trips (~30s) and can rotate the very /asb/ tokens
+      // this snapshot is meant to capture. Keep UUID resolution fail-closed.
       for (let thumbnailRetry = 1; thumbnailRetry <= 2
         && initialScan.items.length >= 3
         && initialScan.items.some(item => !item.thumbnailSrc || !thumbnailIdentityToken(item.thumbnailSrc)); thumbnailRetry += 1) {
         const missingIndexes = initialScan.items
           .map((item, index) => !item.thumbnailSrc || !thumbnailIdentityToken(item.thumbnailSrc) ? index : null)
           .filter(index => index !== null);
+        const initialUuids = initialScan.items.map(item => item.mediaUuid);
+        const completeUniqueUuidBaseline = initialUuids.every(Boolean) && new Set(initialUuids).size === initialUuids.length;
         console.warn(JSON.stringify({
           event: "baseline_thumbnail_token_missing_at_capture",
           retry: thumbnailRetry,
           max_retries: 2,
           tile_count: initialScan.items.length,
-          uuid_count: initialScan.items.filter(item => item.mediaUuid).length,
+          uuid_count: initialUuids.filter(Boolean).length,
           missing_tile_indexes: missingIndexes,
           missing_thumbnail_token_indexes: missingIndexes,
+          retry_strategy: completeUniqueUuidBaseline ? "thumbnail_only_snapshot" : "full_uuid_inventory",
           wait_ms: 500,
         }));
         await chosen.page.waitForTimeout(500);
         await waitForFirstRowThumbnailTokens(`recapture_retry_${thumbnailRetry}`);
-        baselineUuidCache.clear();
         const retryInventoryStartedAt = Date.now();
-        initialScan = await collectAllGeneratedItems(chosen.page, selectors.generated_video_items, {
-          uuidCache: baselineUuidCache, topLimit: 3, selectors,
+        const refreshedScan = await collectAllGeneratedItems(chosen.page, selectors.generated_video_items, {
+          uuidCache: baselineUuidCache, topLimit: 3, selectors, skipUuidResolution: completeUniqueUuidBaseline,
         });
-        console.log(JSON.stringify({ event: "wait_preflight_phase_timing", phase: "thumbnail_recapture_inventory", retry: thumbnailRetry, elapsed_ms: Date.now() - retryInventoryStartedAt, item_count: initialScan.items.length, uuid_count: initialScan.items.filter(item => item.mediaUuid).length }));
+        if (completeUniqueUuidBaseline) {
+          const normalizeTileText = value => String(value || "").replace(/\s+/g, " ").trim();
+          const baselineTexts = initialScan.items.map(item => normalizeTileText(item.text));
+          const refreshedTexts = refreshedScan.items.map(item => normalizeTileText(item.text));
+          const baselineTextCounts = new Map();
+          const refreshedTextCounts = new Map();
+          for (const value of baselineTexts) baselineTextCounts.set(value, (baselineTextCounts.get(value) || 0) + 1);
+          for (const value of refreshedTexts) refreshedTextCounts.set(value, (refreshedTextCounts.get(value) || 0) + 1);
+          const sameVisibleRow = refreshedScan.items.length === initialScan.items.length
+            && initialScan.items.every((item, index) => {
+              const refreshed = refreshedScan.items[index];
+              if (!refreshed) return false;
+              if (item.mediaUuid && refreshed.mediaUuid) return item.mediaUuid === refreshed.mediaUuid;
+              const text = baselineTexts[index];
+              return Boolean(text && text === refreshedTexts[index]
+                && baselineTextCounts.get(text) === 1 && refreshedTextCounts.get(text) === 1);
+            });
+          if (sameVisibleRow) {
+            for (const missingIndex of missingIndexes) {
+              const refreshed = refreshedScan.items[missingIndex];
+              if (refreshed?.thumbnailSrc && thumbnailIdentityToken(refreshed.thumbnailSrc)) {
+                initialScan.items[missingIndex].thumbnailSrc = refreshed.thumbnailSrc;
+              }
+            }
+          }
+          console.log(JSON.stringify({
+            event: "wait_preflight_phase_timing",
+            phase: "thumbnail_only_recapture",
+            retry: thumbnailRetry,
+            elapsed_ms: Date.now() - retryInventoryStartedAt,
+            item_count: refreshedScan.items.length,
+            uuid_count: refreshedScan.items.filter(item => item.mediaUuid).length,
+            row_identity_verified: sameVisibleRow,
+            refreshed_indexes: sameVisibleRow ? missingIndexes.filter(index => initialScan.items[index]?.thumbnailSrc && thumbnailIdentityToken(initialScan.items[index].thumbnailSrc)) : [],
+          }));
+          if (!sameVisibleRow) {
+            console.warn("Thumbnail-only recapture could not verify the same first-row tiles; preserving the original UUID baseline and leaving missing tokens unresolved.");
+            break;
+          }
+        } else {
+          baselineUuidCache.clear();
+          initialScan = refreshedScan;
+          console.log(JSON.stringify({ event: "wait_preflight_phase_timing", phase: "thumbnail_recapture_inventory", retry: thumbnailRetry, elapsed_ms: Date.now() - retryInventoryStartedAt, item_count: initialScan.items.length, uuid_count: initialScan.items.filter(item => item.mediaUuid).length }));
+        }
       }
       // Flow may render the three tile shells before its media UUID metadata arrives.
       // Retry only the all-unresolved case; never accept partial/ambiguous identities.
