@@ -1811,7 +1811,7 @@ async function uploadSceneReferencesUnsafe(page, selectors, referenceImages, ref
             if (!visible(overlay)) return;
             const tiles = Array.from(overlay.querySelectorAll(tileSelector)).filter(visible);
             const matching = tiles.filter(tile => {
-              const text = String(tile.innerText || tile.textContent || "").replace(/\\s+/g, " ").trim().toLowerCase();
+              const text = String(tile.innerText || tile.textContent || "").replace(/\s+/g, " ").trim().toLowerCase();
               return text.includes(name.toLowerCase()) || (stem !== name && text.includes(stem.toLowerCase()));
             }).map((tile, index) => {
               const values = [];
@@ -1830,7 +1830,7 @@ async function uploadSceneReferencesUnsafe(page, selectors, referenceImages, ref
               const uniqueUuids = Array.from(new Set(uuids));
               return {
                 index,
-                label: String(tile.innerText || tile.textContent || "").replace(/\\s+/g, " ").trim().slice(0, 180),
+                label: String(tile.innerText || tile.textContent || "").replace(/\s+/g, " ").trim().slice(0, 180),
                 aria_label: tile.getAttribute("aria-label"),
                 uuid: uniqueUuids.includes(pinnedUuid) ? pinnedUuid : (uniqueUuids[0] || null),
               };
