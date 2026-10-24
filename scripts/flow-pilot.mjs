@@ -2440,7 +2440,7 @@ async function loadInputs(args) {
     : "";
   const expressionContent = [normalizedExpression, openEyesGuard].filter(Boolean).join(normalizedExpression ? ". " : "");
   const expressionSection = expressionContent
-    ? `\n\nEXPRESSION AND EYE STATE (follow throughout the entire shot): ${expressionContent} Keep this expression and eye state consistent from the first frame to the last; this instruction takes priority over breathing or other subtle motion.`
+    ? `\n\nEXPRESSION AND EYE STATE (follow throughout the entire shot): ${expressionContent}${/[.!?]$/.test(expressionContent) ? "" : "."} Keep this expression and eye state consistent from the first frame to the last; this instruction takes priority over breathing or other subtle motion.`
     : "";
   const supportingReferenceImages = referenceImages.filter(imagePath => !faceReferenceImages.includes(imagePath));
   const supportingReferenceSection = supportingReferenceImages.length
