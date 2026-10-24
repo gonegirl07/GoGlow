@@ -1756,10 +1756,15 @@ async function uploadSceneReferencesUnsafe(page, selectors, referenceImages, ref
     if (networkUuidShortcut) existingUuids.add(pinnedUuidConfirmedByNetwork ? requestedAssetUuid : networkNameUuids[0]);
     // Only poll lazy thumbnail URLs when Flow JSON did not already identify the
     // unique existing card. This avoids a needless 6.75s wait per reference.
-    const thumbnailDeadline = networkUuidShortcut ? Date.now() : Date.now() + 7000;
+    // If the job explicitly pins a UUID and there is exactly one matching library card,
+    // defer identity verification to the selected Ingredients chip. Avoid repeatedly
+    // querying a lazy/stale thumbnail locator; chip UUID verification below is authoritative.
+    const pinnedUniqueCardShortcut = Boolean(requestedAssetUuid && existingCount === 1);
+    if (pinnedUniqueCardShortcut) existingUuids.add(requestedAssetUuid);
+    const thumbnailDeadline = (networkUuidShortcut || pinnedUniqueCardShortcut) ? Date.now() : Date.now() + 7000;
     let thumbnailPolls = 0;
     do {
-      if (!networkUuidShortcut) {
+      if (!networkUuidShortcut && !pinnedUniqueCardShortcut) {
         existingUuids.clear();
         for (let i = 0; i < existingCount; i += 1) {
           const uuid = await assetUuidFromLocator(matchingAssets.nth(i));
@@ -1784,9 +1789,13 @@ async function uploadSceneReferencesUnsafe(page, selectors, referenceImages, ref
     }));
     let reusedExistingUuid = null;
     if (requestedAssetUuid) {
+      // A single exact-name card is unambiguous by filename; verify the requested UUID
+      // against the attached chip after selection instead of spending 1.2s on each DOM read.
       let requestedFound = false;
-      for (let i = 0; i < existingCount; i += 1) {
-        if (await assetUuidFromLocator(matchingAssets.nth(i)) === requestedAssetUuid) { requestedFound = true; break; }
+      if (existingCount !== 1) {
+        for (let i = 0; i < existingCount; i += 1) {
+          if (await assetUuidFromLocator(matchingAssets.nth(i)) === requestedAssetUuid) { requestedFound = true; break; }
+        }
       }
       const responseConfirmsPin = networkAssetRecords.some(record => record.uuid === requestedAssetUuid
         && record.strings.some(value => value.includes(filename.toLowerCase()) || value.includes(filenameStem.toLowerCase())));
@@ -1808,7 +1817,7 @@ async function uploadSceneReferencesUnsafe(page, selectors, referenceImages, ref
     } else if (existingUuids.size > 1 || existingCount > 1) {
       throw new Error(`Multiple existing library assets match ${filename}; refusing to guess which reference is correct.`);
     } else {
-      if (existingCount > 0) throw new Error(`Found ${existingCount} existing Flow library asset(s) matching ${filename}, but could not read a stable UUID from their DOM attributes/URLs. Refusing to upload a duplicate; inspect the asset entry DOM and selector configuration.`);
+      if (existingCount > 0) throw new Error(`Found ${existingCount} existing Flow library asset(s) matching ${filename}, but could not read a stable UUID from their DOM attributes/URLs. Refusing to upload a duplicate; if this is the intended asset, add its verified UUID to reference_asset_uuids in the scene config, then rerun dry-run to verify the selected Ingredients chip UUID.`);
       const uploadButton = await exactVisibleLocator(page, selectors.ingredient_upload_button, "Upload media button");
       const chooserPromise = page.waitForEvent("filechooser", { timeout: 5000 });
       await uploadButton.click({ timeout: 2500 });
