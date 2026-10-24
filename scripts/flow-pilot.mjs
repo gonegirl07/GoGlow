@@ -795,7 +795,7 @@ async function waitForGenerationAndDownload(page, selectors, { beforeKeys, befor
     const unusualActivityTile = visibleTileFailures.find(item =>
       /unusual activity|browser extensions? that modify the page/i.test(item.text));
     if (unusualActivityTile) {
-      throw new Error(\`FLOW_REJECTED_UNUSUAL_ACTIVITY: Flow rejected this submission at visible tile position \${unusualActivityTile.index}: \${unusualActivityTile.text}\`);
+      throw new Error(`FLOW_REJECTED_UNUSUAL_ACTIVITY: Flow rejected this submission at visible tile position ${unusualActivityTile.index}: ${unusualActivityTile.text}`);
     }
     const scan = await collectAllGeneratedItems(page, selectors.generated_video_items, {
       uuidCache, topLimit: 3, selectors, skipUuidResolution: true,
@@ -2570,7 +2570,7 @@ async function prepare(args, browser, rl) {
     && await visibleModelBeforeSettings.isVisible().catch(() => false)) {
     const currentModelLabel = (await visibleModelBeforeSettings.innerText({ timeout: 2000 }).catch(() => "")).replace(/\s+/g, " ").trim();
     if (/nano banana|imagen|image generation/i.test(currentModelLabel)) {
-      throw new Error(\`Composer is in Image mode (current model: \${JSON.stringify(currentModelLabel)}); switch to Video mode and select \${scene.model} before rerunning. Prompt and references were not changed.\`);
+      throw new Error(`Composer is in Image mode (current model: ${JSON.stringify(currentModelLabel)}); switch to Video mode and select ${scene.model} before rerunning. Prompt and references were not changed.`);
     }
   }
   // Normalize the settings overlay state. If its controls are already visible, toggle it
@@ -2612,7 +2612,7 @@ async function prepare(args, browser, rl) {
     } catch (error) {
       const visibleModelLabel = (await model.innerText({ timeout: 1500 }).catch(() => "")).replace(/\s+/g, " ").trim();
       if (/nano banana|imagen|image generation/i.test(visibleModelLabel)) {
-        throw new Error(\`Composer is in Image mode (current model: \${JSON.stringify(visibleModelLabel)}); switch to Video mode and select \${scene.model} before rerunning.\`);
+        throw new Error(`Composer is in Image mode (current model: ${JSON.stringify(visibleModelLabel)}); switch to Video mode and select ${scene.model} before rerunning.`);
       }
       throw error;
     }
