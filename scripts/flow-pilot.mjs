@@ -168,18 +168,21 @@ async function readCreditBalance(page, selectors) {
 }
 async function generatedItemKeys(page, selector) {
   return page.locator(selector).evaluateAll(elements => elements.map(element => {
-    const sources = [
+    const primarySources = [
       element.querySelector("video")?.getAttribute("src"),
       element.getAttribute("data-id"),
-      element.querySelector("img")?.getAttribute("src"),
       element.getAttribute("href"),
       element.querySelector("a[href]")?.getAttribute("href"),
     ].filter(Boolean).map(String);
+    const imageSource = element.querySelector("img")?.getAttribute("src") || "";
     const uuidFrom = value => {
-      const matches = value.match(/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/ig);
+      const matches = String(value || "").match(/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/ig);
       return matches && matches.length ? matches[matches.length - 1].toLowerCase() : null;
     };
-    const mediaUuid = sources.map(uuidFrom).find(Boolean);
+    // /image/<uuid> identifies a thumbnail image, not necessarily the video asset.
+    // Never promote it into the baseline media identity without independent evidence.
+    const mediaUuid = primarySources.map(uuidFrom).find(Boolean)
+      || (/\/image\//i.test(imageSource) ? null : uuidFrom(imageSource));
     if (mediaUuid) return `media:${mediaUuid}`;
     const textNode = element.cloneNode(true);
     textNode.querySelectorAll("a,button,[role=button],[aria-label]").forEach(node => node.remove());
@@ -1574,15 +1577,16 @@ async function chooseModel(page, selectors, model) {
 
 
 function assetUuidFromUrl(value) {
-  const match = String(value || "").match(/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/i);
-  return match?.[0]?.toLowerCase() || null;
-}
-
-function thumbnailIdentityToken(value, mediaUuidHint = null) {
-  const hintedUuid = assetUuidFromUrl(mediaUuidHint);
-  if (hintedUuid) return `media:${hintedUuid}`;
-  const source = String(value || "");
-  // Flow may replace /image/<uuid> with a signed /asb/<token> URL for the same
+  const match = String(value || "").match(/[0-9a-f]{8}-[0-9a-f  // /image/<uuid> is a thumbnail-image identifier, not reliable proof of the
+  // underlying video UUID. Only a caller-supplied media UUID hint may override it.
+  if (/\/image\//i.test(source)) {
+    try { return new URL(source, "https://flow.google.com").pathname; }
+    catch { return source.split(/[?#]/, 1)[0]; }
+  }
+  const mediaUuid = assetUuidFromUrl(source);
+  if (mediaUuid) return `media:${mediaUuid}`;
+  const asbToken = source.match(/\/asb\/([^/?#]+)/i);
+<token> URL for the same
   // media tile. Prefer the durable media UUID whenever either URL carries one.
   const mediaUuid = assetUuidFromUrl(source);
   if (mediaUuid) return `media:${mediaUuid}`;
@@ -2251,6 +2255,32 @@ async function uploadSceneReferencesUnsafe(page, selectors, referenceImages, ref
     }));
     await activeAsset.scrollIntoViewIfNeeded({ timeout: 400 }).catch(() => {});
     let current = await freshTile();
+    if (!current && matchCount === 1 && requestedAssetUuid) {
+      // The picker can unmount between inventory and click. Re-open once only when
+      // the filename match was unique and the asset UUID is pinned; the attached
+      // Ingredients chip remains the authoritative post-click identity check.
+      const visiblePickerCount = await page.locator(pickerContainerSelector).evaluateAll(nodes =>
+        nodes.filter(node => {
+          const style = getComputedStyle(node);
+          const rect = node.getBoundingClientRect();
+          return style.visibility !== "hidden" && style.display !== "none" && rect.width > 0 && rect.height > 0;
+        }).length).catch(() => 0);
+      if (visiblePickerCount === 0) {
+        console.warn(JSON.stringify({ event: "ingredients_picker_reopen_retry", filename, reason: "unique_pinned_match_picker_closed", pinned_uuid: requestedAssetUuid }));
+        await openIngredientsPicker(page, selectors, filename);
+        pickerResolutionCurrent = await resolveVisibleIngredientsPicker(page, selectors, filename, filenameStem);
+        pickerContainer = pickerResolutionCurrent.container;
+        picker = pickerContainer.locator(`${selectors.ingredient_library_item}:visible`);
+        matchingAssets = pickerResolutionCurrent.matching;
+        const reopenedCount = await matchingAssets.count().catch(() => 0);
+        console.log(JSON.stringify({ event: "ingredients_picker_reopen_retry_result", filename, matching_tile_count: reopenedCount,
+          picker_visible: await pickerContainer.isVisible().catch(() => false) }));
+        if (reopenedCount === 1) {
+          activeAsset = matchingAssets.first();
+          current = await freshTile();
+        }
+      }
+    }
     if (!current) {
       console.log(JSON.stringify({ event: "ingredients_picker_step_diagnostics", step: "before_initial_click", ...(await readPickerDiagnostics(initialAssetBox)) }));
       throw new Error(`Picker closed or target tile became ambiguous before selecting ${filename}; stopping before Add/prompt fill/Create.`);
