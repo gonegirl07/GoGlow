@@ -1347,12 +1347,17 @@ async function inspect(browser) {
         await session.send("Runtime.enable");
         await item.page.waitForTimeout(250);
         const nonDefault = contexts.filter(context => !context.isDefault);
-        const extensionWorlds = nonDefault.filter(context => /^chrome-extension:\/\//i.test(context.origin));
-        if (nonDefault.length) {
-          console.warn("    WARNING: non-default JavaScript execution contexts are present on this Flow tab; inspect extensions or injected scripts before running. This is a diagnostic signal, not proof of the cause.");
-          console.log("    non-default execution contexts:", JSON.stringify(nonDefault));
+        const playwrightUtilityWorlds = nonDefault.filter(context => /^__playwright_utility_world(?:_|$)/i.test(context.name));
+        const noteworthyWorlds = nonDefault.filter(context => !playwrightUtilityWorlds.includes(context));
+        const extensionWorlds = noteworthyWorlds.filter(context => /^chrome-extension:\/\//i.test(context.origin));
+        if (playwrightUtilityWorlds.length) {
+          console.log(`    Playwright utility worlds (informational, excluded from warnings): ${playwrightUtilityWorlds.length}`);
+        }
+        if (noteworthyWorlds.length) {
+          console.warn("    WARNING: non-default JavaScript execution contexts other than Playwright utility worlds are present on this Flow tab; inspect extensions or injected scripts before running. This is a diagnostic signal, not proof of the cause.");
+          console.log("    noteworthy non-default execution contexts:", JSON.stringify(noteworthyWorlds));
         } else {
-          console.log("    execution contexts: only default contexts observed during inspection.");
+          console.log("    execution contexts: only default contexts and/or known Playwright utility worlds observed during inspection.");
         }
         if (extensionWorlds.length) {
           console.warn("    WARNING: extension-origin execution contexts detected on the Flow tab:", JSON.stringify(extensionWorlds));
@@ -2298,10 +2303,16 @@ async function loadInputs(args) {
   const variants = scene.variants === undefined ? 2 : scene.variants;
   if (!Number.isInteger(variants) || variants < 1 || variants > 3) throw new Error("variants must be an integer from 1 to 3.");
   const seatedShot = /\b(?:seated|sitting|sit|sits|kneeling|kneel|kneels)\b/i.test(scene.scene_id + " " + scene.prompt);
+  // Set framing_helper=false when the scene prompt already defines its own framing.
+  // Alternatively, provide framing_helper_text to replace the default helper sentence.
+  // The custom sentence is only appended when the helper is enabled for this scene.
   scene.framing_helper_applied = scene.framing_helper === false ? false : (scene.framing_helper === true || seatedShot);
   if (scene.framing_helper_applied) {
-    scene.prompt = scene.prompt.replace(/\b(?:fills?|occupies?)\s+(?:about\s+)?\d{1,3}\s*(?:percent|%)\s+of\s+(?:the\s+)?frame\s+width\b/gi, "is framed from head to knees");
-    const framingSentence = "Medium-wide full-body shot. The person and yoga mat fill most of the frame while keeping the entire head, both knees, feet, and mat visible with a modest, clear margin on every side. Keep the face large enough for facial features to remain readable; do not leave excessive empty floor or make the person appear small. Do not crop the body or mat. Locked-off tripod shot from the first frame: the camera does not move, pan, tilt, dolly, or zoom at any time.";
+    scene.prompt = scene.prompt.replace(/\\b(?:fills?|occupies?)\\s+(?:about\\s+)?\\d{1,3}\\s*(?:percent|%)\\s+of\\s+(?:the\\s+)?frame\\s+width\\b/gi, "is framed from head to knees");
+    const defaultFramingSentence = "Medium-wide full-body shot. The person and yoga mat fill most of the frame while keeping the entire head, both knees, feet, and mat visible with a modest, clear margin on every side. Keep the face large enough for facial features to remain readable; do not leave excessive empty floor or make the person appear small. Do not crop the body or mat. Locked-off tripod shot from the first frame: the camera does not move, pan, tilt, dolly, or zoom at any time.";
+    const framingSentence = typeof scene.framing_helper_text === "string" && scene.framing_helper_text.trim()
+      ? scene.framing_helper_text.trim()
+      : defaultFramingSentence;
     if (!scene.prompt.includes(framingSentence)) scene.prompt = scene.prompt.trim() + " " + framingSentence;
   }
   if (scene.character_description && !/^[\x00-\x7F]+$/.test(scene.character_description)) throw new Error("Character description must be ASCII/English only; non-ASCII characters are blocked before touching Flow.");
