@@ -792,10 +792,18 @@ async function waitForGenerationAndDownload(page, selectors, { beforeKeys, befor
       elements.slice(0, 6).map((element, index) => ({
         index, text: String(element.innerText || element.textContent || "").replace(/\s+/g, " ").trim(),
       }))).catch(() => []);
+    const baselineFailedTexts = new Set(args._waitInitialFailedTileTexts || []);
     const unusualActivityTile = visibleTileFailures.find(item =>
       /unusual activity|browser extensions? that modify the page/i.test(item.text));
     if (unusualActivityTile) {
       throw new Error(`FLOW_REJECTED_UNUSUAL_ACTIVITY: Flow rejected this submission at visible tile position ${unusualActivityTile.index}: ${unusualActivityTile.text}`);
+    }
+    const newlyFailedTileWithoutIdentity = visibleTileFailures.find(item => {
+      const text = item.text.replace(/\\s+/g, " ").trim().toLowerCase();
+      return (/^failed\\b/i.test(text) || isGenerationFailureText(text)) && !baselineFailedTexts.has(text);
+    });
+    if (newlyFailedTileWithoutIdentity) {
+      throw new Error(`FLOW_GENERATION_FAILED: new Flow tile at position ${newlyFailedTileWithoutIdentity.index} reports failure without a stable media identity: ${newlyFailedTileWithoutIdentity.text}`);
     }
     const scan = await collectAllGeneratedItems(page, selectors.generated_video_items, {
       uuidCache, topLimit: 3, selectors, skipUuidResolution: true,
@@ -2772,6 +2780,7 @@ async function prepare(args, browser, rl) {
       const baselineUuids = initialScan.items.map(item => item.mediaUuid).filter(Boolean);
       const failedBaselineItems = initialScan.items.filter(item =>
         /\bfailed\b/i.test(`${item.state} ${item.text}`) || isGenerationFailureText(`${item.state} ${item.text}`));
+      args._waitInitialFailedTileTexts = failedBaselineItems.map(item => String(item.text || "").replace(/\\s+/g, " ").trim().toLowerCase());
       console.log(JSON.stringify({
         event: "baseline_media_inventory_summary",
         baseline_strategy: "visible_first_row_min_3",
