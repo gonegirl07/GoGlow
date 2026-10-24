@@ -1873,11 +1873,13 @@ async function uploadSceneReferencesUnsafe(page, selectors, referenceImages, ref
           polls += 1;
           slowestScanMs = Math.max(slowestScanMs, scan.elapsedMs || 0);
           const signature = currentCount === 1 ? JSON.stringify(matchingLabels.map(item => ({ label: item.label, uuid: item.uuid }))) : null;
-          if (currentCount === 1 && reuseIndex >= 0 && signature && signature === previousSignature) {
+          const exactFilenameMatch = currentCount === 1 && matchingLabels[0]?.label?.toLowerCase().includes(filename.toLowerCase());
+          const identitySignalAvailable = reuseIndex >= 0 || exactFilenameMatch;
+          if (currentCount === 1 && identitySignalAvailable && signature && signature === previousSignature) {
             stableUniqueCountReads += 1;
             if (stableUniqueCountReads >= 1) {
               const elapsedMs = Date.now() - started;
-              console.log(JSON.stringify({ event: "asset_library_picker_settle_timing", filename, elapsed_ms: elapsedMs, polls, slowest_scan_ms: slowestScanMs, final_count: currentCount, uuid_match: true, stable_unique_count_reads: stableUniqueCountReads }));
+              console.log(JSON.stringify({ event: "asset_library_picker_settle_timing", filename, elapsed_ms: elapsedMs, polls, slowest_scan_ms: slowestScanMs, final_count: currentCount, uuid_match: reuseIndex >= 0, exact_filename_match: exactFilenameMatch, stable_unique_count_reads: stableUniqueCountReads, timeout: false }));
               return elapsedMs;
             }
           } else stableUniqueCountReads = 0;
@@ -1885,14 +1887,14 @@ async function uploadSceneReferencesUnsafe(page, selectors, referenceImages, ref
           await page.waitForTimeout(250);
         }
         const elapsedMs = Date.now() - started;
-        console.log(JSON.stringify({ event: "asset_library_picker_settle_timing", filename, elapsed_ms: elapsedMs, polls, slowest_scan_ms: slowestScanMs, final_count: currentCount, uuid_match: reuseIndex >= 0, stable_unique_count_reads: stableUniqueCountReads, timeout: true }));
+        console.log(JSON.stringify({ event: "asset_library_picker_settle_timing", filename, elapsed_ms: elapsedMs, polls, slowest_scan_ms: slowestScanMs, final_count: currentCount, uuid_match: reuseIndex >= 0, exact_filename_match: currentCount === 1 && Boolean(matchingLabels[0]?.label?.toLowerCase().includes(filename.toLowerCase())), stable_unique_count_reads: stableUniqueCountReads, timeout: true }));
         return elapsedMs;
       };
       settleElapsedMs += await settleFreshPicker(4500);
-      if ((currentCount !== 1 || reuseIndex < 0) && !reopenAttempted) {
+      if ((currentCount !== 1 || (reuseIndex < 0 && !matchingLabels[0]?.label?.toLowerCase().includes(filename.toLowerCase()))) && !reopenAttempted) {
         reopenAttempted = true;
         const reopenStartedAt = Date.now();
-        console.warn(JSON.stringify({ event: "asset_library_reuse_picker_reopen", filename, pinned_uuid: reusedExistingUuid, reason: "fresh picker inventory did not settle to one matching tile", first_inventory_count: currentCount, first_inventory_uuid_match: reuseIndex >= 0 }));
+        console.warn(JSON.stringify({ event: "asset_library_reuse_picker_reopen", filename, pinned_uuid: reusedExistingUuid, reason: "fresh picker inventory did not settle to one exact matching tile", first_inventory_count: currentCount, first_inventory_uuid_match: reuseIndex >= 0, first_inventory_exact_filename_match: currentCount === 1 && Boolean(matchingLabels[0]?.label?.toLowerCase().includes(filename.toLowerCase())) }));
         await resetIngredientsPicker(page, selectors);
         await openIngredientsPicker(page, selectors, filename);
         settleElapsedMs += await settleFreshPicker(4500);
@@ -1901,10 +1903,10 @@ async function uploadSceneReferencesUnsafe(page, selectors, referenceImages, ref
       console.log(JSON.stringify({ event: "asset_library_reuse_recheck", filename, pinned_uuid: reusedExistingUuid,
         currentCount, matching_labels: matchingLabels, stable_unique_count_reads: stableUniqueCountReads,
         fresh_container_resolved: Boolean(refreshedPickerContainer), reopen_attempted: reopenAttempted, settle_wait_ms: settleElapsedMs }));
-      if (!freshMatching || currentCount !== 1) {
+      if (!freshMatching || currentCount !== 1 || (reuseIndex < 0 && !matchingLabels[0]?.label?.toLowerCase().includes(filename.toLowerCase()))) {
         throw new Error(`Reusable asset UUID ${reusedExistingUuid} is not readable from the refreshed picker; matching-name count did not settle to exactly one after fresh inventory${reopenAttempted ? " and one reopen" : ""}; currentCount=${currentCount}; matching_labels=${JSON.stringify(matchingLabels)}. Refusing to select an ambiguous item.`);
       }
-      // A single same-name card may hide its UUID behind a signed thumbnail; verify the pinned UUID against the attached chip after selection.
+      // A single exact-filename card may hide its UUID in the tile DOM; verify the pinned UUID against the attached chip after selection.
       asset = reuseIndex >= 0 ? freshMatching.nth(reuseIndex) : freshMatching.first();
     }
     const requestedAssetUuidForPin = requestedAssetUuid || null;
@@ -2056,12 +2058,14 @@ async function uploadSceneReferencesUnsafe(page, selectors, referenceImages, ref
       console.log(JSON.stringify({ event: "ingredients_picker_click_target", step: "initial", filename, ...targetMeta }));
       const clickableAncestor = activeAsset.locator('xpath=ancestor-or-self::*[@role="option" or @role="button" or self::button or @tabindex][1]').first();
       const ancestorCount = await clickableAncestor.count().catch(() => 0);
+      const initialActivationStartedAt = Date.now();
       if (ancestorCount === 1 && await clickableAncestor.isVisible({ timeout: 200 }).catch(() => false)) {
         const ancestorBox = await clickableAncestor.boundingBox({ timeout: 200 }).catch(() => null);
         if (ancestorBox) await clickableAncestor.click({ position: { x: Math.floor(ancestorBox.width / 2), y: Math.floor(ancestorBox.height / 2) }, timeout: 600 }).catch(() => {});
       } else {
         await activeAsset.click({ position: { x: Math.max(2, Math.floor(firstBox.width / 2)), y: Math.max(2, Math.floor(firstBox.height / 2)) }, timeout: 600 }).catch(() => {});
       }
+      console.log(JSON.stringify({ event: "ingredients_picker_activation_timing", filename, step: "initial_click", elapsed_ms: Date.now() - initialActivationStartedAt, clicked_interactive_ancestor: ancestorCount === 1 }));
     }
     console.log(JSON.stringify({ event: "ingredients_picker_step_diagnostics", step: "after_initial_click", ...(await readPickerDiagnostics(firstBox)) }));
     while (Date.now() < selectionDeadline) {
@@ -2110,20 +2114,23 @@ async function uploadSceneReferencesUnsafe(page, selectors, referenceImages, ref
           const tiles = Array.from(document.querySelectorAll(tileSelector)).filter(tile => String(tile.innerText || tile.textContent || "").toLowerCase().includes(filename.toLowerCase()));
           return Boolean(hit && tiles.some(tile => tile === hit || tile.contains(hit)));
         }, { x: currentBox.x + point.x, y: currentBox.y + point.y, tileSelector: selectors.ingredient_library_item, filename }).catch(() => false);
+        const retryActivationStartedAt = Date.now();
         if (hitTest && ancestorCount === 1 && await ancestor.isVisible({ timeout: 150 }).catch(() => false)) {
           const ancestorBox = await ancestor.boundingBox({ timeout: 150 }).catch(() => null);
           if (ancestorBox) await ancestor.click({ position: { x: Math.floor(ancestorBox.width / 2), y: Math.floor(ancestorBox.height / 2) }, timeout: 500 }).catch(() => {});
         } else if (hitTest) {
           await activeAsset.click({ position: point, timeout: 500 }).catch(() => {});
         }
+        console.log(JSON.stringify({ event: "ingredients_picker_activation_timing", filename, step: "retry_click", elapsed_ms: Date.now() - retryActivationStartedAt, hit_test_inside_tile: hitTest, clicked_interactive_ancestor: ancestorCount === 1 }));
         console.log(JSON.stringify({ event: "ingredients_picker_click_target", step: "retry", filename, clicked_interactive_ancestor: ancestorCount === 1, ...await readPickerDiagnostics(currentBox) }));
         console.log(JSON.stringify({ event: "ingredients_picker_step_diagnostics", step: "after_retry_click", hit_test_inside_tile: hitTest, ...(await readPickerDiagnostics(currentBox)) }));
         const fallbackMethods = ["thumbnail_hover_click", "thumbnail_pointer_sequence", "option_double_click", "focus_space"];
         for (const method of fallbackMethods) {
           if (Date.now() >= selectionDeadline) break;
+          const activationStartedAt = Date.now();
           const latest = await freshTile();
           if (!latest) {
-            console.log(JSON.stringify({ event: "ingredients_picker_activation_attempt", filename, method, skipped: true, reason: "picker_closed_or_tile_missing" }));
+            console.log(JSON.stringify({ event: "ingredients_picker_activation_attempt", filename, method, elapsed_ms: Date.now() - activationStartedAt, skipped: true, reason: "picker_closed_or_tile_missing" }));
             break;
           }
           activeAsset = latest.tile;
@@ -2155,14 +2162,14 @@ async function uploadSceneReferencesUnsafe(page, selectors, referenceImages, ref
               }, { timeout: 350 });
             } else if (method === "option_double_click") await target.dblclick({ timeout: 350 });
             else { await target.focus({ timeout: 250 }); await target.press("Space", { timeout: 250 }); }
-          } catch (error) { console.log(JSON.stringify({ event: "ingredients_picker_activation_attempt", filename, method, action_error: String(error.message || error).slice(0, 180) })); }
+          } catch (error) { console.log(JSON.stringify({ event: "ingredients_picker_activation_action_error", filename, method, elapsed_ms: Date.now() - activationStartedAt, action_error: String(error.message || error).slice(0, 180) })); }
           await page.waitForTimeout(Math.min(150, Math.max(0, selectionDeadline - Date.now())));
           const after = await freshTile();
           const afterSelected = after ? await after.tile.getAttribute("aria-selected", { timeout: 150 }).catch(() => null) : null;
           const afterAddCount = after ? await countVisibleMatches(after.container, selectors.ingredient_add_to_prompt) : 0;
           const afterAdd = after && afterAddCount === 1 ? after.container.locator(selectors.ingredient_add_to_prompt).first() : null;
           const afterPreview = afterAdd ? await inspectAddToPromptContext(afterAdd) : null;
-          console.log(JSON.stringify({ event: "ingredients_picker_activation_attempt", filename, method, picker_still_open: Boolean(after),
+          console.log(JSON.stringify({ event: "ingredients_picker_activation_attempt", filename, method, elapsed_ms: Date.now() - activationStartedAt, picker_still_open: Boolean(after),
             selected_aria_selected: afterSelected, add_to_prompt_visible_count: afterAddCount,
             preview_context: afterPreview ? { depth: afterPreview.depth, context_tag: afterPreview.context_tag, context_role: afterPreview.context_role,
               context_text: afterPreview.context_text, preview_labels: afterPreview.preview_labels, uuids: afterPreview.uuids, image_sources: afterPreview.image_sources?.slice(0, 8) } : null,
@@ -2231,7 +2238,10 @@ async function uploadSceneReferencesUnsafe(page, selectors, referenceImages, ref
     }
     let attachedAfterClick = false;
     let lastClickError = null;
+    const chipAttachStartedAt = Date.now();
+    let addClickAttemptTimings = [];
     for (let clickAttempt = 0; clickAttempt < 3; clickAttempt += 1) {
+      const addClickStartedAt = Date.now();
       try {
         await addToPrompt.click({ timeout: 6000 });
         lastClickError = null;
@@ -2242,9 +2252,12 @@ async function uploadSceneReferencesUnsafe(page, selectors, referenceImages, ref
         document.querySelectorAll(selector).length > beforeCount,
         { selector: selectors.ingredient_reference_items, beforeCount: beforeAttachChipCount },
         { timeout: 2500 }).then(() => true).catch(() => false);
+      addClickAttemptTimings.push({ attempt: clickAttempt + 1, elapsed_ms: Date.now() - addClickStartedAt, attached: attachedAfterClick, click_error: lastClickError ? String(lastClickError.message || lastClickError).slice(0, 140) : null });
+      console.log(JSON.stringify({ event: "ingredient_add_to_prompt_attempt_timing", filename, ...addClickAttemptTimings[addClickAttemptTimings.length - 1] }));
       if (attachedAfterClick) break;
       if (clickAttempt < 2) await page.waitForTimeout(350);
     }
+    console.log(JSON.stringify({ event: "ingredient_add_to_prompt_chip_attach_timing", filename, elapsed_ms: Date.now() - chipAttachStartedAt, attempts: addClickAttemptTimings, attached: attachedAfterClick }));
     if (!attachedAfterClick) {
       await closeIngredientsPicker(page, selectors);
       const detail = lastClickError ? ` Last click error: ${lastClickError.message}` : "";
