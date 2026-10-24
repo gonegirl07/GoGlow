@@ -643,7 +643,7 @@ function makeGenerationLedgerRecord({ scene, projectId, ledgerProjectId, prompt,
   const refundPending = resultStatus === "failed" && /refund(?:ed)?(?: for this generation| may take| pending)?|you will be refunded/i.test(String(timeoutError || ""));
   const chargeStatus = refundPending ? "refunded_pending"
     : (actualAmount !== null ? "charged"
-      : (resultStatus === "failed" && beforeBalance !== null && afterBalance !== null && beforeBalance === afterBalance ? "not_charged" : "unknown"));
+      : (["failed", "rejected_unusual_activity"].includes(resultStatus) && beforeBalance !== null && afterBalance !== null && beforeBalance === afterBalance ? "not_charged" : "unknown"));
   const timestamp = new Date().toISOString();
   attemptId = attemptId || ("attempt-" + randomUUID());
   return {
@@ -3143,7 +3143,7 @@ async function prepare(args, browser, rl) {
       }
       // A confirmed provider failure needs one balance snapshot for the ledger, not
       // another 30-second submission-evidence poll. Keep polling only ambiguous outcomes.
-      if (resultStatus === "failed") {
+      if (["failed", "rejected_unusual_activity"].includes(resultStatus)) {
         try { afterBalance = await readCreditBalance(chosen.page, selectors); } catch {}
       } else {
         const balanceDeadline = Date.now() + 30000;
@@ -3158,7 +3158,7 @@ async function prepare(args, browser, rl) {
           await chosen.page.waitForTimeout(1000);
         } while (Date.now() < balanceDeadline);
       }
-      if (!submissionEvidence && resultStatus !== "failed") {
+      if (!submissionEvidence && !["failed", "rejected_unusual_activity"].includes(resultStatus)) {
         resultStatus = "create_not_confirmed";
         args._stopVariants = true;
         timeoutError = "CREATE_NOT_CONFIRMED: No new media UUID and no credit decrease were observed after Create; do not resubmit automatically without manual inspection.";
