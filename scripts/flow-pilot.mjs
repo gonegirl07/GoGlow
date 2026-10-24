@@ -1525,6 +1525,7 @@ async function verifyAttachedReferenceUuids(page, selectors, expectedUuids, time
 }
 
 async function openIngredientsPicker(page, selectors, filename = "reference asset") {
+  const pickerOpenStartedAt = Date.now();
   let addButton = await exactVisibleLocator(page, selectors.ingredient_add_button, "add ingredients button");
   // Trial clicks wait for a stable hit target without dispatching a real click.
   let lastError = null;
@@ -1563,7 +1564,7 @@ async function openIngredientsPicker(page, selectors, filename = "reference asse
         }).length;
       }, 0), selectors.ingredient_library_item).catch(() => 0);
     if (scopedTileCount > 0) {
-      console.log(JSON.stringify({ event: "ingredients_picker_open_verified", scoped_visible_tiles: scopedTileCount, filename }));
+      console.log(JSON.stringify({ event: "ingredients_picker_open_verified", scoped_visible_tiles: scopedTileCount, filename, elapsed_ms: Date.now() - pickerOpenStartedAt }));
       return;
     }
     await page.waitForTimeout(150);
@@ -1888,10 +1889,12 @@ async function uploadSceneReferencesUnsafe(page, selectors, referenceImages, ref
       settleElapsedMs += await settleFreshPicker(4500);
       if ((currentCount !== 1 || reuseIndex < 0) && !reopenAttempted) {
         reopenAttempted = true;
-        console.warn(JSON.stringify({ event: "asset_library_reuse_picker_reopen", filename, pinned_uuid: reusedExistingUuid, reason: "fresh picker inventory did not settle to one matching tile" }));
+        const reopenStartedAt = Date.now();
+        console.warn(JSON.stringify({ event: "asset_library_reuse_picker_reopen", filename, pinned_uuid: reusedExistingUuid, reason: "fresh picker inventory did not settle to one matching tile", first_inventory_count: currentCount, first_inventory_uuid_match: reuseIndex >= 0 }));
         await resetIngredientsPicker(page, selectors);
         await openIngredientsPicker(page, selectors, filename);
         settleElapsedMs += await settleFreshPicker(4500);
+        console.log(JSON.stringify({ event: "asset_library_picker_reopen_timing", filename, elapsed_ms: Date.now() - reopenStartedAt, second_inventory_count: currentCount, second_inventory_uuid_match: reuseIndex >= 0 }));
       }
       console.log(JSON.stringify({ event: "asset_library_reuse_recheck", filename, pinned_uuid: reusedExistingUuid,
         currentCount, matching_labels: matchingLabels, stable_unique_count_reads: stableUniqueCountReads,
