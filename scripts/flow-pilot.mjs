@@ -306,6 +306,9 @@ async function collectAllGeneratedItems(page, selector, { targetKey = null, maxS
         // Prefer UUID/network metadata; thumbnail URL tokens are a hint only because /asb/ signatures can rotate.
         await page.goto(gridUrl, { waitUntil: "domcontentloaded", timeout: 12000 }).catch(() => {});
         const tabResult = await activateVideosTab(page, selectors).catch(error => `error:${error.message}`);
+        if (/_click_failed|not_found_no_tab_switch|_not_found/.test(tabResult)) {
+          throw new Error(`Videos tab activation could not be confirmed (${tabResult}); refusing tile identity lookup on an uncertain grid.`);
+        }
         // Flow may briefly render All media (or an incomplete grid) after route entry.
         // Wait for at least three visible first-row thumbnails and a stable two-snapshot token list.
         let previousTokens = null;
@@ -631,7 +634,7 @@ async function activateVideosTab(page, selectors) {
         const count = await page.getByRole("tab", { name: /^Videos$/i }).count().catch(() => 0);
         return i < count ? page.getByRole("tab", { name: /^Videos$/i }).nth(i) : null;
       }, "role=tab");
-      if (result) return result;
+      if (result && !result.endsWith("_click_failed")) return result;
     }
     buttonCount = await button.count().catch(() => 0);
     for (let i = 0; i < buttonCount; i += 1) {
@@ -639,7 +642,7 @@ async function activateVideosTab(page, selectors) {
         const count = await page.getByRole("button", { name: /^Videos$/i }).count().catch(() => 0);
         return i < count ? page.getByRole("button", { name: /^Videos$/i }).nth(i) : null;
       }, "role=button");
-      if (result) return result;
+      if (result && !result.endsWith("_click_failed")) return result;
     }
     if (Date.now() < deadline) await page.waitForTimeout(250);
   } while (Date.now() < deadline);
