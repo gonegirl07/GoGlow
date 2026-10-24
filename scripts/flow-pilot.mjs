@@ -1613,13 +1613,27 @@ async function uploadSceneReferencesUnsafe(page, selectors, referenceImages, ref
   for (const imagePath of referenceImages) {
     const filename = path.basename(imagePath);
     const assetStartedAt = Date.now();
+    const referenceTiming = { reset_picker: null, open_picker: null, resolve_picker: null, inventory_and_identity: null,
+      select_asset_and_attach_chip: null, close_picker_and_verify_chips: null };
+    const logReferencePhase = (phase, startedAt, extra = {}) => {
+      const elapsedMs = Date.now() - startedAt;
+      referenceTiming[phase] = elapsedMs;
+      console.log(JSON.stringify({ event: "reference_step_phase_timing", filename, phase, elapsed_ms: elapsedMs, total_elapsed_ms: Date.now() - assetStartedAt, ...extra }));
+    };
+    console.log(JSON.stringify({ event: "reference_step_start", filename, image_path: imagePath, at_ms: assetStartedAt }));
     console.log(`Reference upload started: ${filename}`);
     // Reset/unmount any previous picker before each asset so a stale preview action
     // cannot remain bound to the prior reference.
+    let phaseStartedAt = Date.now();
     await resetIngredientsPicker(page, selectors);
+    logReferencePhase("reset_picker", phaseStartedAt);
     const filenameStem = path.parse(filename).name;
+    phaseStartedAt = Date.now();
     await openIngredientsPicker(page, selectors, filename);
+    logReferencePhase("open_picker", phaseStartedAt);
+    phaseStartedAt = Date.now();
     const pickerResolution = await resolveVisibleIngredientsPicker(page, selectors, filename, filenameStem);
+    logReferencePhase("resolve_picker", phaseStartedAt);
     const picker = pickerResolution.container.locator(`${selectors.ingredient_library_item}:visible`);
     const pickerContainer = pickerResolution.container;
     let matchingAssets = picker.filter({ hasText: filename });
@@ -1665,6 +1679,7 @@ async function uploadSceneReferencesUnsafe(page, selectors, referenceImages, ref
           search_field_used: false, visible_matching_tiles: 0 }));
       }
     }
+    const inventoryStartedAt = Date.now();
     const existingUuids = new Set();
     const existingCount = await matchingAssets.count().catch(() => 0);
     // Flow lazily upgrades old thumbnail URLs from /asb/<token> to flow-content/image/<uuid>.
@@ -1926,6 +1941,8 @@ async function uploadSceneReferencesUnsafe(page, selectors, referenceImages, ref
     if (!assetUuid && !allowUniqueUnresolvedAsset) {
       throw new Error(`Library entry for ${filename} has no stable UUID in DOM or matching Flow JSON response; matching_asset_count=${existingCount}, network_candidate_uuids=${networkUuids.join(",") || "none"}. Refusing to guess among ambiguous entries.`);
     }
+    logReferencePhase("inventory_and_identity", inventoryStartedAt, { matching_asset_count: existingCount, reused_existing_uuid: Boolean(reusedExistingUuid), uuid_resolved: Boolean(assetUuid) });
+    const selectionAndAttachStartedAt = Date.now();
     if (reusedExistingUuid) console.warn(`Reusing existing Flow library asset ${filename} -> UUID ${reusedExistingUuid}; inspect its thumbnail during dry-run before any execute.`);
 
     // Snapshot the currently attached chip identities before selecting this asset.
@@ -2291,6 +2308,8 @@ async function uploadSceneReferencesUnsafe(page, selectors, referenceImages, ref
       throw new Error(`Pinned Flow asset UUID mismatch after attach for ${filename}: requested ${requestedAssetUuidForPin}, newly attached chip UUID ${selectedChipUuid}. Stopping before prompt fill/Create.`);
     }
     assetUuid = selectedChipUuid;
+    logReferencePhase("select_asset_and_attach_chip", selectionAndAttachStartedAt, { selected_chip_uuid_verified: true });
+    const closeAndVerifyStartedAt = Date.now();
     await closeIngredientsPicker(page, selectors);
     const attachedUuids = [];
     const finalChipCount = await chips.count();
@@ -2302,6 +2321,8 @@ async function uploadSceneReferencesUnsafe(page, selectors, referenceImages, ref
     if (new Set(attachedUuids).size !== attachedUuids.length) throw new Error("Duplicate Ingredients chip UUID detected; refusing to continue.");
     if (!attachedUuids.includes(assetUuid)) throw new Error(`Attached chip identity mismatch for ${filename}: expected asset UUID ${assetUuid}, observed ${attachedUuids.join(", ")}.`);
     expectedUuids.push(assetUuid);
+    logReferencePhase("close_picker_and_verify_chips", closeAndVerifyStartedAt, { final_chip_count: finalChipCount, attached_uuid_count: attachedUuids.length });
+    console.log(JSON.stringify({ event: "reference_step_end", filename, elapsed_ms: Date.now() - assetStartedAt, phases: referenceTiming, selected_asset_uuid_verified: true, total_references_so_far: expectedUuids.length }));
     console.log(`Verified Ingredients asset ${filename} -> UUID ${assetUuid}; total reference step ${Date.now() - assetStartedAt}ms`);
   }
 
