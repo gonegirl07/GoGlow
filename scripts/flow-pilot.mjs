@@ -560,39 +560,81 @@ function isGenerationFailureText(value) {
 }
 
 async function activateVideosTab(page, selectors) {
+  const isSelected = async locator => locator.evaluate(element => {
+    let node = element;
+    for (let depth = 0; node && depth < 3; depth += 1, node = node.parentElement) {
+      const ariaSelected = node.getAttribute("aria-selected");
+      const ariaCurrent = node.getAttribute("aria-current");
+      const dataState = node.getAttribute("data-state");
+      const className = typeof node.className === "string" ? node.className : "";
+      if (ariaSelected === "true" || ariaCurrent === "page" || ariaCurrent === "true"
+        || /^(active|selected)$/i.test(dataState || "")
+        || /(^|\\s)(active|selected|is-active|is-selected)(\\s|$)/i.test(className)) return true;
+    }
+    return false;
+  }).catch(() => false);
+  const activateCandidate = async (getFresh, label) => {
+    for (let attempt = 1; attempt <= 2; attempt += 1) {
+      const candidate = await getFresh();
+      if (!candidate || !await candidate.isVisible().catch(() => false)) return null;
+      if (await isSelected(candidate)) return label + "_already_selected";
+      try {
+        await candidate.waitFor({ state: "visible", timeout: 1800 });
+        await candidate.scrollIntoViewIfNeeded({ timeout: 1800 }).catch(() => {});
+        await page.waitForTimeout(120);
+        // Reacquire the locator immediately before click; Flow may replace the tab
+        // node during sidebar/grid re-rendering.
+        const fresh = await getFresh();
+        if (!fresh || !await fresh.isVisible().catch(() => false)) throw new Error("Videos tab became hidden during re-render");
+        if (await isSelected(fresh)) return label + "_selected_during_wait";
+        await fresh.click({ timeout: 4500 });
+        await page.waitForTimeout(250);
+        return label + "_clicked";
+      } catch (error) {
+        const afterFailure = await getFresh().catch(() => null);
+        if (afterFailure && await isSelected(afterFailure)) return label + "_selected_after_click_recovery";
+        console.warn(JSON.stringify({ event: "videos_tab_activation_retry", label, attempt, error: String(error?.message || error).slice(0, 240) }));
+        if (attempt === 2) return label + "_click_failed";
+        await page.waitForTimeout(250);
+      }
+    }
+    return null;
+  };
+
   if (selectors.videos_tab) {
-    const tab = await exactVisibleLocator(page, selectors.videos_tab, "Videos tab");
-    await tab.click({ timeout: 3000 });
-    await page.waitForTimeout(300);
-    return "configured_selector";
+    const result = await activateCandidate(
+      async () => {
+        try { return await exactVisibleLocator(page, selectors.videos_tab, "Videos tab"); }
+        catch { return null; }
+      },
+      "configured_selector",
+    );
+    return result || "configured_selector_not_found";
   }
+
   const roleTab = page.getByRole("tab", { name: /^Videos$/i });
   const button = page.getByRole("button", { name: /^Videos$/i });
-  // Flow can briefly expose neither role while the project sidebar is mounting.
-  // Poll exact role/name matches for up to 7 seconds rather than failing on the first snapshot.
+  // Flow may mount/recreate the sidebar during route transitions. Reacquire exact
+  // role/name locators on each attempt and prefer detecting an already-selected tab.
   const deadline = Date.now() + 7000;
   let tabCount = 0;
   let buttonCount = 0;
   do {
     tabCount = await roleTab.count().catch(() => 0);
     for (let i = 0; i < tabCount; i += 1) {
-      const candidate = roleTab.nth(i);
-      if (await candidate.isVisible().catch(() => false)) {
-        await candidate.click({ timeout: 3000 });
-        await page.waitForTimeout(300);
-        return "role=tab";
-      }
+      const result = await activateCandidate(async () => {
+        const count = await page.getByRole("tab", { name: /^Videos$/i }).count().catch(() => 0);
+        return i < count ? page.getByRole("tab", { name: /^Videos$/i }).nth(i) : null;
+      }, "role=tab");
+      if (result) return result;
     }
-    // Flow's sidebar may expose Videos as a button, and responsive layouts can
-    // leave duplicate hidden buttons in the DOM. Click the first visible exact match.
     buttonCount = await button.count().catch(() => 0);
     for (let i = 0; i < buttonCount; i += 1) {
-      const candidate = button.nth(i);
-      if (await candidate.isVisible().catch(() => false)) {
-        await candidate.click({ timeout: 3000 });
-        await page.waitForTimeout(300);
-        return "role=button";
-      }
+      const result = await activateCandidate(async () => {
+        const count = await page.getByRole("button", { name: /^Videos$/i }).count().catch(() => 0);
+        return i < count ? page.getByRole("button", { name: /^Videos$/i }).nth(i) : null;
+      }, "role=button");
+      if (result) return result;
     }
     if (Date.now() < deadline) await page.waitForTimeout(250);
   } while (Date.now() < deadline);
@@ -2914,10 +2956,14 @@ async function prepare(args, browser, rl) {
     const waitPreflightStartedAt = Date.now();
     const baselineUuidCache = new Map();
     try {
+      const balanceReadStartedAt = Date.now();
       const initialBalance = args.waitForResult ? await readCreditBalance(chosen.page, selectors) : null;
+      console.log(JSON.stringify({ event: "wait_preflight_phase_timing", phase: "read_initial_balance", elapsed_ms: Date.now() - balanceReadStartedAt, success: !args.waitForResult || initialBalance !== null }));
       if (args.waitForResult && initialBalance === null) throw new Error("Could not read an integer credit balance.");
       if (typeof selectors.generated_video_items !== "string" || !selectors.generated_video_items.trim()) throw new Error("Dry-run baseline scan requires a configured generated_video_items selector.");
+      const videosTabStartedAt = Date.now();
       const videosTabState = await activateVideosTab(chosen.page, selectors);
+      console.log(JSON.stringify({ event: "wait_preflight_phase_timing", phase: "activate_videos_tab", elapsed_ms: Date.now() - videosTabStartedAt, state: videosTabState }));
       const waitForFirstRowThumbnailTokens = async (reason, maxWaitMs = 15000) => {
         const startedAt = Date.now();
         let snapshot = [];
@@ -3033,9 +3079,11 @@ async function prepare(args, browser, rl) {
         await chosen.page.waitForTimeout(500);
         await waitForFirstRowThumbnailTokens(`recapture_retry_${thumbnailRetry}`);
         baselineUuidCache.clear();
+        const retryInventoryStartedAt = Date.now();
         initialScan = await collectAllGeneratedItems(chosen.page, selectors.generated_video_items, {
           uuidCache: baselineUuidCache, topLimit: 3, selectors,
         });
+        console.log(JSON.stringify({ event: "wait_preflight_phase_timing", phase: "thumbnail_recapture_inventory", retry: thumbnailRetry, elapsed_ms: Date.now() - retryInventoryStartedAt, item_count: initialScan.items.length, uuid_count: initialScan.items.filter(item => item.mediaUuid).length }));
       }
       // Flow may render the three tile shells before its media UUID metadata arrives.
       // Retry only the all-unresolved case; never accept partial/ambiguous identities.
@@ -3052,12 +3100,15 @@ async function prepare(args, browser, rl) {
         }));
         await chosen.page.waitForTimeout(600);
         baselineUuidCache.clear();
+        const retryInventoryStartedAt = Date.now();
         initialScan = await collectAllGeneratedItems(chosen.page, selectors.generated_video_items, {
           uuidCache: baselineUuidCache, topLimit: 3, selectors,
         });
+        console.log(JSON.stringify({ event: "wait_preflight_phase_timing", phase: "uuid_recapture_inventory", retry: baselineRetry, elapsed_ms: Date.now() - retryInventoryStartedAt, item_count: initialScan.items.length, uuid_count: initialScan.items.filter(item => item.mediaUuid).length }));
       }
       const restoredPreflightScroll = await restorePreflightScrollPosition();
       console.log(JSON.stringify({ event: "wait_preflight_scroll_restored", saved: preflightScrollPosition, result: restoredPreflightScroll }));
+      const baselineValidationStartedAt = Date.now();
       // Keep every stable media UUID in the baseline, including Failed tiles, so a
       // later disappearing/refunded tile cannot make another existing card look new.
       // Failed tiles are diagnostics only and never count as usable video candidates.
@@ -3156,8 +3207,11 @@ async function prepare(args, browser, rl) {
         baseline_media_key_count: initialItems.length,
         baseline_media_keys: initialItems,
       }, null, 2));
+      console.log(JSON.stringify({ event: "wait_preflight_phase_timing", phase: "baseline_validation", elapsed_ms: Date.now() - baselineValidationStartedAt, tile_count: initialScan.items.length, uuid_count: baselineUuids.length }));
+      console.log(JSON.stringify({ event: "wait_preflight_total_timing", elapsed_ms: Date.now() - waitPreflightStartedAt, outcome: "success" }));
       console.log(`Phase timing: wait selector preflight completed in ${Date.now() - waitPreflightStartedAt}ms.`);
     } catch (error) {
+      console.log(JSON.stringify({ event: "wait_preflight_total_timing", elapsed_ms: Date.now() - waitPreflightStartedAt, outcome: "failure", error: String(error?.message || error).slice(0, 400) }));
       // The outer pre-submit failure handler owns cleanup and emits the only
       // authoritative success/failure message after verifying the actual state.
       throw new Error(`Wait selector preflight failed: ${error.message}`);
