@@ -636,7 +636,7 @@ function rawProviderMessage(value) {
   return message || null;
 }
 
-function makeGenerationLedgerRecord({ scene, projectId, ledgerProjectId, prompt, estimatedCost, beforeBalance, afterBalance, resultStatus, mediaUri, downloadedFile, downloadError, timeoutError, attemptNumber, attemptId, startedOn, variantIndex = 1, variantCount = 1 }) {
+function makeGenerationLedgerRecord({ scene, projectId, ledgerProjectId, prompt, estimatedCost, beforeBalance, afterBalance, resultStatus, mediaUri, downloadedFile, downloadError, timeoutError, actualResolution, downloadQualityLabel, attemptNumber, attemptId, startedOn, variantIndex = 1, variantCount = 1 }) {
   const observedDelta = beforeBalance !== null && afterBalance !== null && beforeBalance >= afterBalance
     ? beforeBalance - afterBalance : null;
   const actualAmount = observedDelta !== null && observedDelta > 0 ? observedDelta : null;
@@ -719,6 +719,9 @@ function makeGenerationLedgerRecord({ scene, projectId, ledgerProjectId, prompt,
     },
     media: {
       uri: mediaUri || null,
+      requested_resolution: scene.resolution || "360p",
+      actual_resolution: actualResolution || null,
+      download_quality_label: downloadQualityLabel || null,
       downloaded_file: downloadedFile || null,
       sha256: downloadedFile && fs.existsSync(downloadedFile) ? createHash("sha256").update(fs.readFileSync(downloadedFile)).digest("hex") : null,
       integrity_status: downloadedFile ? "verified" : (mediaUri ? "not_checked" : "missing"),
@@ -737,6 +740,28 @@ function findNewCompletedMediaItems(items, beforeKeys) {
     if (item.progress || /\b(?:generating|generation in progress|processing|in progress|queued|pending)\b/i.test(state)) return false;
     return true;
   });
+}
+
+function readMp4VideoResolution(filename) {
+  try {
+    const buffer = fs.readFileSync(filename);
+    // ISO-BMFF visual sample entries store width/height 24/26 bytes after the codec fourcc.
+    // Only accept plausible dimensions and a recognized video codec marker.
+    const codecs = ["avc1", "avc3", "hvc1", "hev1", "av01", "vp09", "mp4v"];
+    for (const codec of codecs) {
+      let offset = 0;
+      while ((offset = buffer.indexOf(codec, offset, "ascii")) >= 0) {
+        const widthOffset = offset + 28;
+        if (widthOffset + 4 <= buffer.length) {
+          const width = buffer.readUInt16BE(widthOffset);
+          const height = buffer.readUInt16BE(widthOffset + 2);
+          if (width >= 64 && width <= 16384 && height >= 64 && height <= 16384) return { width, height, label: `${width}x${height}`, codec };
+        }
+        offset += 4;
+      }
+    }
+  } catch { /* Keep the download; record unknown metadata instead of guessing. */ }
+  return null;
 }
 
 async function waitForGenerationAndDownload(page, selectors, { beforeKeys, beforeBalance, createClickedAt, uuidCache = new Map(), timeoutMs, downloadDir, sceneId, attemptId, timeoutScreenshot, onSubmissionEvidence = () => {}, variantIndex = 1, variantCount = 1, initialFailedTileTexts = [] }) {
@@ -933,9 +958,20 @@ async function waitForGenerationAndDownload(page, selectors, { beforeKeys, befor
   const mediaUri = page.url();
   try {
     await downloadButton.click({ timeout: 5000 });
-    const qualityLocator = page.locator(selectors.download_360p_original_button);
-    await qualityLocator.waitFor({ state: "visible", timeout: 10000 });
-    const quality = await exactVisibleLocator(page, selectors.download_360p_original_button, "360p Original size download option");
+    const qualityLocator = page.getByRole("menuitem", { name: /Original size/i }).filter({ hasNotText: /Upscaled/i });
+    await qualityLocator.first().waitFor({ state: "visible", timeout: 10000 });
+    const visibleOriginalOptions = [];
+    const optionCount = await qualityLocator.count();
+    for (let i = 0; i < optionCount; i += 1) {
+      const option = qualityLocator.nth(i);
+      if (await option.isVisible().catch(() => false)) visibleOriginalOptions.push(option);
+    }
+    if (visibleOriginalOptions.length !== 1) {
+      throw new Error(`Expected exactly one visible non-upscaled Original size download option, found ${visibleOriginalOptions.length}; refusing ambiguous download choice.`);
+    }
+    const quality = visibleOriginalOptions[0];
+    const selectedDownloadLabel = (await quality.innerText().catch(() => "Original size")).replace(/\\s+/g, " ").trim();
+    console.log(JSON.stringify({ event: "download_quality_option_selected", label: selectedDownloadLabel }));
     const downloadPromise = page.waitForEvent("download", { timeout: 30000 });
     await quality.click({ timeout: 5000 });
     const download = await downloadPromise;
@@ -952,9 +988,14 @@ async function waitForGenerationAndDownload(page, selectors, { beforeKeys, befor
     if (fs.existsSync(target)) throw new Error(`Refusing to overwrite an existing scene/attempt download: ${target}`);
     await download.saveAs(target);
     if (!fs.statSync(target).size) throw new Error("Downloaded media file is empty.");
-    return { downloadedFile: target, mediaUri, downloadError: null };
+    const actualResolution = readMp4VideoResolution(target);
+    console.log(JSON.stringify({ event: "downloaded_media_metadata", file: target, selected_download_label: selectedDownloadLabel,
+      actual_resolution: actualResolution?.label || null, codec: actualResolution?.codec || null, bytes: fs.statSync(target).size }));
+    return { downloadedFile: target, mediaUri, downloadError: null,
+      actualResolution: actualResolution?.label || null, downloadQualityLabel: selectedDownloadLabel };
   } catch (error) {
-    return { downloadedFile: null, mediaUri, downloadError: String(error.message || error) };
+    return { downloadedFile: null, mediaUri, downloadError: String(error.message || error),
+      actualResolution: null, downloadQualityLabel: null };
   }
 }
 
@@ -1467,7 +1508,8 @@ function thumbnailIdentityToken(value, mediaUuidHint = null) {
   catch { return source.split(/[?#]/, 1)[0]; }
 }
 
-async function assetUuidFromLocator(locator) {
+async function assetUuidFromLocator(locator, timeoutMs = 1200) {
+  const lookupStartedAt = Date.now();
   const values = await locator.evaluate(element => {
     const collected = [];
     const add = node => {
@@ -1483,11 +1525,21 @@ async function assetUuidFromLocator(locator) {
       for (const attribute of Array.from(node.attributes || [])) collected.push(attribute.value);
     }
     return collected;
-  }).catch(() => []);
+  }, undefined, { timeout: timeoutMs }).catch(error => {
+    console.log(JSON.stringify({ event: "asset_uuid_dom_lookup_timing", elapsed_ms: Date.now() - lookupStartedAt,
+      timeout_ms: timeoutMs, outcome: "failed", error: String(error?.message || error).slice(0, 240) }));
+    return [];
+  });
   for (const value of values) {
     const uuid = assetUuidFromUrl(value);
-    if (uuid) return uuid;
+    if (uuid) {
+      console.log(JSON.stringify({ event: "asset_uuid_dom_lookup_timing", elapsed_ms: Date.now() - lookupStartedAt,
+        timeout_ms: timeoutMs, outcome: "resolved" }));
+      return uuid;
+    }
   }
+  if (values.length) console.log(JSON.stringify({ event: "asset_uuid_dom_lookup_timing", elapsed_ms: Date.now() - lookupStartedAt,
+    timeout_ms: timeoutMs, outcome: "no_uuid_in_dom" }));
   return null;
 }
 
@@ -1933,7 +1985,12 @@ async function uploadSceneReferencesUnsafe(page, selectors, referenceImages, ref
       record.strings.some(value => value.includes(filename.toLowerCase()) || value.includes(filenameStem.toLowerCase()))
     );
     const networkUuids = Array.from(new Set(networkCandidates.map(record => record.uuid)));
-    let assetUuid = await assetUuidFromLocator(asset);
+    const uuidLookupStartedAt = Date.now();
+    // A previously pinned/reused UUID is verified against the attached chip below.
+    // Avoid querying a stale picker locator for up to Playwright's default 60s timeout.
+    let assetUuid = reusedExistingUuid || await assetUuidFromLocator(asset, 1200);
+    console.log(JSON.stringify({ event: "asset_uuid_resolution_timing", filename, elapsed_ms: Date.now() - uuidLookupStartedAt,
+      reused_existing_uuid_shortcut: Boolean(reusedExistingUuid), dom_lookup_skipped: Boolean(reusedExistingUuid), resolved_from_dom_or_pin: Boolean(assetUuid) }));
     if (!assetUuid && requestedAssetUuidForPin && networkUuids.includes(requestedAssetUuidForPin)) {
       assetUuid = requestedAssetUuidForPin;
     }
@@ -3240,6 +3297,8 @@ async function prepare(args, browser, rl) {
       let mediaUri = chosen.page.url();
       let downloadedFile = null;
       let downloadError = null;
+      let actualResolution = null;
+      let downloadQualityLabel = null;
       let timeoutError = null;
       let afterBalance = null;
       let submissionEvidence = false;
@@ -3269,6 +3328,8 @@ async function prepare(args, browser, rl) {
         downloadedFile = result.downloadedFile;
         mediaUri = result.mediaUri || chosen.page.url();
         downloadError = result.downloadError;
+        actualResolution = result.actualResolution || null;
+        downloadQualityLabel = result.downloadQualityLabel || null;
         resultStatus = "succeeded";
       } catch (error) {
         timeoutError = String(error.message || error);
@@ -3320,7 +3381,8 @@ async function prepare(args, browser, rl) {
       const ledgerRecord = makeGenerationLedgerRecord({
         scene, projectId: chosen.projectId, ledgerProjectId: args.ledgerProjectId, prompt: scene.prompt, estimatedCost: creditCost,
         beforeBalance: args._waitInitialBalance ?? null, afterBalance,
-        resultStatus, mediaUri, downloadedFile, downloadError, timeoutError, attemptNumber, attemptId: args._waitAttemptId, startedOn: args._waitStartedOn,
+        resultStatus, mediaUri, downloadedFile, downloadError, timeoutError, actualResolution, downloadQualityLabel,
+        attemptNumber, attemptId: args._waitAttemptId, startedOn: args._waitStartedOn,
         variantIndex, variantCount,
       });
       try {
