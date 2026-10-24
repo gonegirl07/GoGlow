@@ -24,6 +24,46 @@ For a seated/sitting/kneeling shot, the runner appends an English ASCII framing 
 
 Example job: [flow-pilot-variants.example.json](examples/flow-pilot-variants.example.json). First run `--dry-run --wait` and inspect the settings, prompt, references, total estimate, and cleanup before any explicitly approved `--execute --wait`. Import the resulting JSONL ledger into the browser prototype's **QC cấp dự án** panel to record each attempt's QC and watermark/sparkle status, then choose the best variant with a written reason. The selection and reason are recorded on all ledger attempts sharing the same `job_id`. This tool does not remove AI watermarks.
 
+### Flow runner command example
+
+Always include `--wait` with an approved `--execute`; multi-variant execution is rejected without it. Run the dry-run first and inspect the account, project, references, prompt, credit estimate, and cleanup. Only run the execute command after that review and a separate explicit approval.
+
+```bash
+node scripts/flow-pilot.mjs --dry-run --wait --tab 2 --scene local/mai-job-v15u.json \
+  --selectors local/flow-selectors.json --account-label "pink" \
+  --expected-project "2c77da50-fb9e-4cc2-bf50-8ce67649c32e"
+
+# Only after reviewing a passing dry-run and explicitly approving generation:
+node scripts/flow-pilot.mjs --execute --wait --wait-timeout-ms 600000 --tab 2 \
+  --scene local/mai-job-v15u.json --selectors local/flow-selectors.json \
+  --account-label "pink" --expected-project "2c77da50-fb9e-4cc2-bf50-8ce67649c32e" \
+  --download-dir local/flow-downloads --ledger-output local/flow-generation-ledger.jsonl
+```
+
+A Flow policy refusal is a failed attempt, not a completed clip. Do not automatically retry or change references/prompts to evade the refusal; any later attempt needs a human-reviewed, policy-compliant revision and fresh approval.
+
+For a multi-step confirmation, stdin must contain **both** exact confirmation lines in order. For example, the one-variant policy-review scene below requires the account confirmation and then the one-video confirmation; piping only the second line stops at account confirmation:
+
+```bash
+# First edit examples/mai-job-v15v-policy-review.example.json:
+# replace both REPLACE_WITH paths with the actual reference paths used by your local job.
+node scripts/flow-pilot.mjs --dry-run --wait --tab 2 \
+  --scene examples/mai-job-v15v-policy-review.example.json \
+  --selectors local/flow-selectors.json --account-label "pink" \
+  --expected-project "2c77da50-fb9e-4cc2-bf50-8ce67649c32e"
+
+# Only after reviewing the passing dry-run and explicitly deciding to submit:
+printf 'CONFIRM ACCOUNT pink HAS CREDIT\nCREATE ONE VIDEO FOR mai-seated-breath-v15v-policy-review\n' | \
+node scripts/flow-pilot.mjs --execute --wait --wait-timeout-ms 600000 --tab 2 \
+  --scene examples/mai-job-v15v-policy-review.example.json \
+  --selectors local/flow-selectors.json --account-label "pink" \
+  --expected-project "2c77da50-fb9e-4cc2-bf50-8ce67649c32e" \
+  --download-dir local/flow-downloads --ledger-output local/flow-generation-ledger.jsonl
+```
+
+The example uses one face reference, `face_description_mode: "reference_only"`, and `reference_language_mode: "neutral_reference"`; it deliberately avoids detailed facial-feature instructions and identity-lock phrasing. This is a human-reviewed alternative prompt, **not a way to bypass policy**. A policy refusal still means stop and review the content/reference eligibility rather than retrying automatically.
+
+
 ## Status
 
 The **M1 local planner and validator** is implemented in Python, and a **zero-install browser prototype** is available in app/index.html. The Python planner checks scene structure and total duration and exports Markdown. Neither implementation calls image/video models.

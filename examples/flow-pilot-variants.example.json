@@ -1,7 +1,7 @@
 {
   "job_id": "mai-seated-breath-variants-01",
   "scene_id": "mai-seated-breath-variants-01",
-  "variants": 3,
+  "variants": 2,
   "framing_helper": true,
   "reference_images": [
     "/workspace/mai-fitness/refs/REPLACE_WITH_FRONT_FACE_IMAGE.png",

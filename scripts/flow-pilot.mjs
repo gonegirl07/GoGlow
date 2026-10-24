@@ -65,22 +65,20 @@ Dry-run (validates account, project, settings and prompt; stops before Create):
     --selectors local/flow-selectors.json --account-label "my Flow account" \\\
     --expected-email "you@example.com" --expected-project "project-uuid"
 
-Actual one-scene submission (requires a separate second confirmation):
-  node scripts/flow-pilot.mjs --execute --tab 4 --scene path/to/scene.json \\\
-    --selectors local/flow-selectors.json --account-label "my Flow account" \\\
-    --expected-email "you@example.com" --expected-project "project-uuid"
-
-Wait for completion, download 360p Original size, and append a credit/media ledger record:
-  node scripts/flow-pilot.mjs --execute --wait --wait-timeout-ms 600000 \\
-    --download-dir local/flow-downloads --ledger-output local/flow-generation-ledger.jsonl ...
+Actual one-scene submission (requires a separate second confirmation; --wait is required):
+  node scripts/flow-pilot.mjs --execute --wait --wait-timeout-ms 600000 --tab 4 \\
+    --scene path/to/scene.json --selectors local/flow-selectors.json \\
+    --account-label "my Flow account" --expected-email "you@example.com" \\
+    --expected-project "project-uuid" --download-dir local/flow-downloads \\
+    --ledger-output local/flow-generation-ledger.jsonl
 
 Selector-only preflight (no Create click; validates balance and stable tile identities):
   node scripts/flow-pilot.mjs --dry-run --wait --tab 4 --scene path/to/scene.json \\\
     --selectors local/flow-selectors.json --account-label "my Flow account" \\\
     --expected-email "you@example.com" --expected-project "project-uuid"
 
---wait requires selector keys: credit_balance, generated_video_items, download_media_button,
-and download_360p_original_button. Replace the example selectors and pass --dry-run --wait
+--wait requires selector keys: credit_balance, generated_video_items, and download_media_button.
+The download menu is selected dynamically by its visible "Original size" label. Pass --dry-run --wait
 to validate credit balance and existing tile identities before any real execute.
 Never run --execute until the dry-run and selector inspection have passed.
 `);
@@ -120,51 +118,73 @@ function waitForSelectors(selectors, args) {
 async function readCreditBalance(page, selectors) {
   const selector = typeof selectors === "string" ? selectors : selectors.credit_balance;
   const parseBalance = text => {
-    const match = String(text || "").replace(/,/g, "").match(/(?:^|\D)(\d+)(?:\D|$)/);
-    return match ? Number(match[1]) : null;
+    const normalized = String(text || "").replace(/,/g, "").replace(/\s+/g, " ").trim();
+    const match = normalized.match(/^(\d+)\s*(?:Google Flow credits?|credits?)?$/i)
+      || normalized.match(/(?:^|\s)(\d+)\s+Google Flow credits?\b/i);
+    if (!match) return null;
+    const value = Number(match[1]);
+    return Number.isSafeInteger(value) && value >= 0 ? value : null;
   };
   const readVisible = async () => {
     try {
-      const locator = await exactVisibleLocator(page, selector, "credit balance");
-      return parseBalance(await locator.innerText({ timeout: 2500 }).catch(() => ""));
+      const locator = await exactVisibleLocator(page, selector, "credit balance", 1500);
+      const parsed = parseBalance(await locator.innerText({ timeout: 2000 }).catch(() => ""));
+      return parsed !== null ? parsed : parseBalance(await locator.textContent({ timeout: 1500 }).catch(() => ""));
     } catch { return null; }
   };
-  let balance = await readVisible();
-  if (balance !== null || typeof selectors === "string") return balance;
-  if (!selectors.account_panel_open || !selectors.account_panel_close) return null;
-  const opener = await exactVisibleLocator(page, selectors.account_panel_open, "account panel open button").catch(() => null);
-  if (!opener) return null;
-  // Wait for asynchronous credit rendering; retry opening the account panel once.
-  for (let attempt = 0; attempt < 2; attempt += 1) {
-    await opener.click({ timeout: 2500 }).catch(() => {});
-    try {
-      await page.locator(selector).first().waitFor({ state: "visible", timeout: 8000 });
-      const locator = await exactVisibleLocator(page, selector, "credit balance after opening account panel", 2500);
-      balance = parseBalance(await locator.innerText({ timeout: 2500 }).catch(() => ""));
+  for (let i = 0; i < 4; i += 1) {
+    const value = await readVisible();
+    if (value !== null || typeof selectors === "string") return value;
+    if (i < 3) await page.waitForTimeout(500);
+  }
+  if (typeof selectors === "string" || !selectors.account_panel_open || !selectors.account_panel_close) return null;
+  let openedByUs = false, balance = null;
+  for (let attempt = 0; attempt < 3 && balance === null; attempt += 1) {
+    if (!(await page.locator(selector).first().isVisible().catch(() => false))) {
+      const opener = await exactVisibleLocator(page, selectors.account_panel_open, "account panel open button", 2000).catch(() => null);
+      if (!opener) { await page.waitForTimeout(500); continue; }
+      await opener.click({ timeout: 2500 }).catch(() => {});
+      openedByUs = true;
+    }
+    const deadline = Date.now() + 7000;
+    while (Date.now() < deadline) {
+      balance = await readVisible();
       if (balance !== null) break;
-    } catch {
-      if (attempt === 1) break;
+      await page.waitForTimeout(350);
+    }
+    if (balance === null && attempt < 2) {
       await page.keyboard.press("Escape").catch(() => {});
-      await page.waitForTimeout(300).catch(() => {});
+      await page.waitForTimeout(400);
     }
   }
-  const closer = await exactVisibleLocator(page, selectors.account_panel_close, "account panel close button").catch(() => null);
-  if (closer) {
-    await closer.click({ timeout: 2500 }).catch(() => {});
-    await page.locator(selectors.account_panel_close).waitFor({ state: "hidden", timeout: 2500 }).catch(() => {});
+  if (openedByUs) {
+    const closer = await exactVisibleLocator(page, selectors.account_panel_close, "account panel close button", 1500).catch(() => null);
+    if (closer) {
+      await closer.click({ timeout: 2500 }).catch(() => {});
+      await page.locator(selectors.account_panel_close).waitFor({ state: "hidden", timeout: 2500 }).catch(() => {});
+    } else await page.keyboard.press("Escape").catch(() => {});
   }
   return balance;
 }
-
 async function generatedItemKeys(page, selector) {
   return page.locator(selector).evaluateAll(elements => elements.map(element => {
-    const key = element.getAttribute("data-id")
-      || element.getAttribute("data-testid")
-      || element.getAttribute("href")
-      || element.querySelector("a[href]")?.getAttribute("href")
-      || element.querySelector("video, img")?.getAttribute("src")
-      || "";
-    return String(key).trim();
+    const sources = [
+      element.querySelector("video")?.getAttribute("src"),
+      element.getAttribute("data-id"),
+      element.querySelector("img")?.getAttribute("src"),
+      element.getAttribute("href"),
+      element.querySelector("a[href]")?.getAttribute("href"),
+    ].filter(Boolean).map(String);
+    const uuidFrom = value => {
+      const matches = value.match(/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/ig);
+      return matches && matches.length ? matches[matches.length - 1].toLowerCase() : null;
+    };
+    const mediaUuid = sources.map(uuidFrom).find(Boolean);
+    if (mediaUuid) return `media:${mediaUuid}`;
+    const textNode = element.cloneNode(true);
+    textNode.querySelectorAll("a,button,[role=button],[aria-label]").forEach(node => node.remove());
+    const tileText = String(textNode.innerText || textNode.textContent || "").replace(/\s+/g, " ").trim();
+    return tileText ? `tile-text:${tileText.slice(0, 220)}` : "";
   }));
 }
 
@@ -172,7 +192,7 @@ async function generatedItemKeys(page, selector) {
 // union keys from every viewport instead of treating the first rendered batch as
 // the complete project inventory. Restore the initial scroll position unless a
 // target key was requested, in which case leave that tile in view for a safe click.
-async function collectAllGeneratedItems(page, selector, { targetKey = null, maxScrolls = 120 } = {}) {
+async function collectAllGeneratedItems(page, selector, { targetKey = null, maxScrolls = 120, uuidCache = new Map(), topLimit = null, selectors = {}, skipUuidResolution = false } = {}) {
   const scrollInfo = await page.evaluate(selectorText => {
     const first = document.querySelector(selectorText);
     let node = first?.parentElement || null;
@@ -186,36 +206,303 @@ async function collectAllGeneratedItems(page, selector, { targetKey = null, maxS
     const root = document.scrollingElement || document.documentElement;
     return { kind: "document", initialTop: root.scrollTop, clientHeight: root.clientHeight, scrollHeight: root.scrollHeight };
   }, selector);
+  // Always begin at the true top so the first viewport is the newest/top-of-grid snapshot
+  // and the downward sweep cannot omit tiles above an arbitrary prior scroll position.
+  await page.evaluate(selectorText => {
+    const first = document.querySelector(selectorText);
+    let node = first?.parentElement || null;
+    while (node && node !== document.body) {
+      const style = getComputedStyle(node);
+      if (node.scrollHeight > node.clientHeight + 8 && /(auto|scroll|overlay)/.test(style.overflowY)) {
+        node.scrollTop = 0;
+        return;
+      }
+      node = node.parentElement;
+    }
+    (document.scrollingElement || document.documentElement).scrollTop = 0;
+  }, selector);
+  await page.waitForTimeout(120);
   const all = new Map();
+  // Observe Flow's own JSON responses while the virtualized grid is swept. Some builds
+  // expose the media UUID in list payloads before it appears in thumbnail DOM attributes.
+  const networkMediaRecords = [];
+  const normalizeLabel = value => String(value || "").toLowerCase().replace(/\s+/g, " ").trim();
+  const walkNetworkPayload = (value, depth = 0) => {
+    if (!value || typeof value !== "object" || depth > 12) return;
+    if (Array.isArray(value)) {
+      for (const child of value) walkNetworkPayload(child, depth + 1);
+      return;
+    }
+    const values = Object.entries(value);
+    const uuidFields = values.filter(([key]) => /^(?:uuid|mediauuid|videoid|mediaid|assetid|id)$/i.test(key));
+    const uuid = uuidFields.map(([, item]) => assetUuidFromUrl(item)).find(Boolean)
+      || values.map(([, item]) => typeof item === "string" ? assetUuidFromUrl(item) : null).find(Boolean);
+    if (uuid) {
+      const labels = values.filter(([key, item]) => typeof item === "string"
+        && /title|name|prompt|description|label|text|created/i.test(key))
+        .map(([, item]) => normalizeLabel(item)).filter(item => item.length >= 4);
+      networkMediaRecords.push({ uuid, labels });
+    }
+    for (const [, child] of values) if (child && typeof child === "object") walkNetworkPayload(child, depth + 1);
+  };
+  const networkResponseListener = async response => {
+    try {
+      const url = response.url();
+      if (!/flow\.google|googleusercontent|flow-content/i.test(url)) return;
+      const headers = await response.allHeaders();
+      if (!/json/i.test(headers["content-type"] || "")) return;
+      walkNetworkPayload(await response.json());
+    } catch { /* A consumed/streaming response is not authoritative; DOM fallback remains. */ }
+  };
+  page.on("response", networkResponseListener);
+  const resolveUuidFromNetwork = item => {
+    const tileText = normalizeLabel(item.text);
+    if (!tileText) return null;
+    const matches = networkMediaRecords.filter(record => record.labels.some(label =>
+      label === tileText || (label.length >= 8 && (tileText.includes(label) || label.includes(tileText)))));
+    const uuids = Array.from(new Set(matches.map(record => record.uuid)));
+    return uuids.length === 1 ? uuids[0] : null;
+  };
+  const readScrollTop = async () => page.evaluate(selectorText => {
+    const first = document.querySelector(selectorText);
+    let node = first?.parentElement || null;
+    while (node && node !== document.body) {
+      const style = getComputedStyle(node);
+      if (node.scrollHeight > node.clientHeight + 8 && /(auto|scroll|overlay)/.test(style.overflowY)) return node.scrollTop;
+      node = node.parentElement;
+    }
+    return (document.scrollingElement || document.documentElement).scrollTop;
+  }, selector);
+  const restoreScrollTop = async top => page.evaluate(({ selectorText, top }) => {
+    const first = document.querySelector(selectorText);
+    let node = first?.parentElement || null;
+    while (node && node !== document.body) {
+      const style = getComputedStyle(node);
+      if (node.scrollHeight > node.clientHeight + 8 && /(auto|scroll|overlay)/.test(style.overflowY)) { node.scrollTop = top; return; }
+      node = node.parentElement;
+    }
+    (document.scrollingElement || document.documentElement).scrollTop = top;
+  }, { selectorText: selector, top });
+  const resolveUuidByOpeningTile = async (index, identity = null, rowIdentities = [], expectedTileCount = null) => {
+    const gridUrl = page.url();
+    const scrollTop = await readScrollTop();
+    let lastError = null;
+    // Lazy thumbnails must load before attempting route-based tile re-identification.
+    // Generic tile text is not a stable media identity and is never used as a key.
+    if (!identity?.thumbnailSrc && Number.isInteger(index) && index >= 0) {
+      for (let tokenWait = 0; tokenWait < 20; tokenWait += 1) {
+        const source = await page.locator(selector).nth(index).locator("img").getAttribute("src").catch(() => null);
+        if (source) {
+          identity = { ...(identity || {}), thumbnailSrc: source };
+          break;
+        }
+        await page.waitForTimeout(250);
+      }
+    }
+    for (let attempt = 1; attempt <= 5; attempt += 1) {
+      try {
+        // Re-enter the project grid and Videos tab for each attempt, then re-find
+        // Prefer UUID/network metadata; thumbnail URL tokens are a hint only because /asb/ signatures can rotate.
+        await page.goto(gridUrl, { waitUntil: "domcontentloaded", timeout: 12000 }).catch(() => {});
+        const tabResult = await activateVideosTab(page, selectors).catch(error => `error:${error.message}`);
+        // Flow may briefly render All media (or an incomplete grid) after route entry.
+        // Wait for at least three visible first-row thumbnails and a stable two-snapshot token list.
+        let previousTokens = null;
+        let currentTokens = [];
+        // Do not treat three empty/lazy image elements as a stable grid. Require
+        // at least three non-empty thumbnail URL tokens in two consecutive snapshots.
+        for (let gridPoll = 0; gridPoll < 30; gridPoll += 1) {
+          currentTokens = await page.locator(selector).evaluateAll(elements => elements.slice(0, 6).map(element => {
+            const source = element.querySelector("img")?.getAttribute("src") || "";
+            if (!source) return "";
+            const asbIndex = source.toLowerCase().indexOf("/asb/");
+            if (asbIndex >= 0) {
+              const token = source.slice(asbIndex + 5).split(/[/?#]/, 1)[0];
+              if (token) return `asb:${token}`;
+            }
+            try { return new URL(source, location.href).pathname; }
+            catch { return source.split(/[?#]/, 1)[0]; }
+          })).catch(() => []);
+          const firstThreeTokens = currentTokens.slice(0, 3);
+          const previousFirstThreeTokens = previousTokens?.slice(0, 3) || [];
+          if (firstThreeTokens.length === 3 && firstThreeTokens.every(Boolean) && previousFirstThreeTokens.length === 3
+            && previousFirstThreeTokens.every(Boolean) && currentTokens.length === previousTokens.length
+            && firstThreeTokens.every((token, i) => token === previousFirstThreeTokens[i])) break;
+          previousTokens = currentTokens;
+          await page.waitForTimeout(250);
+        }
+        const expectedToken = identity?.thumbnailSrc ? thumbnailIdentityToken(identity.thumbnailSrc) : null;
+        console.log(JSON.stringify({
+          event: "media_tile_reidentification",
+          attempt,
+          tile_index: index,
+          videos_tab_activation: tabResult,
+          expected_thumbnail_token: expectedToken,
+          visible_first_six_thumbnail_tokens: currentTokens.slice(0, 6),
+          visible_tile_count: await page.locator(selector).count().catch(() => 0),
+        }));
+        let currentIndex = -1;
+        if (expectedToken) {
+          currentIndex = await page.locator(selector).evaluateAll((elements, expected) =>
+            elements.findIndex(element => {
+              const source = element.querySelector("img")?.getAttribute("src") || "";
+              const asb = source.match(/\/asb\/([^/?#]+)/i);
+              let token;
+              if (asb) token = `asb:${asb[1]}`;
+              else { try { token = new URL(source, location.href).pathname; } catch { token = source.split(/[?#]/, 1)[0]; } }
+              return token === expected;
+            }), expectedToken).catch(() => -1);
+        }
+        // Text labels (e.g. generic play/duration text) are not identity.
+        // Re-identification must use a loaded thumbnail token or validated neighbors.
+        // A signed /asb/ token may rotate for the same media. For a middle tile,
+        // permit index fallback only when both neighboring tile tokens and the
+        // DOM tile count still match the original row snapshot.
+        if (currentIndex < 0 && Number.isInteger(index) && index > 0 && index < 2 && rowIdentities.length >= 3) {
+          const expectedRowTokens = rowIdentities.slice(0, 3).map(item => item?.thumbnailSrc ? thumbnailIdentityToken(item.thumbnailSrc) : null);
+          const currentRowTokens = currentTokens.slice(0, 3);
+          const currentTileCount = await page.locator(selector).count().catch(() => 0);
+          const neighborsMatch = Boolean(expectedRowTokens[0] && expectedRowTokens[2]
+            && currentRowTokens[0] === expectedRowTokens[0]
+            && currentRowTokens[2] === expectedRowTokens[2]);
+          const tileCountMatches = expectedTileCount === null || currentTileCount === expectedTileCount;
+          if (neighborsMatch && tileCountMatches && currentRowTokens[index] && expectedRowTokens[index]
+            && currentRowTokens.length === 3) {
+            console.log(JSON.stringify({
+              event: "token_changed_at_index",
+              tile_index: index,
+              old_thumbnail_token: expectedRowTokens[index],
+              new_thumbnail_token: currentRowTokens[index],
+              left_neighbor_match: true,
+              right_neighbor_match: true,
+              expected_tile_count: expectedTileCount,
+              current_tile_count: currentTileCount,
+              accepted_by_position_with_neighbor_validation: true,
+            }));
+            currentIndex = index;
+          }
+        }
+
+        if (currentIndex < 0) throw new Error("Could not re-identify the same tile by thumbnail token/text after returning to the project grid.");
+        const tile = page.locator(selector).nth(currentIndex);
+        await tile.scrollIntoViewIfNeeded({ timeout: 3500 });
+        await page.waitForTimeout(1000);
+        await tile.click({ timeout: 4000, force: true });
+        // Read the browser's current URL directly. Flow can serve a cached editor
+        // route without emitting a fresh network response, so response listeners
+        // and page-context waitForFunction are not authoritative for navigation.
+        const editRoute = /\/edit\/([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})(?:[/?#]|$)/i;
+        await page.waitForURL(url => editRoute.test(new URL(url).pathname), { timeout: 8000 }).catch(() => {});
+        const currentUrl = page.url();
+        const match = currentUrl.match(editRoute);
+        const uuid = match?.[1]?.toLowerCase() || null;
+        if (currentUrl !== gridUrl || uuid) {
+          await page.goBack({ waitUntil: "domcontentloaded", timeout: 10000 }).catch(() => {});
+          await page.waitForURL(url => new URL(url).pathname === new URL(gridUrl).pathname, { timeout: 10000 }).catch(() => {});
+        }
+        await restoreScrollTop(scrollTop);
+        await page.waitForTimeout(250);
+        if (uuid) {
+          if (attempt > 1) console.log(`Resolved tile index ${index} UUID after retry ${attempt}: ${uuid}`);
+          return uuid;
+        }
+        lastError = new Error(`clicked tile did not expose an /edit/<uuid> URL (current URL: ${currentUrl})`);
+      } catch (error) {
+        lastError = error;
+        if (/\/edit\//i.test(page.url())) {
+          await page.goBack({ waitUntil: "domcontentloaded", timeout: 10000 }).catch(() => {});
+          await page.waitForFunction(pathname => location.pathname === pathname, new URL(gridUrl).pathname, { timeout: 10000 }).catch(() => {});
+          await restoreScrollTop(scrollTop).catch(() => {});
+        }
+        if (attempt < 5) {
+          console.warn(`Retrying media UUID lookup for tile index ${index} (attempt ${attempt}/5): ${error.message}`);
+          await page.waitForTimeout(400 * attempt);
+        }
+      }
+    }
+    console.warn(`Could not resolve media UUID by opening tile index ${index} after 5 attempts: ${lastError?.message || "unknown error"}`);
+    return null;
+  };
   let stableBottomRounds = 0;
+  let reachedBottom = false;
+  let topItems = null;
   let targetIndex = null;
   let unkeyedItemsDetected = false;
   let duplicateVisibleKeyDetected = false;
   for (let step = 0; step <= maxScrolls; step += 1) {
-    const visible = await page.locator(selector).evaluateAll(elements => elements.map((element, index) => {
-      const key = element.getAttribute("data-id")
-        || element.getAttribute("data-testid")
-        || element.getAttribute("href")
-        || element.querySelector("a[href]")?.getAttribute("href")
-        || element.querySelector("video, img")?.getAttribute("src")
-        || "";
+    let visible = await page.locator(selector).evaluateAll(elements => elements.map((element, index) => {
+      // Normalize media URLs to their stable UUID so deleted/Failed tiles and URL-shape
+      // changes cannot make the same video look like a newly-created item.
+      const sources = [
+        element.querySelector("video")?.getAttribute("src"),
+        element.getAttribute("data-id"),
+        element.querySelector("img")?.getAttribute("src"),
+        element.getAttribute("href"),
+        element.querySelector("a[href]")?.getAttribute("href"),
+      ].filter(Boolean).map(String);
+      const uuidFrom = value => {
+        const matches = value.match(/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/ig);
+        return matches && matches.length ? matches[matches.length - 1].toLowerCase() : null;
+      };
+      const thumbnailSrc = element.querySelector("img")?.getAttribute("src") || null;
+      const mediaUuid = sources.map(uuidFrom).find(Boolean);
       const text = String(element.innerText || element.textContent || "").replace(/\s+/g, " ").trim();
+      const identityNode = element.cloneNode(true);
+      identityNode.querySelectorAll("a,button,[role=button],[aria-label]").forEach(node => node.remove());
+      const identityText = String(identityNode.innerText || identityNode.textContent || "").replace(/\s+/g, " ").trim();
+      const hint = [text, ...sources].join("|");
+      const key = mediaUuid ? `media:${mediaUuid}` : (thumbnailSrc ? `thumbnail:${thumbnailSrc.split(/[?#]/, 1)[0]}` : "");
       const state = [element.getAttribute("data-status"), element.getAttribute("data-state"),
         element.getAttribute("aria-label"), element.getAttribute("title")].filter(Boolean).join(" ");
       const progress = Boolean(element.querySelector('[role="progressbar"], progress, [aria-valuenow]'));
-      return { key: String(key).trim(), text, state, progress, index };
+      const createdAt = element.querySelector("time[datetime]")?.getAttribute("datetime")
+        || element.getAttribute("data-created-at") || element.getAttribute("data-createdat")
+        || element.querySelector("[data-created-at]")?.getAttribute("data-created-at") || null;
+      return { key: String(key).trim(), mediaUuid: mediaUuid ? mediaUuid.toLowerCase() : null, hint, text, thumbnailSrc, state, progress, index, createdAt };
     }));
+    const domTileCount = visible.length;
+    if (Number.isInteger(topLimit) && topLimit > 0) visible = visible.slice(0, topLimit);
+    for (const item of visible) {
+      if (!item.mediaUuid && item.hint && uuidCache.has(item.hint)) {
+        item.mediaUuid = uuidCache.get(item.hint);
+        item.key = item.mediaUuid ? `media:${item.mediaUuid}` : item.key;
+      }
+      if (!item.mediaUuid) {
+        const networkUuid = resolveUuidFromNetwork(item);
+        if (networkUuid) {
+          item.mediaUuid = networkUuid;
+          item.key = `media:${networkUuid}`;
+          if (item.hint) uuidCache.set(item.hint, networkUuid);
+        }
+      }
+      if (!item.mediaUuid && !skipUuidResolution) {
+        const resolvedUuid = await resolveUuidByOpeningTile(item.index, item, visible, domTileCount);
+        if (resolvedUuid) {
+          item.mediaUuid = resolvedUuid;
+          item.key = `media:${resolvedUuid}`;
+          if (item.hint) uuidCache.set(item.hint, resolvedUuid);
+        }
+      }
+    }
+    if (step === 0) topItems = visible.map(item => ({ ...item }));
     const keysThisViewport = new Set();
     for (const item of visible) {
-      if (!item.key) unkeyedItemsDetected = true;
-      else {
+      if (!item.key || !item.mediaUuid) unkeyedItemsDetected = true;
+      if (item.key) {
         if (keysThisViewport.has(item.key)) duplicateVisibleKeyDetected = true;
         keysThisViewport.add(item.key);
         all.set(item.key, { ...item });
       }
       if (targetKey && item.key === targetKey) targetIndex = item.index;
     }
-    if (targetIndex !== null) return { items: Array.from(all.values()), targetIndex, scrolledToTarget: true, unkeyedItemsDetected, duplicateVisibleKeyDetected };
+    if (targetIndex !== null) {
+      page.off("response", networkResponseListener);
+      return { items: Array.from(all.values()), targetIndex, scrolledToTarget: true, unkeyedItemsDetected, duplicateVisibleKeyDetected };
+    }
+    if (Number.isInteger(topLimit) && topLimit > 0) {
+      reachedBottom = true; // Top-only inventory is complete by contract; no virtualized-grid sweep is required.
+      break;
+    }
     const metrics = await page.evaluate((selectorText) => {
       const first = document.querySelector(selectorText);
       let node = first?.parentElement || null;
@@ -231,7 +518,8 @@ async function collectAllGeneratedItems(page, selector, { targetKey = null, maxS
     }, selector);
     const atBottom = metrics.top + metrics.clientHeight >= metrics.scrollHeight - 3;
     if (atBottom) stableBottomRounds += 1; else stableBottomRounds = 0;
-    if (stableBottomRounds >= 2 || step === maxScrolls) break;
+    if (stableBottomRounds >= 2) { reachedBottom = true; break; }
+    if (step === maxScrolls) break;
     await page.evaluate(({ selectorText, amount }) => {
       const first = document.querySelector(selectorText);
       let node = first?.parentElement || null;
@@ -261,14 +549,14 @@ async function collectAllGeneratedItems(page, selector, { targetKey = null, maxS
     }
     (document.scrollingElement || document.documentElement).scrollTop = initialTop;
   }, { selectorText: selector, initialTop: scrollInfo.initialTop });
-  return { items: Array.from(all.values()), targetIndex: null, scrolledToTarget: false, unkeyedItemsDetected, duplicateVisibleKeyDetected };
+  page.off("response", networkResponseListener);
+  page.off("response", networkResponseListener);
+  return { items: Array.from(all.values()).slice(0, Number.isInteger(topLimit) && topLimit > 0 ? topLimit : undefined), topItems: topItems || [], targetIndex: null, scrolledToTarget: false, unkeyedItemsDetected, duplicateVisibleKeyDetected, reachedBottom, topLimited: Number.isInteger(topLimit) && topLimit > 0 };
 }
 
 function isGenerationFailureText(value) {
-  // Match Flow's current policy-failure wording as well as older generic errors.
-  // Keep bare "Failed" out of this body-level matcher; old failed tiles can remain
-  // in the project. The per-new-tile check below handles that short status safely.
-  return /generation failed|failed to generate|couldn['’]?t generate|unable to generate|video failed|something went wrong|blocked by (?:policy|safety)|might violate|violate(?:s|d)? (?:our )?policies|violat(?:es|ed) (?:our )?(?:policy|policies|guidelines)|prominent people|you will be refunded|generation error/i.test(String(value || ""));
+  // Match provider failures, including Flow's unusual-activity/browser-extension rejection.
+  return /generation failed|failed to generate|couldn['’]?t generate|unable to generate|video failed|something went wrong|blocked by (?:policy|safety)|might violate|violate(?:s|d)? (?:our )?policies|violat(?:es|ed) (?:our )?(?:policy|policies|guidelines)|prominent people|you will be refunded|generation error|unusual activity|browser extensions? that modify the page/i.test(String(value || ""));
 }
 
 async function activateVideosTab(page, selectors) {
@@ -279,18 +567,36 @@ async function activateVideosTab(page, selectors) {
     return "configured_selector";
   }
   const roleTab = page.getByRole("tab", { name: /^Videos$/i });
-  if (await roleTab.count().catch(() => 0) === 1 && await roleTab.isVisible().catch(() => false)) {
-    await roleTab.click({ timeout: 3000 });
-    await page.waitForTimeout(300);
-    return "role=tab";
-  }
   const button = page.getByRole("button", { name: /^Videos$/i });
-  if (await button.count().catch(() => 0) === 1 && await button.isVisible().catch(() => false)) {
-    await button.click({ timeout: 3000 });
-    await page.waitForTimeout(300);
-    return "role=button";
-  }
-  return "not_found_no_tab_switch";
+  // Flow can briefly expose neither role while the project sidebar is mounting.
+  // Poll exact role/name matches for up to 7 seconds rather than failing on the first snapshot.
+  const deadline = Date.now() + 7000;
+  let tabCount = 0;
+  let buttonCount = 0;
+  do {
+    tabCount = await roleTab.count().catch(() => 0);
+    for (let i = 0; i < tabCount; i += 1) {
+      const candidate = roleTab.nth(i);
+      if (await candidate.isVisible().catch(() => false)) {
+        await candidate.click({ timeout: 3000 });
+        await page.waitForTimeout(300);
+        return "role=tab";
+      }
+    }
+    // Flow's sidebar may expose Videos as a button, and responsive layouts can
+    // leave duplicate hidden buttons in the DOM. Click the first visible exact match.
+    buttonCount = await button.count().catch(() => 0);
+    for (let i = 0; i < buttonCount; i += 1) {
+      const candidate = button.nth(i);
+      if (await candidate.isVisible().catch(() => false)) {
+        await candidate.click({ timeout: 3000 });
+        await page.waitForTimeout(300);
+        return "role=button";
+      }
+    }
+    if (Date.now() < deadline) await page.waitForTimeout(250);
+  } while (Date.now() < deadline);
+  return "not_found_no_tab_switch (tabs=" + tabCount + ", buttons=" + buttonCount + ")";
 }
 
 function appendGenerationLedger(pathname, record) {
@@ -315,24 +621,29 @@ function nextLedgerAttemptNumber(pathname, sceneId) {
 }
 
 function rawProviderMessage(value) {
-  const message = String(value || "");
+  let message = String(value || "");
   const tileMarker = " reports failure: ";
   const tileIndex = message.indexOf(tileMarker);
-  if (tileIndex >= 0) return message.slice(tileIndex + tileMarker.length).trim();
+  if (tileIndex >= 0) message = message.slice(tileIndex + tileMarker.length);
   const pageMarker = "Flow displayed a generation/policy failure: ";
   const pageIndex = message.indexOf(pageMarker);
-  if (pageIndex >= 0) return message.slice(pageIndex + pageMarker.length).trim();
+  if (pageIndex >= 0) message = message.slice(pageIndex + pageMarker.length);
+  message = message
+    .replace(/\bTrack status here\b/ig, " ")
+    .replace(/\b(?:refresh|undo|delete_forever|more_vert|download)\b/ig, " ")
+    .replace(/\s+/g, " ")
+    .trim();
   return message || null;
 }
 
-function makeGenerationLedgerRecord({ scene, projectId, ledgerProjectId, prompt, estimatedCost, beforeBalance, afterBalance, resultStatus, mediaUri, downloadedFile, downloadError, timeoutError, attemptNumber, attemptId, startedOn, variantIndex = 1, variantCount = 1 }) {
+function makeGenerationLedgerRecord({ scene, projectId, ledgerProjectId, prompt, estimatedCost, beforeBalance, afterBalance, resultStatus, mediaUri, downloadedFile, downloadError, timeoutError, actualResolution, downloadQualityLabel, attemptNumber, attemptId, startedOn, variantIndex = 1, variantCount = 1 }) {
   const observedDelta = beforeBalance !== null && afterBalance !== null && beforeBalance >= afterBalance
     ? beforeBalance - afterBalance : null;
   const actualAmount = observedDelta !== null && observedDelta > 0 ? observedDelta : null;
   const refundPending = resultStatus === "failed" && /refund(?:ed)?(?: for this generation| may take| pending)?|you will be refunded/i.test(String(timeoutError || ""));
   const chargeStatus = refundPending ? "refunded_pending"
     : (actualAmount !== null ? "charged"
-      : (resultStatus === "failed" && beforeBalance !== null && afterBalance !== null && beforeBalance === afterBalance ? "not_charged" : "unknown"));
+      : (["failed", "rejected_unusual_activity"].includes(resultStatus) && beforeBalance !== null && afterBalance !== null && beforeBalance === afterBalance ? "not_charged" : "unknown"));
   const timestamp = new Date().toISOString();
   attemptId = attemptId || ("attempt-" + randomUUID());
   return {
@@ -354,25 +665,47 @@ function makeGenerationLedgerRecord({ scene, projectId, ledgerProjectId, prompt,
       const referenceImages = scene.reference_images || [];
       const selectedFaceRefs = scene.face_reference_ids || [scene.face_reference_id || referenceImages[0]].filter(Boolean);
       const selectedPaths = new Set(selectedFaceRefs.map(item => path.resolve(String(item))));
+      const otherReferences = referenceImages.filter(item => !selectedPaths.has(path.resolve(String(item))));
+      const faceReferenceIds = selectedFaceRefs.map(item => path.basename(item));
+      const otherReferenceIds = otherReferences.map(item => path.basename(item));
+      // Fingerprint reference image bytes and their roles/order, without storing local paths.
+      const referenceSetKey = createHash("sha256").update(JSON.stringify({
+        face_reference_sha256: selectedFaceRefs.map(item => createHash("sha256").update(fs.readFileSync(item)).digest("hex")),
+        other_reference_sha256: otherReferences.map(item => createHash("sha256").update(fs.readFileSync(item)).digest("hex")),
+      }), "utf8").digest("hex");
       return {
         model_label: scene.model || "Omni 1.1 Flash",
         resolution: scene.resolution || "360p",
         duration_seconds: Number.parseInt(scene.duration || "8s", 10) || 8,
         aspect_ratio: "9:16",
         pose_reference_id: null,
-        face_reference_id: selectedFaceRefs[0] ? path.basename(selectedFaceRefs[0]) : null,
-        face_reference_ids: selectedFaceRefs.map(item => path.basename(item)),
+        face_reference_id: faceReferenceIds[0] || null,
+        face_reference_ids: faceReferenceIds,
         face_description_mode: scene.face_description_mode || "include",
+        reference_language_mode: scene.reference_language_mode || "identity_preserving",
+        reference_set_key: referenceSetKey,
         expression: scene.expression || null,
-        other_reference_ids: referenceImages.filter(item => !selectedPaths.has(path.resolve(String(item)))).map(item => path.basename(item)),
+        other_reference_ids: otherReferenceIds,
       };
     })(),
     prompt: { text: prompt, sha256: createHash("sha256").update(prompt, "utf8").digest("hex"), template_version: null },
     rule_ids: [],
     result: {
       status: resultStatus,
-      provider_message: resultStatus === "failed" ? rawProviderMessage(timeoutError) : (timeoutError || null),
-      failure: resultStatus === "failed" ? { category: "browser_automation", message: timeoutError || downloadError || "Flow result was not verified.", provider_error_code: null, retryable: false, suggested_prompt_revision: null, revision_rationale: null } : null,
+      provider_message: ["failed", "rejected_unusual_activity"].includes(resultStatus) ? rawProviderMessage(timeoutError) : (timeoutError || null),
+      failure: ["failed", "rejected_unusual_activity"].includes(resultStatus) ? {
+        category: resultStatus === "rejected_unusual_activity" ? "provider_anti_abuse_rejection"
+          : /prominent people|might violate our policies/i.test(String(timeoutError || "")) ? "provider_policy_prominent_people" : "browser_automation",
+        failure_reason: resultStatus === "rejected_unusual_activity" ? "unusual_activity"
+          : /prominent people|might violate our policies|you will be refunded/i.test(String(timeoutError || "")) ? "policy_prominent_people" : "provider_generation_failed",
+        message: timeoutError || downloadError || "Flow result was not verified.",
+        provider_error_code: null,
+        retryable: false,
+        suggested_prompt_revision: null,
+        revision_rationale: /prominent people|might violate our policies/i.test(String(timeoutError || ""))
+          ? "Stop the batch. Do not retry automatically or alter references/prompt to evade the policy decision. Review the content and Flow policy; any new attempt requires a human-reviewed, policy-compliant revision and fresh confirmation."
+          : null,
+      } : null,
     },
     credits: {
       estimated_amount: estimatedCost,
@@ -386,6 +719,9 @@ function makeGenerationLedgerRecord({ scene, projectId, ledgerProjectId, prompt,
     },
     media: {
       uri: mediaUri || null,
+      requested_resolution: scene.resolution || "360p",
+      actual_resolution: actualResolution || null,
+      download_quality_label: downloadQualityLabel || null,
       downloaded_file: downloadedFile || null,
       sha256: downloadedFile && fs.existsSync(downloadedFile) ? createHash("sha256").update(fs.readFileSync(downloadedFile)).digest("hex") : null,
       integrity_status: downloadedFile ? "verified" : (mediaUri ? "not_checked" : "missing"),
@@ -396,7 +732,39 @@ function makeGenerationLedgerRecord({ scene, projectId, ledgerProjectId, prompt,
   };
 }
 
-async function waitForGenerationAndDownload(page, selectors, { beforeKeys, beforeBalance, timeoutMs, downloadDir, sceneId, attemptId, timeoutScreenshot, variantIndex = 1, variantCount = 1 }) {
+function findNewCompletedMediaItems(items, beforeKeys) {
+  const baseline = new Set(beforeKeys || []);
+  return (items || []).filter(item => {
+    if (!item?.mediaUuid || !item.key || baseline.has(item.key)) return false;
+    const state = `${item.state || ""} ${item.text || ""}`;
+    if (item.progress || /\b(?:generating|generation in progress|processing|in progress|queued|pending)\b/i.test(state)) return false;
+    return true;
+  });
+}
+
+function readMp4VideoResolution(filename) {
+  try {
+    const buffer = fs.readFileSync(filename);
+    // ISO-BMFF visual sample entries store width/height 24/26 bytes after the codec fourcc.
+    // Only accept plausible dimensions and a recognized video codec marker.
+    const codecs = ["avc1", "avc3", "hvc1", "hev1", "av01", "vp09", "mp4v"];
+    for (const codec of codecs) {
+      let offset = 0;
+      while ((offset = buffer.indexOf(codec, offset, "ascii")) >= 0) {
+        const widthOffset = offset + 28;
+        if (widthOffset + 4 <= buffer.length) {
+          const width = buffer.readUInt16BE(widthOffset);
+          const height = buffer.readUInt16BE(widthOffset + 2);
+          if (width >= 64 && width <= 16384 && height >= 64 && height <= 16384) return { width, height, label: `${width}x${height}`, codec };
+        }
+        offset += 4;
+      }
+    }
+  } catch { /* Keep the download; record unknown metadata instead of guessing. */ }
+  return null;
+}
+
+async function waitForGenerationAndDownload(page, selectors, { beforeKeys, beforeBalance, createClickedAt, uuidCache = new Map(), timeoutMs, downloadDir, sceneId, attemptId, timeoutScreenshot, onSubmissionEvidence = () => {}, variantIndex = 1, variantCount = 1, initialFailedTileTexts = [] }) {
   const itemLocator = page.locator(selectors.generated_video_items);
   let deadline = Date.now() + timeoutMs;
   let chargedExtensionUsed = false;
@@ -425,14 +793,14 @@ async function waitForGenerationAndDownload(page, selectors, { beforeKeys, befor
   while (true) {
     if (Date.now() >= deadline) {
       // A credit debit is strong evidence that Create was accepted even when Flow's
-      // media grid is stale. Give the newly charged generation one extra five-minute
-      // discovery window; never click Create again.
+      // media grid is stale. Give the newly charged generation one short, bounded
+      // discovery extension; never click Create again.
       if (!chargedExtensionUsed && beforeBalance !== null) {
         const currentBalance = await readCreditBalance(page, selectors).catch(() => null);
         if (currentBalance !== null && currentBalance < beforeBalance) {
           chargedExtensionUsed = true;
-          deadline = Date.now() + 300000;
-          console.warn(`Flow credit balance decreased (${beforeBalance} -> ${currentBalance}) but the new video is not yet verified; extending result polling by 300000ms without resubmitting.`);
+          deadline = Date.now() + 30000;
+          console.warn(`Flow credit balance decreased (${beforeBalance} -> ${currentBalance}) but the new video is not yet verified; extending result polling by 30000ms without resubmitting.`);
         } else {
           break;
         }
@@ -444,25 +812,85 @@ async function waitForGenerationAndDownload(page, selectors, { beforeKeys, befor
     // on every grid poll before comparing the new result against the pre-Create inventory.
     await activateVideosTab(page, selectors).catch(() => "not_found_no_tab_switch");
     await failIfVisible();
-    const scan = await collectAllGeneratedItems(page, selectors.generated_video_items).catch(() => ({ items: [] }));
-    const newItems = scan.items.filter(item => item.key && !beforeKeys.includes(item.key));
-    const firstTile = scan.items[0] || null;
-    const firstTileIsNew = Boolean(firstTile && firstTile.key && !beforeKeys.includes(firstTile.key)
-      && scan.items.length > beforeKeys.length);
-    const candidateItems = firstTileIsNew ? [firstTile] : newItems;
+    // Some failed cards have no UUID/thumbnail/key, so inspect visible tile text directly.
+    const visibleTileFailures = await page.locator(selectors.generated_video_items).evaluateAll(elements =>
+      elements.slice(0, 6).map((element, index) => ({
+        index, text: String(element.innerText || element.textContent || "").replace(/\s+/g, " ").trim(),
+      }))).catch(() => []);
+    const baselineFailedTexts = new Set(initialFailedTileTexts);
+    const unusualActivityTile = visibleTileFailures.find(item =>
+      /unusual activity|browser extensions? that modify the page/i.test(item.text)
+      && !baselineFailedTexts.has(item.text.replace(/\s+/g, " ").trim().toLowerCase()));
+    if (unusualActivityTile) {
+      throw new Error(`FLOW_REJECTED_UNUSUAL_ACTIVITY: Flow rejected this submission at visible tile position ${unusualActivityTile.index}: ${unusualActivityTile.text}`);
+    }
+    const newlyFailedTileWithoutIdentity = visibleTileFailures.find(item => {
+      const text = item.text.replace(/\s+/g, " ").trim().toLowerCase();
+      return (/^failed\b/i.test(text) || isGenerationFailureText(text)) && !baselineFailedTexts.has(text);
+    });
+    if (newlyFailedTileWithoutIdentity) {
+      throw new Error(`FLOW_GENERATION_FAILED: new Flow tile at position ${newlyFailedTileWithoutIdentity.index} reports failure without a stable media identity: ${newlyFailedTileWithoutIdentity.text}`);
+    }
+    const scan = await collectAllGeneratedItems(page, selectors.generated_video_items, {
+      uuidCache, topLimit: 3, selectors, skipUuidResolution: true,
+    }).catch(() => ({ items: [], topItems: [], reachedBottom: false, topLimited: false }));
+    if (!scan.topLimited || scan.duplicateVisibleKeyDetected) {
+      console.warn("Post-Create media inventory snapshot is not ready; retrying within the bounded wait deadline.");
+      await page.waitForTimeout(500);
+      continue;
+    }
+    // Do not open a generating tile to resolve its UUID: its thumbnail/token can
+    // rotate while rendering. Wait until Flow exposes a media UUID in DOM/network
+    // metadata, then identify the new result strictly by set difference vs baseline.
+    const topItemsNow = scan.items || scan.topItems || [];
+    const baselineKeys = new Set(beforeKeys || []);
+    const baselineKeyCounts = new Map();
+    for (const key of beforeKeys || []) baselineKeyCounts.set(key, (baselineKeyCounts.get(key) || 0) + 1);
+    const newUuidItems = topItemsNow.filter(item => item?.mediaUuid && item.key && !baselineKeys.has(item.key));
+    if (newUuidItems.length > 0) onSubmissionEvidence({ kind: "new_media_uuid", keys: newUuidItems.map(item => item.key) });
+    const newItems = findNewCompletedMediaItems(topItemsNow, beforeKeys);
+    // Failed cards may have no UUID and generic action links. Use cleaned tile-local
+    // text as identity and occurrence counts so duplicate failures remain detectable.
+    const newFailedTile = topItemsNow.find(item => {
+      if (!item?.key) return false;
+      const state = `${item.state || ""} ${item.text || ""}`;
+      if (!(/\bfailed\b/i.test(state) || isGenerationFailureText(state))) return false;
+      const occurrence = topItemsNow.slice(0, item.index + 1).filter(candidate => candidate?.key === item.key).length;
+      return occurrence > (baselineKeyCounts.get(item.key) || 0);
+    });
+    if (newFailedTile) {
+      const failureText = `${newFailedTile.text || ""} ${newFailedTile.state || ""}`.replace(/\s+/g, " ").trim();
+      const failureReason = /prominent people|might violate our policies|you will be refunded/i.test(failureText)
+        ? "policy_prominent_people" : "provider_generation_failed";
+      throw new Error(`FLOW_GENERATION_FAILED: ${failureReason}: new Flow tile at position ${newFailedTile.index} [${newFailedTile.key}] reports failure: ${failureText}`);
+    }
+    // UUID-backed failures remain covered by this check; no failed item is eligible
+    // for download even if Flow exposes it as a completed media record.
+    const candidateItems = newItems.filter(item =>
+      !(/\bfailed\b/i.test(`${item.state} ${item.text}`) || isGenerationFailureText(`${item.state} ${item.text}`)));
     const failedTile = newItems.find(item =>
       /\bfailed\b/i.test(`${item.state} ${item.text}`)
       || isGenerationFailureText(`${item.state} ${item.text}`));
     if (failedTile) {
       throw new Error(`FLOW_GENERATION_FAILED: new Flow tile ${failedTile.key} reports failure: ${failedTile.text || failedTile.state}`);
     }
-    if (!firstTileIsNew && newItems.length > 1) {
-      throw new Error(`More than one new Flow video tile appeared after a full virtualized-grid sweep (${newItems.length}); refusing to guess which clip to download.`);
+    if (candidateItems.length > 1) {
+      throw new Error(`More than one new non-failed Flow video tile appeared in the top-of-grid result check (${candidateItems.length}); refusing to guess which clip to download.`);
     }
     if (candidateItems.length === 1 && !attemptedKeys.has(candidateItems[0].key)) {
-      newKey = candidateItems[0].key;
+      const candidate = candidateItems[0];
+      if (candidate.createdAt) {
+        const createdMs = Date.parse(candidate.createdAt);
+        const createMs = Date.parse(createClickedAt || "");
+        if (!Number.isFinite(createdMs) || !Number.isFinite(createMs) || createdMs <= createMs) {
+          console.warn(`Top tile ${candidate.key} has an unreadable or non-new creation timestamp; result remains unknown and will not be downloaded.`);
+          await page.waitForTimeout(1000);
+          continue;
+        }
+      }
+      newKey = candidate.key;
       attemptedKeys.add(newKey);
-      const located = await collectAllGeneratedItems(page, selectors.generated_video_items, { targetKey: newKey }).catch(() => ({ targetIndex: null }));
+      const located = await collectAllGeneratedItems(page, selectors.generated_video_items, { targetKey: newKey, topLimit: 3, selectors, skipUuidResolution: true }).catch(() => ({ targetIndex: null }));
       if (located.targetIndex !== null) {
         newItem = itemLocator.nth(located.targetIndex);
         await newItem.click({ timeout: 5000 });
@@ -489,15 +917,15 @@ async function waitForGenerationAndDownload(page, selectors, { beforeKeys, befor
                   const currentBalance = await readCreditBalance(page, selectors).catch(() => null);
                   if (currentBalance !== null && currentBalance < beforeBalance) {
                     chargedExtensionUsed = true;
-                    deadline = Date.now() + 300000;
+                    deadline = Date.now() + 30000;
                     newItem = null;
                     newKey = null;
-                    console.warn(`Flow credit balance decreased (${beforeBalance} -> ${currentBalance}) but Download media is not ready; extending result polling by 300000ms without resubmitting.`);
+                    console.warn(`Flow credit balance decreased (${beforeBalance} -> ${currentBalance}) but Download media is not ready; extending result polling by 30000ms without resubmitting.`);
                     break;
                   }
                 }
                 await captureTimeout();
-                throw new Error("New video detail opened, but generation did not expose Download media before the wait deadline.");
+                throw new Error("FLOW_SUBMITTED_UNIDENTIFIED: New video detail opened, but generation did not expose Download media before the wait deadline.");
               }
               await page.waitForTimeout(1000);
             }
@@ -516,7 +944,7 @@ async function waitForGenerationAndDownload(page, selectors, { beforeKeys, befor
   if (!newItem || !newKey) {
     await failIfVisible();
     await captureTimeout();
-    throw new Error(`No verified new video detail/download became available within ${timeoutMs}ms. The virtualized media grid was fully swept; completion remains unverified. Do not retry.`);
+    throw new Error(`FLOW_SUBMITTED_UNIDENTIFIED: No verified new video UUID/detail/download became available within ${timeoutMs}ms. Completion remains unverified; do not retry automatically.`);
   }
   const remainingMs = Math.max(1000, deadline - Date.now());
   const downloadButtonLocator = page.locator(selectors.download_media_button);
@@ -524,15 +952,26 @@ async function waitForGenerationAndDownload(page, selectors, { beforeKeys, befor
   catch {
     await failIfVisible();
     await captureTimeout();
-    throw new Error("A new tile was opened but Download media did not become visible before the wait deadline; completion remains unverified.");
+    throw new Error("FLOW_SUBMITTED_UNIDENTIFIED: A new tile was opened but Download media did not become visible before the wait deadline; completion remains unverified.");
   }
   const downloadButton = await exactVisibleLocator(page, selectors.download_media_button, "Download media button");
   const mediaUri = page.url();
   try {
     await downloadButton.click({ timeout: 5000 });
-    const qualityLocator = page.locator(selectors.download_360p_original_button);
-    await qualityLocator.waitFor({ state: "visible", timeout: 10000 });
-    const quality = await exactVisibleLocator(page, selectors.download_360p_original_button, "360p Original size download option");
+    const qualityLocator = page.getByRole("menuitem", { name: /Original size/i }).filter({ hasNotText: /Upscaled/i });
+    await qualityLocator.first().waitFor({ state: "visible", timeout: 10000 });
+    const visibleOriginalOptions = [];
+    const optionCount = await qualityLocator.count();
+    for (let i = 0; i < optionCount; i += 1) {
+      const option = qualityLocator.nth(i);
+      if (await option.isVisible().catch(() => false)) visibleOriginalOptions.push(option);
+    }
+    if (visibleOriginalOptions.length !== 1) {
+      throw new Error(`Expected exactly one visible non-upscaled Original size download option, found ${visibleOriginalOptions.length}; refusing ambiguous download choice.`);
+    }
+    const quality = visibleOriginalOptions[0];
+    const selectedDownloadLabel = (await quality.innerText().catch(() => "Original size")).replace(/\s+/g, " ").trim();
+    console.log(JSON.stringify({ event: "download_quality_option_selected", label: selectedDownloadLabel }));
     const downloadPromise = page.waitForEvent("download", { timeout: 30000 });
     await quality.click({ timeout: 5000 });
     const download = await downloadPromise;
@@ -543,14 +982,20 @@ async function waitForGenerationAndDownload(page, selectors, { beforeKeys, befor
     const safeAttempt = String(attemptId || "attempt").replace(/[^a-zA-Z0-9_-]/g, "_");
     const targetDir = path.resolve(downloadDir);
     fs.mkdirSync(targetDir, { recursive: true });
-    const targetName = variantCount > 1 ? `${safeScene}__v${variantIndex}${extension}` : `${safeScene}__${safeAttempt}${extension}`;
+    // Every output is tied to its unique submission attempt; reruns never collide with old files.
+    const targetName = `${safeScene}__${safeAttempt}${extension}`;
     const target = path.join(targetDir, targetName);
     if (fs.existsSync(target)) throw new Error(`Refusing to overwrite an existing scene/attempt download: ${target}`);
     await download.saveAs(target);
     if (!fs.statSync(target).size) throw new Error("Downloaded media file is empty.");
-    return { downloadedFile: target, mediaUri, downloadError: null };
+    const actualResolution = readMp4VideoResolution(target);
+    console.log(JSON.stringify({ event: "downloaded_media_metadata", file: target, selected_download_label: selectedDownloadLabel,
+      actual_resolution: actualResolution?.label || null, codec: actualResolution?.codec || null, bytes: fs.statSync(target).size }));
+    return { downloadedFile: target, mediaUri, downloadError: null,
+      actualResolution: actualResolution?.label || null, downloadQualityLabel: selectedDownloadLabel };
   } catch (error) {
-    return { downloadedFile: null, mediaUri, downloadError: String(error.message || error) };
+    return { downloadedFile: null, mediaUri, downloadError: String(error.message || error),
+      actualResolution: null, downloadQualityLabel: null };
   }
 }
 
@@ -605,26 +1050,217 @@ async function waitForCreateEnabled(page, create, timeout = 5000) {
 
 async function closeIngredientsPicker(page, selectors) {
   const backdropSelector = selectors.ingredient_picker_backdrop || ".cdk-overlay-backdrop-showing";
-  const backdrop = page.locator(backdropSelector);
-  const count = await backdrop.count().catch(() => 0);
-  if (count === 0) return;
-  const visible = await backdrop.last().isVisible().catch(() => false);
-  if (!visible) return;
-  const bounds = await backdrop.last().boundingBox().catch(() => null);
-  if (!bounds) throw new Error("Ingredients picker backdrop is visible but has no bounding box; cannot verify picker closure.");
-  await backdrop.last().click({ position: { x: 5, y: 5 }, timeout: 2500, force: true });
-  try {
-    await page.waitForFunction(selector => !Array.from(document.querySelectorAll(selector)).some(node => {
-      const style = window.getComputedStyle(node);
-      return style.visibility !== "hidden" && style.display !== "none" && Number(style.opacity || 1) > 0;
-    }), backdropSelector, { timeout: 2500 });
-  } catch {
-    throw new Error("Clicked the edge of the Ingredients picker backdrop, but the overlay is still open.");
+  const containerSelector = '[role="dialog"], [aria-modal="true"], .cdk-overlay-pane';
+  const hasVisiblePickerSurface = async () => page.locator(containerSelector).evaluateAll((containers, args) =>
+    containers.some(container => {
+      const visible = node => {
+        if (!node || !node.isConnected) return false;
+        const style = getComputedStyle(node), rect = node.getBoundingClientRect();
+        return style.display !== "none" && style.visibility !== "hidden"
+          && Number(style.opacity || 1) > 0 && rect.width > 0 && rect.height > 0;
+      };
+      if (!visible(container)) return false;
+      return Array.from(container.querySelectorAll(args.tileSelector)).some(visible)
+        || (args.addToPromptSelector && Array.from(container.querySelectorAll(args.addToPromptSelector)).some(visible));
+    }), { tileSelector: selectors.ingredient_library_item, addToPromptSelector: selectors.ingredient_add_to_prompt }).catch(() => false);
+  const hasVisibleBackdrop = async () => page.locator(backdropSelector).evaluateAll(nodes =>
+    nodes.some(node => {
+      const style = getComputedStyle(node), rect = node.getBoundingClientRect();
+      return node.isConnected && style.display !== "none" && style.visibility !== "hidden"
+        && Number(style.opacity || 1) > 0 && rect.width > 0 && rect.height > 0;
+    })).catch(() => false);
+  // Escape first so the active, possibly rebuilt overlay gets the close action.
+  await page.keyboard.press("Escape").catch(() => {});
+  const escapeDeadline = Date.now() + 1800;
+  while (Date.now() < escapeDeadline && (await hasVisiblePickerSurface() || await hasVisibleBackdrop())) {
+    await page.waitForTimeout(100);
   }
-  const remaining = await backdrop.count().catch(() => -1);
-  if (remaining > 0 && await backdrop.last().isVisible().catch(() => false)) {
-    throw new Error("Ingredients picker closure verification failed; backdrop remains visible.");
+  if (await hasVisiblePickerSurface() || await hasVisibleBackdrop()) {
+    // Re-query the current backdrop after Escape; never retain a locator to an old overlay.
+    const backdrops = page.locator(backdropSelector);
+    const count = await backdrops.count().catch(() => 0);
+    let clicked = false;
+    for (let i = count - 1; i >= 0; i -= 1) {
+      const backdrop = backdrops.nth(i);
+      if (!(await backdrop.isVisible().catch(() => false))) continue;
+      const bounds = await backdrop.boundingBox().catch(() => null);
+      if (!bounds) continue;
+      await backdrop.click({ position: { x: 5, y: 5 }, timeout: 2500, force: true }).catch(() => {});
+      clicked = true;
+      break;
+    }
+    if (!clicked && await hasVisiblePickerSurface()) {
+      throw new Error("Ingredients picker is still visible, but no current visible backdrop could be resolved for closure.");
+    }
   }
+  const deadline = Date.now() + 3500;
+  while (Date.now() < deadline && (await hasVisiblePickerSurface() || await hasVisibleBackdrop())) {
+    await page.waitForTimeout(100);
+  }
+  if (await hasVisiblePickerSurface() || await hasVisibleBackdrop()) {
+    throw new Error("Ingredients picker closure verification failed; a current picker surface or backdrop remains visible.");
+  }
+}
+async function resetIngredientsPicker(page, selectors) {
+  const containerSelector = '[role="dialog"], [aria-modal="true"], .cdk-overlay-pane';
+  // A detail/preview pane may remain mounted after its library tiles disappear.
+  // Treat either visible library tiles or a visible Add-to-prompt action as an open picker.
+  const hasVisiblePickerSurface = async () => page.locator(containerSelector).evaluateAll((containers, args) =>
+    containers.some(container => {
+      const visible = node => {
+        const style = getComputedStyle(node), rect = node.getBoundingClientRect();
+        return node.isConnected && style.display !== "none" && style.visibility !== "hidden"
+          && Number(style.opacity || 1) > 0 && rect.width > 0 && rect.height > 0;
+      };
+      if (!visible(container)) return false;
+      return Array.from(container.querySelectorAll(args.tileSelector)).some(visible)
+        || (args.addToPromptSelector && Array.from(container.querySelectorAll(args.addToPromptSelector)).some(visible));
+    }), { tileSelector: selectors.ingredient_library_item, addToPromptSelector: selectors.ingredient_add_to_prompt }).catch(() => false);
+  if (!(await hasVisiblePickerSurface())) return;
+  await page.keyboard.press("Escape").catch(() => {});
+  const escapeDeadline = Date.now() + 1800;
+  while (Date.now() < escapeDeadline && await hasVisiblePickerSurface()) await page.waitForTimeout(100);
+  if (await hasVisiblePickerSurface()) await closeIngredientsPicker(page, selectors);
+  const deadline = Date.now() + 3500;
+  while (Date.now() < deadline && await hasVisiblePickerSurface()) await page.waitForTimeout(100);
+  if (await hasVisiblePickerSurface()) {
+    throw new Error("Ingredients picker/detail pane did not fully close after Escape/backdrop close; refusing to reuse a stale preview/Add to prompt action.");
+  }
+  console.log(JSON.stringify({ event: "ingredients_picker_reset_verified", closed: true, detail_pane_checked: true }));
+}
+
+async function inspectAddToPromptContext(button) {
+  return button.evaluate(buttonNode => {
+    const visible = node => {
+      const style = getComputedStyle(node), rect = node.getBoundingClientRect();
+      return node.isConnected && style.display !== "none" && style.visibility !== "hidden"
+        && Number(style.opacity || 1) > 0 && rect.width > 0 && rect.height > 0;
+    };
+    const contexts = [];
+    let node = buttonNode;
+    for (let depth = 0; node && depth < 12; depth += 1, node = node.parentElement) {
+      const elements = [node, ...Array.from(node.querySelectorAll("*"))];
+      const images = elements.filter(el => /^(IMG|VIDEO)$/.test(el.tagName) || el.matches("[style*='background-image']"))
+        .filter(visible);
+      const values = [];
+      const imageSources = [];
+      for (const el of elements) {
+        for (const attr of Array.from(el.attributes || [])) {
+          values.push(attr.value);
+          if (/^(src|data-src|data-original|data-media-id|data-asset-id|aria-label|alt|title)$/i.test(attr.name)) {
+            imageSources.push({ tag: el.tagName.toLowerCase(), attr: attr.name, value: String(attr.value).slice(0, 240) });
+          }
+        }
+        if (el.tagName === "IMG") {
+          values.push(el.currentSrc, el.src, el.alt, el.title);
+          imageSources.push({ tag: "img", attr: "currentSrc", value: String(el.currentSrc || "").slice(0, 240) });
+        }
+        const bg = getComputedStyle(el).backgroundImage;
+        if (bg && bg !== "none") { values.push(bg); imageSources.push({ tag: el.tagName.toLowerCase(), attr: "background-image", value: bg.slice(0, 240) }); }
+        values.push(el.innerText || el.textContent || "");
+      }
+      const uuids = Array.from(new Set(values.flatMap(value => String(value || "").match(/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/ig) || []).map(v => v.toLowerCase())));
+      const previewLabels = Array.from(new Set(values.flatMap(value => {
+        const match = String(value || "").match(/Preview of\s+(.+?\.(?:png|jpe?g|webp|gif|avif))/i);
+        return match ? [match[1].trim().replace(/["'”’]+$/, "")] : [];
+      })));
+      const text = String(node.innerText || node.textContent || "").replace(/\s+/g, " ").trim();
+      contexts.push({
+        depth, visible_image_count: images.length, uuids, preview_labels: previewLabels,
+        labels: Array.from(new Set(values.filter(v => /mai-face|ref-3|\.png|\.jpe?g/i.test(String(v || ""))).map(v => String(v).slice(0, 180)))).slice(0, 12),
+        image_sources: imageSources.slice(0, 12), context_tag: node.tagName.toLowerCase(),
+        context_role: node.getAttribute("role"), context_text: text.slice(0, 260)
+      });
+      // Prefer the actual preview's explicit filename, not a broad ancestor containing
+      // the picker navigation and stale card thumbnails.
+      if (previewLabels.length) return contexts[contexts.length - 1];
+    }
+    return contexts.sort((a, b) => {
+      const score = c => (c.uuids.length ? 4 : 0) + (c.labels.length ? 2 : 0) + (c.visible_image_count ? 1 : 0);
+      return score(b) - score(a) || a.depth - b.depth;
+    })[0] || { depth: null, visible_image_count: 0, uuids: [], preview_labels: [], labels: [], image_sources: [], context_tag: null, context_role: null, context_text: "" };
+  }).catch(error => ({ error: error.message, depth: null, visible_image_count: 0, uuids: [], preview_labels: [], labels: [], image_sources: [] }));
+}
+
+function isElementActuallyVisible(element) {
+  if (!element || !element.isConnected) return false;
+  const style = window.getComputedStyle(element);
+  const rect = element.getBoundingClientRect();
+  return style.display !== "none" && style.visibility !== "hidden"
+    && Number(style.opacity || 1) > 0 && rect.width > 0 && rect.height > 0;
+}
+
+async function countVisibleMatches(page, selector) {
+  return page.locator(selector).evaluateAll(nodes => nodes.filter(element => {
+    if (!element.isConnected) return false;
+    const style = window.getComputedStyle(element);
+    const rect = element.getBoundingClientRect();
+    return style.display !== "none" && style.visibility !== "hidden"
+      && Number(style.opacity || 1) > 0 && rect.width > 0 && rect.height > 0;
+  }).length).catch(() => -1);
+}
+
+async function waitForStableVisibleChipCount(page, selector, timeoutMs = 2000) {
+  const deadline = Date.now() + timeoutMs;
+  let previous = null;
+  let stableSince = Date.now();
+  let current = -1;
+  while (Date.now() < deadline) {
+    current = await countVisibleMatches(page, selector);
+    if (current === previous) {
+      if (Date.now() - stableSince >= 300) return current;
+    } else {
+      previous = current;
+      stableSince = Date.now();
+    }
+    await page.waitForTimeout(100);
+  }
+  return current;
+}
+
+async function resolveVisibleIngredientsPicker(page, selectors, filename, filenameStem) {
+  const containerSelector = '[role="dialog"], [aria-modal="true"], .cdk-overlay-pane';
+  const containers = page.locator(containerSelector);
+  const candidates = [];
+  const count = await containers.count().catch(() => 0);
+  for (let i = 0; i < count; i += 1) {
+    const container = containers.nth(i);
+    if (!(await container.isVisible().catch(() => false))) continue;
+    const tiles = container.locator(`${selectors.ingredient_library_item}:visible`);
+    const tileCount = await tiles.count().catch(() => 0);
+    if (!tileCount) continue;
+    let exact = tiles.filter({ hasText: filename });
+    let matching = exact;
+    if (await matching.count().catch(() => 0) === 0 && filenameStem !== filename) {
+      matching = tiles.filter({ hasText: filenameStem });
+    }
+    let visibleMatches = 0;
+    const diagnostics = [];
+    const matchCount = await matching.count().catch(() => 0);
+    for (let j = 0; j < matchCount; j += 1) {
+      const tile = matching.nth(j);
+      const visible = await tile.isVisible().catch(() => false);
+      if (visible) visibleMatches += 1;
+      const box = visible ? await tile.boundingBox().catch(() => null) : null;
+      diagnostics.push({
+        index: j, visible, aria_selected: await tile.getAttribute("aria-selected").catch(() => null),
+        box: box ? { x: Math.round(box.x), y: Math.round(box.y), width: Math.round(box.width), height: Math.round(box.height) } : null,
+        text: (await tile.innerText().catch(() => "")).replace(/\s+/g, " ").trim().slice(0, 140),
+      });
+    }
+    candidates.push({ container, matching, tileCount, visibleMatches, diagnostics });
+  }
+  candidates.sort((a, b) => b.visibleMatches - a.visibleMatches);
+  const chosen = candidates[0];
+  console.log(JSON.stringify({
+    event: "ingredients_picker_scoped_inventory", filename,
+    candidate_containers: candidates.length,
+    candidates: candidates.map(c => ({ tile_count: c.tileCount, visible_matching_tiles: c.visibleMatches, tiles: c.diagnostics })),
+  }));
+  if (!chosen) {
+    throw new Error(`Could not find a visible Ingredients picker/dialog containing library tiles for ${filename}; refusing to click a same-name tile elsewhere on the page.`);
+  }
+  return { container: chosen.container, matching: chosen.matching, visibleMatches: chosen.visibleMatches };
 }
 
 async function clearPromptContentsVerified(prompt, selectors, timeout = 2500) {
@@ -632,10 +1268,24 @@ async function clearPromptContentsVerified(prompt, selectors, timeout = 2500) {
   const initialHandle = await prompt.elementHandle();
   if (!initialHandle) throw new Error("Prompt textbox disappeared before empty-state verification.");
   const initialValue = await initialHandle.evaluate(element => ("value" in element) ? element.value : (element.innerText || element.textContent || ""));
-  const initialChipCount = await page.locator(selectors.ingredient_reference_items).count().catch(() => -1);
+  let initialChipCount = await waitForStableVisibleChipCount(page, selectors.ingredient_reference_items, 2000);
   if (String(initialValue).trim() === "" && initialChipCount === 0) return;
   const clearButton = await exactVisibleLocator(page, selectors.clear_prompt, "Clear prompt button");
-  await clearButton.click({ timeout: 2500 });
+  try {
+    await clearButton.click({ timeout: 2500 });
+  } catch (clickError) {
+    // A timeout can be reported after Flow already handled the click during an animation.
+    await page.waitForTimeout(250);
+    const afterClickHandle = await prompt.elementHandle();
+    const afterClickValue = afterClickHandle
+      ? await afterClickHandle.evaluate(element => ("value" in element) ? element.value : (element.innerText || element.textContent || ""))
+      : "__PROMPT_MISSING__";
+    const afterClickChips = await waitForStableVisibleChipCount(page, selectors.ingredient_reference_items, 2000);
+    if (String(afterClickValue).trim() !== "" || afterClickChips !== 0) {
+      throw new Error(`Clear prompt click did not complete and visible state is not empty (prompt=${JSON.stringify(String(afterClickValue).trim())}, visible_chips=${afterClickChips}): ${clickError.message}`);
+    }
+    return;
+  }
   const handle = await prompt.elementHandle();
   if (!handle) throw new Error("Prompt textbox disappeared before empty-state verification.");
   try {
@@ -648,10 +1298,46 @@ async function clearPromptContentsVerified(prompt, selectors, timeout = 2500) {
   }
   const remaining = await handle.evaluate(element => ("value" in element) ? element.value : (element.innerText || element.textContent || ""));
   if (String(remaining).trim() !== "") throw new Error("Clear prompt verification failed; textbox still contains text.");
-  const chipCount = await page.locator(selectors.ingredient_reference_items).count().catch(() => -1);
-  if (chipCount !== 0) throw new Error(`Clear prompt removed text but left ${chipCount} Ingredients chip(s).`);
-}
 
+  // Flow may leave stale, hidden chip nodes mounted during the picker/prompt transition.
+  // Count only visible chips and wait for the count to settle before reporting cleanup failure.
+  let chipCount = await waitForStableVisibleChipCount(page, selectors.ingredient_reference_items, 2000);
+  while (chipCount > 0) {
+    const allChips = page.locator(selectors.ingredient_reference_items);
+    let chip = null;
+    for (let i = (await allChips.count().catch(() => 0)) - 1; i >= 0; i -= 1) {
+      const candidate = allChips.nth(i);
+      if (await candidate.isVisible().catch(() => false)) { chip = candidate; break; }
+    }
+    if (!chip) {
+      chipCount = await waitForStableVisibleChipCount(page, selectors.ingredient_reference_items, 2000);
+      if (chipCount === 0) break;
+      throw new Error(`Visible Ingredients chip count is ${chipCount}, but no visible chip element could be located for cleanup.`);
+    }
+    const remove = chip.locator('button[aria-label*="remove" i], button[aria-label*="delete" i], button[aria-label*="close" i], button[title*="remove" i], button[title*="delete" i], [role="button"][aria-label*="remove" i], [role="button"][aria-label*="delete" i]').first();
+    if (await remove.count().catch(() => 0) === 0 || !(await remove.isVisible().catch(() => false))) {
+      throw new Error(`Clear prompt removed text but left ${chipCount} visible Ingredients chip(s), and no verified visible remove control was found. Remove chips manually before continuing.`);
+    }
+    let removeClickError = null;
+    try { await remove.click({ timeout: 1500 }); } catch (error) { removeClickError = error; }
+    const deadline = Date.now() + Math.max(timeout, 3000);
+    let nextCount = chipCount;
+    while (Date.now() < deadline) {
+      nextCount = await countVisibleMatches(page, selectors.ingredient_reference_items);
+      if (nextCount >= 0 && nextCount < chipCount) break;
+      await page.waitForTimeout(100);
+    }
+    if (!(nextCount >= 0 && nextCount < chipCount)) {
+      const stableCount = await waitForStableVisibleChipCount(page, selectors.ingredient_reference_items, 1000);
+      if (!(stableCount >= 0 && stableCount < chipCount)) {
+        throw new Error(`Visible Ingredients chip count did not decrease from ${chipCount}${removeClickError ? ` after remove click timeout: ${removeClickError.message}` : ""}; stop and inspect Flow manually.`);
+      }
+      nextCount = stableCount;
+    }
+    chipCount = await waitForStableVisibleChipCount(page, selectors.ingredient_reference_items, 2000);
+  }
+  if (chipCount !== 0) throw new Error(`Clear prompt verification failed; ${chipCount} visible Ingredients chip(s) remain after the DOM settled.`);
+}
 async function clearPromptVerified(prompt, selectors, timeout = 2500) {
   await closeIngredientsPicker(prompt.page(), selectors);
   await clearPromptContentsVerified(prompt, selectors, timeout);
@@ -684,6 +1370,44 @@ async function inspect(browser) {
           disabled: Boolean(node.disabled),
         }))).catch(() => []);
       console.log("    controls:", JSON.stringify(controls));
+      let session = null;
+      try {
+        session = await item.page.context().newCDPSession(item.page);
+        const contexts = [];
+        session.on("Runtime.executionContextCreated", event => {
+          const context = event.context || {};
+          const auxData = context.auxData || {};
+          contexts.push({
+            id: context.id,
+            name: context.name || "",
+            origin: context.origin || "",
+            isDefault: auxData.isDefault === true,
+            frameId: auxData.frameId || null,
+          });
+        });
+        await session.send("Runtime.enable");
+        await item.page.waitForTimeout(250);
+        const nonDefault = contexts.filter(context => !context.isDefault);
+        const playwrightUtilityWorlds = nonDefault.filter(context => /^__playwright_utility_world(?:_|$)/i.test(context.name));
+        const noteworthyWorlds = nonDefault.filter(context => !playwrightUtilityWorlds.includes(context));
+        const extensionWorlds = noteworthyWorlds.filter(context => /^chrome-extension:\/\//i.test(context.origin));
+        if (playwrightUtilityWorlds.length) {
+          console.log(`    Playwright utility worlds (informational, excluded from warnings): ${playwrightUtilityWorlds.length}`);
+        }
+        if (noteworthyWorlds.length) {
+          console.warn("    WARNING: non-default JavaScript execution contexts other than Playwright utility worlds are present on this Flow tab; inspect extensions or injected scripts before running. This is a diagnostic signal, not proof of the cause.");
+          console.log("    noteworthy non-default execution contexts:", JSON.stringify(noteworthyWorlds));
+        } else {
+          console.log("    execution contexts: only default contexts and/or known Playwright utility worlds observed during inspection.");
+        }
+        if (extensionWorlds.length) {
+          console.warn("    WARNING: extension-origin execution contexts detected on the Flow tab:", JSON.stringify(extensionWorlds));
+        }
+      } catch (error) {
+        console.warn(`    execution-context inspection unavailable: ${error.message}`);
+      } finally {
+        if (session) await session.detach().catch(() => {});
+      }
     }
   }
   console.log("\nRead-only inspection complete. No navigation, fill, click, or generation was performed.");
@@ -706,38 +1430,117 @@ async function checkedRadio(page, selector, value, label) {
   if (role !== "radio") throw new Error(`The ${label} selector must match a role=radio element.`);
   const labelText = (await locator.innerText()).replace(/\s+/g, " ").trim();
   if (!labelText.includes(value)) throw new Error(`The ${label} selector text ${JSON.stringify(labelText)} does not match expected value ${JSON.stringify(value)}.`);
-  const checked = await locator.getAttribute("aria-checked");
+  const readChecked = async () => locator.getAttribute("aria-checked").catch(() => null);
+  let checked = await readChecked();
   if (checked !== "true") {
     await locator.click({ timeout: 2500 });
-    const after = await locator.getAttribute("aria-checked");
-    if (after !== "true") throw new Error(`Could not verify ${label}=${value}; aria-checked is ${JSON.stringify(after)}. Stopping safely.`);
+    const deadline = Date.now() + 3000;
+    while (Date.now() < deadline) {
+      checked = await readChecked();
+      if (checked === "true") return;
+      await page.waitForTimeout(150);
+    }
+    throw new Error(`Could not verify ${label}=${value} after 3000ms polling; aria-checked is ${JSON.stringify(checked)}. Stopping safely.`);
   }
 }
 
 async function chooseModel(page, selectors, model) {
-  const trigger = await exactVisibleLocator(page, selectors.model, "model selector");
-  await trigger.click({ timeout: 2500 });
+  const trigger = await exactVisibleLocator(page, selectors.model, "model selector", 6000);
+  const currentText = (await trigger.innerText({ timeout: 6000 })).trim();
+  // Avoid opening an animated menu when the requested model is already selected.
+  if (currentText.includes(model)) {
+    console.log(`Model already selected (${model}); skipping model menu interaction.`);
+    return;
+  }
+  await trigger.click({ timeout: 8000 });
   const option = page.locator(selectors.model_option);
   try {
-    await option.waitFor({ state: "visible", timeout: 5000 });
+    await option.waitFor({ state: "visible", timeout: 8000 });
+    // Wait for the menu option's rendered box to stop moving before clicking it.
+    let previousBox = await option.boundingBox();
+    let stableBox = false;
+    for (let attempt = 0; attempt < 5; attempt += 1) {
+      await page.waitForTimeout(150);
+      await option.waitFor({ state: "visible", timeout: 3000 });
+      const currentBox = await option.boundingBox();
+      if (previousBox && currentBox
+        && Math.abs(previousBox.x - currentBox.x) <= 1
+        && Math.abs(previousBox.y - currentBox.y) <= 1
+        && Math.abs(previousBox.width - currentBox.width) <= 1
+        && Math.abs(previousBox.height - currentBox.height) <= 1) {
+        stableBox = true;
+        break;
+      }
+      previousBox = currentBox;
+    }
+    if (!stableBox) throw new Error("Model menu option layout did not stabilize after opening.");
   } catch {
-    throw new Error("Model option did not become visible within 5000ms after opening the model menu.");
+    throw new Error("Model option did not become stably visible within 8000ms after opening the model menu.");
   }
-  const verifiedOption = await exactVisibleLocator(page, selectors.model_option, "model option");
-  const rawText = (await verifiedOption.innerText()).trim();
+  const verifiedOption = await exactVisibleLocator(page, selectors.model_option, "model option", 6000);
+  const rawText = (await verifiedOption.innerText({ timeout: 6000 })).trim();
   // Flow prepends a material icon ligature (e.g. volume_up); compare the final visible text line exactly.
   const text = rawText.split(/\r?\n/).map(line => line.trim()).filter(Boolean).at(-1) || "";
   if (text !== model) throw new Error(`Model option text mismatch: expected ${JSON.stringify(model)}, got ${JSON.stringify(text)}.`);
-  await verifiedOption.click({ timeout: 2500 });
-  const selected = await exactVisibleLocator(page, selectors.model, "model selector after selection");
-  const selectedText = (await selected.innerText()).trim();
+  await verifiedOption.click({ timeout: 8000 });
+  const selected = await exactVisibleLocator(page, selectors.model, "model selector after selection", 6000);
+  const selectedText = (await selected.innerText({ timeout: 6000 })).trim();
   if (!selectedText.includes(model)) throw new Error(`Model selection did not persist; current label is ${JSON.stringify(selectedText)}.`);
 }
 
 
 function assetUuidFromUrl(value) {
-  const match = String(value || "").match(/[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}/i);
+  const match = String(value || "").match(/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/i);
   return match?.[0]?.toLowerCase() || null;
+}
+
+function thumbnailIdentityToken(value, mediaUuidHint = null) {
+  const hintedUuid = assetUuidFromUrl(mediaUuidHint);
+  if (hintedUuid) return `media:${hintedUuid}`;
+  const source = String(value || "");
+  // Flow may replace /image/<uuid> with a signed /asb/<token> URL for the same
+  // media tile. Prefer the durable media UUID whenever either URL carries one.
+  const mediaUuid = assetUuidFromUrl(source);
+  if (mediaUuid) return `media:${mediaUuid}`;
+  const asbToken = source.match(/\/asb\/([^/?#]+)/i);
+  if (asbToken) return `asb:${asbToken[1]}`;
+  try { return new URL(source, "https://flow.google.com").pathname; }
+  catch { return source.split(/[?#]/, 1)[0]; }
+}
+
+async function assetUuidFromLocator(locator, timeoutMs = 1200) {
+  const lookupStartedAt = Date.now();
+  const values = await locator.evaluate(element => {
+    const collected = [];
+    const add = node => {
+      if (!node) return;
+      for (const name of ["href", "src", "id", "data-id", "data-uuid", "data-asset-id", "data-media-id", "aria-label", "title", "alt"]) {
+        const value = node.getAttribute?.(name);
+        if (value) collected.push(value);
+      }
+    };
+    add(element);
+    for (const node of element.querySelectorAll("a[href], img, video, [data-id], [data-uuid], [data-asset-id], [data-media-id]")) add(node);
+    for (const node of [element, ...element.querySelectorAll("*")]) {
+      for (const attribute of Array.from(node.attributes || [])) collected.push(attribute.value);
+    }
+    return collected;
+  }, undefined, { timeout: timeoutMs }).catch(error => {
+    console.log(JSON.stringify({ event: "asset_uuid_dom_lookup_timing", elapsed_ms: Date.now() - lookupStartedAt,
+      timeout_ms: timeoutMs, outcome: "failed", error: String(error?.message || error).slice(0, 240) }));
+    return [];
+  });
+  for (const value of values) {
+    const uuid = assetUuidFromUrl(value);
+    if (uuid) {
+      console.log(JSON.stringify({ event: "asset_uuid_dom_lookup_timing", elapsed_ms: Date.now() - lookupStartedAt,
+        timeout_ms: timeoutMs, outcome: "resolved" }));
+      return uuid;
+    }
+  }
+  if (values.length) console.log(JSON.stringify({ event: "asset_uuid_dom_lookup_timing", elapsed_ms: Date.now() - lookupStartedAt,
+    timeout_ms: timeoutMs, outcome: "no_uuid_in_dom" }));
+  return null;
 }
 
 async function waitForChipImagesReady(page, selectors, timeout = 15000) {
@@ -755,6 +1558,7 @@ async function waitForChipImagesReady(page, selectors, timeout = 15000) {
 }
 
 async function verifyAttachedReferenceUuids(page, selectors, expectedUuids, timeout = 15000) {
+  const verificationStartedAt = Date.now();
   await waitForChipImagesReady(page, selectors, timeout);
   const chips = page.locator(selectors.ingredient_reference_items);
   const count = await chips.count();
@@ -770,136 +1574,853 @@ async function verifyAttachedReferenceUuids(page, selectors, expectedUuids, time
   if (actualUuids.some((uuid, index) => uuid !== expectedUuids[index])) {
     throw new Error(`Ingredients chip UUID/order mismatch: expected ${expectedUuids.join(", ")}, observed ${actualUuids.join(", ")}.`);
   }
+  console.log(JSON.stringify({ event: "ingredient_chip_uuid_verification", expected_count: expectedUuids.length, elapsed_ms: Date.now() - verificationStartedAt, passed: true }));
   return actualUuids;
 }
 
-async function openIngredientsPicker(page, selectors) {
-  const addButton = await exactVisibleLocator(page, selectors.ingredient_add_button, "add ingredients button");
-  await addButton.click({ timeout: 2500 });
-  await page.locator(selectors.ingredient_library_item).first().waitFor({ state: "visible", timeout: 5000 }).catch(() => {});
+async function openIngredientsPicker(page, selectors, filename = "reference asset") {
+  const pickerOpenStartedAt = Date.now();
+  let addButton = await exactVisibleLocator(page, selectors.ingredient_add_button, "add ingredients button");
+  // Trial clicks wait for a stable hit target without dispatching a real click.
+  let lastError = null;
+  let stable = false;
+  for (let attempt = 1; attempt <= 3; attempt += 1) {
+    try {
+      await addButton.waitFor({ state: "visible", timeout: 10000 });
+      await addButton.click({ trial: true, timeout: 10000 });
+      stable = true;
+      break;
+    } catch (error) {
+      lastError = error;
+      if (attempt < 3) {
+        await page.waitForTimeout(350);
+        const refreshed = await exactVisibleLocator(page, selectors.ingredient_add_button, "add ingredients button retry").catch(() => null);
+        if (refreshed) addButton = refreshed;
+      }
+    }
+  }
+  if (!stable) throw new Error(`Add-ingredients button did not stabilize after retries: ${lastError?.message || lastError}`);
+  // Confirm a scoped dialog/overlay contains visible library tiles; a global
+  // ingredient_library_item match can accidentally resolve against stale UI.
+  await addButton.click({ timeout: 10000 });
+  const containerSelector = '[role="dialog"], [aria-modal="true"], .cdk-overlay-pane';
+  const deadline = Date.now() + 12000;
+  let scopedTileCount = 0;
+  while (Date.now() < deadline) {
+    scopedTileCount = await page.locator(containerSelector).evaluateAll((containers, tileSelector) =>
+      containers.reduce((sum, container) => {
+        const style = getComputedStyle(container), rect = container.getBoundingClientRect();
+        if (style.display === "none" || style.visibility === "hidden" || Number(style.opacity || 1) <= 0 || !rect.width || !rect.height) return sum;
+        return sum + Array.from(container.querySelectorAll(tileSelector)).filter(tile => {
+          const tileStyle = getComputedStyle(tile), tileRect = tile.getBoundingClientRect();
+          return tileStyle.display !== "none" && tileStyle.visibility !== "hidden"
+            && Number(tileStyle.opacity || 1) > 0 && tileRect.width > 0 && tileRect.height > 0;
+        }).length;
+      }, 0), selectors.ingredient_library_item).catch(() => 0);
+    if (scopedTileCount > 0) {
+      console.log(JSON.stringify({ event: "ingredients_picker_open_verified", scoped_visible_tiles: scopedTileCount, filename, elapsed_ms: Date.now() - pickerOpenStartedAt }));
+      return;
+    }
+    await page.waitForTimeout(150);
+  }
+  throw new Error(`Ingredients picker did not expose visible library tiles inside a scoped dialog/overlay within 12000ms for ${filename}; scoped_visible_tiles=${scopedTileCount}.`);
 }
 
-async function uploadSceneReferencesUnsafe(page, selectors, referenceImages) {
+async function uploadSceneReferencesUnsafe(page, selectors, referenceImages, referenceAssetUuids = new Map()) {
+  const batchStartedAt = Date.now();
+  console.log(JSON.stringify({ event: "reference_upload_batch_start", reference_count: referenceImages.length }));
   const chips = page.locator(selectors.ingredient_reference_items);
   const beforeCount = await chips.count().catch(() => -1);
   if (beforeCount !== 0) throw new Error(`Ingredients already contains ${beforeCount} reference chip(s); clear the prompt manually and rerun so this run can prove which images it attached.`);
   const expectedUuids = [];
 
+  // Capture Flow JSON responses while the asset picker opens. Signed thumbnail URLs
+  // can later be replaced by /asb/<token>, so network metadata is the durable lookup.
+  const networkAssetRecords = [];
+  const walkAssetPayload = (value, depth = 0) => {
+    if (!value || typeof value !== "object" || depth > 14) return;
+    if (Array.isArray(value)) {
+      for (const child of value) walkAssetPayload(child, depth + 1);
+      return;
+    }
+    const entries = Object.entries(value);
+    const uuid = entries.filter(([key]) => /^(?:uuid|assetuuid|assetid|mediauuid|mediaid|id)$/i.test(key))
+      .map(([, item]) => assetUuidFromUrl(item)).find(Boolean)
+      || entries.map(([, item]) => typeof item === "string" ? assetUuidFromUrl(item) : null).find(Boolean);
+    if (uuid) {
+      const strings = entries.filter(([, item]) => typeof item === "string").map(([, item]) => item.toLowerCase());
+      networkAssetRecords.push({ uuid, strings });
+    }
+    for (const [, child] of entries) if (child && typeof child === "object") walkAssetPayload(child, depth + 1);
+  };
+  const assetResponseListener = async response => {
+    try {
+      const url = response.url();
+      if (!/flow\.google|googleusercontent|flow-content/i.test(url)) return;
+      const headers = await response.allHeaders();
+      if (!/json/i.test(headers["content-type"] || "")) return;
+      walkAssetPayload(await response.json());
+    } catch { /* DOM and attached-chip verification remain the fallback. */ }
+  };
+  page.on("response", assetResponseListener);
+
   for (const imagePath of referenceImages) {
     const filename = path.basename(imagePath);
-    await openIngredientsPicker(page, selectors);
-    const picker = page.locator(selectors.ingredient_library_item);
-    const matchingAssets = picker.filter({ hasText: filename });
+    const assetStartedAt = Date.now();
+    const referenceTiming = { reset_picker: null, open_picker: null, resolve_picker: null, inventory_and_identity: null,
+      select_asset_and_attach_chip: null, close_picker_and_verify_chips: null };
+    const logReferencePhase = (phase, startedAt, extra = {}) => {
+      const elapsedMs = Date.now() - startedAt;
+      referenceTiming[phase] = elapsedMs;
+      console.log(JSON.stringify({ event: "reference_step_phase_timing", filename, phase, elapsed_ms: elapsedMs, total_elapsed_ms: Date.now() - assetStartedAt, ...extra }));
+    };
+    console.log(JSON.stringify({ event: "reference_step_start", filename, image_path: imagePath, at_ms: assetStartedAt }));
+    console.log(`Reference upload started: ${filename}`);
+    // Reset/unmount any previous picker before each asset so a stale preview action
+    // cannot remain bound to the prior reference.
+    let phaseStartedAt = Date.now();
+    await resetIngredientsPicker(page, selectors);
+    logReferencePhase("reset_picker", phaseStartedAt);
+    const filenameStem = path.parse(filename).name;
+    phaseStartedAt = Date.now();
+    await openIngredientsPicker(page, selectors, filename);
+    logReferencePhase("open_picker", phaseStartedAt);
+    phaseStartedAt = Date.now();
+    const pickerResolution = await resolveVisibleIngredientsPicker(page, selectors, filename, filenameStem);
+    logReferencePhase("resolve_picker", phaseStartedAt);
+    phaseStartedAt = Date.now();
+    // Prefer the matching locator produced by the scoped inventory. If the picker
+    // re-rendered between inventory and matching, re-resolve the visible dialog once
+    // rather than silently converting a locator error into a misleading zero count.
+    let pickerResolutionCurrent = pickerResolution;
+    let pickerContainer = pickerResolutionCurrent.container;
+    let picker = pickerContainer.locator(`${selectors.ingredient_library_item}:visible`);
+    let matchingAssets = pickerResolutionCurrent.matching;
+    const readMatchCount = async (stage) => {
+      try {
+        const count = await matchingAssets.count();
+        console.log(JSON.stringify({ event: "ingredients_picker_match_count", filename, stage, count,
+          container_visible: await pickerContainer.isVisible().catch(error => false),
+          tile_count: await picker.count().catch(error => -1) }));
+        return count;
+      } catch (error) {
+        console.warn(JSON.stringify({ event: "ingredients_picker_match_count_error", filename, stage,
+          error: String(error?.message || error).slice(0, 500) }));
+        return -1;
+      }
+    };
+    let matchCount = await readMatchCount("inventory_locator_initial");
+    if (matchCount <= 0) {
+      const previousContainerVisible = await pickerContainer.isVisible().catch(() => false);
+      const previousContainerTileCount = await picker.count().catch(() => -1);
+      console.warn(JSON.stringify({ event: "ingredients_picker_re_resolve", filename,
+        reason: "inventory_match_locator_empty_or_failed", previous_container_visible: previousContainerVisible,
+        previous_container_tile_count: previousContainerTileCount }));
+      pickerResolutionCurrent = await resolveVisibleIngredientsPicker(page, selectors, filename, filenameStem);
+      pickerContainer = pickerResolutionCurrent.container;
+      picker = pickerContainer.locator(`${selectors.ingredient_library_item}:visible`);
+      matchingAssets = pickerResolutionCurrent.matching;
+      matchCount = await readMatchCount("after_picker_re_resolve");
+    }
+    // Some Flow library cards display the filename without its extension. The scoped
+    // inventory already tries the exact filename then stem; keep a fresh-locator
+    // fallback for cases where the picker updated during its re-render.
+    if (matchCount <= 0 && filenameStem !== filename) {
+      matchingAssets = picker.filter({ hasText: filename });
+      matchCount = await readMatchCount("fresh_exact_filename");
+      if (matchCount <= 0) {
+        matchingAssets = picker.filter({ hasText: filenameStem });
+        matchCount = await readMatchCount("fresh_filename_stem");
+      }
+    }
+    // If the picker list does not expose the target yet, use a visible search field
+    // inside this picker only; never search or click a same-name tile elsewhere.
+    if (matchCount <= 0) {
+      const searchCandidates = pickerContainer.locator('input[type="search"], input[placeholder], input[aria-label]');
+      const searchCount = await searchCandidates.count().catch(() => 0);
+      let searchField = null;
+      for (let i = 0; i < searchCount; i += 1) {
+        const candidate = searchCandidates.nth(i);
+        if (!(await candidate.isVisible().catch(() => false))) continue;
+        const meta = [
+          await candidate.getAttribute("placeholder").catch(() => ""),
+          await candidate.getAttribute("aria-label").catch(() => ""),
+          await candidate.getAttribute("type").catch(() => ""),
+        ].join(" ").toLowerCase();
+        if (/search|find|filter|library|media/.test(meta) || (searchCount === 1 && /^(search)?$/.test(meta.trim()))) {
+          searchField = candidate;
+          break;
+        }
+      }
+      if (searchField) {
+        await searchField.fill(filename, { timeout: 2000 }).catch(error => {
+          console.warn(JSON.stringify({ event: "ingredients_picker_search_fill_error", filename,
+            error: String(error?.message || error).slice(0, 400) }));
+        });
+        const searchDeadline = Date.now() + 2500;
+        while (Date.now() < searchDeadline) {
+          matchingAssets = picker.filter({ hasText: filename });
+          matchCount = await matchingAssets.count().catch(() => 0);
+          if (matchCount === 0 && filenameStem !== filename) {
+            matchingAssets = picker.filter({ hasText: filenameStem });
+            matchCount = await matchingAssets.count().catch(() => 0);
+          }
+          if (matchCount > 0) break;
+          await page.waitForTimeout(150);
+        }
+        console.log(JSON.stringify({ event: "ingredients_picker_search_fallback", filename,
+          search_field_used: true, visible_matching_tiles: matchCount }));
+      } else {
+        console.log(JSON.stringify({ event: "ingredients_picker_search_fallback", filename,
+          search_field_used: false, visible_matching_tiles: 0 }));
+      }
+    }
+    logReferencePhase("match_picker_tile_and_search", phaseStartedAt, { matching_asset_count: matchCount, search_fallback_considered: true });
+    const inventoryStartedAt = Date.now();
     const existingUuids = new Set();
     const existingCount = await matchingAssets.count().catch(() => 0);
-    for (let i = 0; i < existingCount; i += 1) {
-      const src = await matchingAssets.nth(i).locator("img").first().getAttribute("src").catch(() => null);
-      const uuid = assetUuidFromUrl(src);
-      if (uuid) existingUuids.add(uuid);
+    // Flow lazily upgrades old thumbnail URLs from /asb/<token> to flow-content/image/<uuid>.
+    // A unique same-name UUID in Flow's JSON is authoritative enough to skip that
+    // slow thumbnail upgrade for a single card.
+    const filenameNeedles = [filename.toLowerCase(), filenameStem.toLowerCase()];
+    const networkNameUuids = Array.from(new Set(networkAssetRecords
+      .filter(record => record.strings.some(value => filenameNeedles.some(needle => needle && value.includes(needle))))
+      .map(record => record.uuid)));
+    const requestedAssetUuid = referenceAssetUuids instanceof Map
+      ? referenceAssetUuids.get(imagePath) : referenceAssetUuids?.[imagePath];
+    // A job-pinned UUID found in Flow's JSON for this exact filename is stronger
+    // evidence than unrelated same-name records in the response. This lets us skip
+    // thumbnail polling even when the JSON also includes older duplicate entries.
+    const pinnedUuidConfirmedByNetwork = Boolean(requestedAssetUuid && networkNameUuids.includes(requestedAssetUuid));
+    const networkUuidShortcut = existingCount === 1
+      && (networkNameUuids.length === 1 || pinnedUuidConfirmedByNetwork);
+    if (networkUuidShortcut) existingUuids.add(pinnedUuidConfirmedByNetwork ? requestedAssetUuid : networkNameUuids[0]);
+    // Only poll lazy thumbnail URLs when Flow JSON did not already identify the
+    // unique existing card. This avoids a needless 6.75s wait per reference.
+    // If the job explicitly pins a UUID and there is exactly one matching library card,
+    // defer identity verification to the selected Ingredients chip. Avoid repeatedly
+    // querying a lazy/stale thumbnail locator; chip UUID verification below is authoritative.
+    const pinnedUniqueCardShortcut = Boolean(requestedAssetUuid && existingCount === 1);
+    if (pinnedUniqueCardShortcut) existingUuids.add(requestedAssetUuid);
+    const thumbnailDeadline = (networkUuidShortcut || pinnedUniqueCardShortcut) ? Date.now() : Date.now() + 7000;
+    let thumbnailPolls = 0;
+    do {
+      if (!networkUuidShortcut && !pinnedUniqueCardShortcut) {
+        existingUuids.clear();
+        for (let i = 0; i < existingCount; i += 1) {
+          const uuid = await assetUuidFromLocator(matchingAssets.nth(i));
+          if (uuid) existingUuids.add(uuid);
+        }
+      }
+      if (existingUuids.size === existingCount || Date.now() >= thumbnailDeadline) break;
+      thumbnailPolls += 1;
+      await page.waitForTimeout(250);
+    } while (Date.now() < thumbnailDeadline);
+    if (networkUuidShortcut) {
+      console.log(`Skipped Flow asset thumbnail UUID wait: ${filename}, UUID resolved from unique matching Flow JSON metadata.`);
+    } else if (thumbnailPolls > 0) {
+      console.log(`Waited for Flow asset thumbnail UUIDs: ${filename}, polls=${thumbnailPolls}, elapsed_ms=${Math.min(7000, thumbnailPolls * 250)}`);
     }
 
-    const uploadButton = await exactVisibleLocator(page, selectors.ingredient_upload_button, "Upload media button");
-    const chooserPromise = page.waitForEvent("filechooser", { timeout: 5000 });
-    await uploadButton.click({ timeout: 2500 });
-    const chooser = await chooserPromise;
-    await chooser.setFiles(imagePath);
+    console.log(JSON.stringify({
+      event: "asset_library_inventory_before_upload",
+      filename,
+      existing_uuids_before_upload: Array.from(existingUuids),
+      matching_asset_count: existingCount,
+    }));
     let reusedExistingUuid = null;
-    try {
-      await page.waitForFunction(({ selector, filename, oldUuids }) => {
-        // Flow inserts the newest upload at the top. Wait for the first same-name entry's
-        // thumbnail UUID rather than accepting a slower-loading old duplicate lower in the list.
-        const newestMatch = Array.from(document.querySelectorAll(selector)).find(asset =>
-          (asset.innerText || asset.textContent || "").includes(filename));
-        if (!newestMatch) return false;
-        const src = newestMatch.querySelector("img")?.getAttribute("src") || "";
-        const match = src.match(/[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}/i);
-        return Boolean(match && !oldUuids.includes(match[0].toLowerCase()));
-      }, { selector: selectors.ingredient_library_item, filename, oldUuids: Array.from(existingUuids) }, { timeout: ASSET_READY_TIMEOUT_MS });
-    } catch {
-      const diagnostics = [];
-      const countAfterTimeout = await matchingAssets.count().catch(() => 0);
-      for (let i = 0; i < countAfterTimeout; i += 1) {
-        const src = await matchingAssets.nth(i).locator("img").first().getAttribute("src").catch(() => null);
-        const uuid = assetUuidFromUrl(src);
-        if (uuid) diagnostics.push(uuid);
+    if (requestedAssetUuid) {
+      // A single exact-name card is unambiguous by filename; verify the requested UUID
+      // against the attached chip after selection instead of spending 1.2s on each DOM read.
+      let requestedFound = false;
+      if (existingCount !== 1) {
+        for (let i = 0; i < existingCount; i += 1) {
+          if (await assetUuidFromLocator(matchingAssets.nth(i)) === requestedAssetUuid) { requestedFound = true; break; }
+        }
       }
-      // Flow can deduplicate an upload and keep the existing project-library UUID.
-      // Reuse is allowed only when the existing same-name asset has a readable UUID;
-      // the dry-run reports it so the operator can inspect the thumbnail before execution.
-      reusedExistingUuid = diagnostics.find(uuid => existingUuids.has(uuid)) || null;
-      console.warn(JSON.stringify({
-        event: reusedExistingUuid ? "asset_upload_reused_existing" : "asset_upload_uuid_timeout",
+      const responseConfirmsPin = networkAssetRecords.some(record => record.uuid === requestedAssetUuid
+        && record.strings.some(value => value.includes(filename.toLowerCase()) || value.includes(filenameStem.toLowerCase())));
+      if (!requestedFound && !responseConfirmsPin && existingCount !== 1) {
+        throw new Error(`Job explicitly requested Flow asset UUID ${requestedAssetUuid} for ${filename}, but it was not found in DOM or matching Flow JSON metadata; matching_asset_count=${existingCount}. Refusing to guess among ambiguous entries.`);
+      }
+      reusedExistingUuid = requestedAssetUuid;
+      console.log(JSON.stringify({ event: "asset_library_reused_explicit_uuid", filename, selected_existing_uuid: reusedExistingUuid, identity_source: requestedFound ? "dom" : responseConfirmsPin ? "network" : "unique-name-plus-attached-chip-verification" }));
+    } else if (existingCount === 1 && existingUuids.size === 1) {
+      // The library already contains one unambiguous asset with this exact local filename.
+      // Reuse immediately rather than uploading a duplicate and waiting for Flow's 90s UUID timeout.
+      reusedExistingUuid = Array.from(existingUuids)[0];
+      console.log(JSON.stringify({
+        event: "asset_library_reused_existing",
         filename,
-        timeout_ms: ASSET_READY_TIMEOUT_MS,
-        existing_uuids_before_upload: Array.from(existingUuids),
-        matching_uuids_after_timeout: diagnostics,
         selected_existing_uuid: reusedExistingUuid,
+        note: "Existing unique library asset found; skipping upload and UUID timeout wait.",
       }));
-      if (!reusedExistingUuid) {
+    } else if (existingUuids.size > 1 || existingCount > 1) {
+      throw new Error(`Multiple existing library assets match ${filename}; refusing to guess which reference is correct.`);
+    } else {
+      if (existingCount > 0) throw new Error(`Found ${existingCount} existing Flow library asset(s) matching ${filename}, but could not read a stable UUID from their DOM attributes/URLs. Refusing to upload a duplicate; if this is the intended asset, add its verified UUID to reference_asset_uuids in the scene config, then rerun dry-run to verify the selected Ingredients chip UUID.`);
+      const uploadButton = await exactVisibleLocator(page, selectors.ingredient_upload_button, "Upload media button");
+      const chooserPromise = page.waitForEvent("filechooser", { timeout: 5000 });
+      await uploadButton.click({ timeout: 2500 });
+      const chooser = await chooserPromise;
+      await chooser.setFiles(imagePath);
+      const uuidWaitStartedAt = Date.now();
+      try {
+        // Inspect every same-name card, not only the first one: older duplicates can
+        // appear before the newly uploaded card and otherwise mask its UUID for 90 seconds.
+        await page.waitForFunction(({ selector, filename, filenameStem, oldUuids }) => {
+          const cards = Array.from(document.querySelectorAll(selector)).filter(asset => {
+            const label = (asset.innerText || asset.textContent || "").toLowerCase();
+            const image = asset.querySelector("img");
+            const metadata = [image?.getAttribute("alt"), image?.getAttribute("title"),
+              asset.getAttribute("aria-label"), asset.getAttribute("title")].filter(Boolean).join(" ").toLowerCase();
+            return label.includes(filename.toLowerCase()) || label.includes(filenameStem.toLowerCase())
+              || metadata.includes(filename.toLowerCase()) || metadata.includes(filenameStem.toLowerCase());
+          });
+          const uuids = cards.flatMap(card => {
+            const sources = [card, ...Array.from(card.querySelectorAll("*"))]
+              .flatMap(node => Array.from(node.attributes || [], attribute => attribute.value)).join(" ");
+            return Array.from(sources.matchAll(/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/ig), match => match[0].toLowerCase());
+          });
+          return uuids.some(uuid => !oldUuids.includes(uuid));
+        }, { selector: selectors.ingredient_library_item, filename, filenameStem, oldUuids: Array.from(existingUuids) }, { timeout: ASSET_READY_TIMEOUT_MS });
+        console.log(`Reference UUID ready: ${filename} in ${Date.now() - uuidWaitStartedAt}ms`);
+      } catch {
+        const diagnostics = [];
+        const countAfterTimeout = await picker.count().catch(() => 0);
+        for (let i = 0; i < countAfterTimeout; i += 1) {
+          const label = await picker.nth(i).innerText().catch(() => "");
+          if (!label.toLowerCase().includes(filename.toLowerCase()) && !label.toLowerCase().includes(filenameStem.toLowerCase())) continue;
+          const uuid = await assetUuidFromLocator(picker.nth(i));
+          if (uuid) diagnostics.push(uuid);
+        }
+        console.warn(JSON.stringify({
+          event: "asset_library_match_diagnostics",
+          filename,
+          existing_uuids_before_upload: Array.from(existingUuids),
+          matching_uuids_after_timeout: diagnostics,
+          note: "A UUID is reusable only when it was present before upload and uniquely matched the asset label.",
+        }));
         throw new Error("Upload " + filename + " did not expose a new UUID within " + ASSET_READY_TIMEOUT_MS + "ms and no reusable same-name asset UUID was verifiable. Stopping before prompt fill/Create.");
       }
     }
     let asset = matchingAssets.first();
     if (reusedExistingUuid) {
       let reuseIndex = -1;
-      const currentCount = await matchingAssets.count().catch(() => 0);
-      for (let i = 0; i < currentCount; i += 1) {
-        const src = await matchingAssets.nth(i).locator("img").first().getAttribute("src").catch(() => null);
-        if (assetUuidFromUrl(src) === reusedExistingUuid) { reuseIndex = i; break; }
-      }
-      if (reuseIndex < 0) throw new Error("Reusable asset UUID disappeared from the library; refusing to select an unverified item.");
-      asset = matchingAssets.nth(reuseIndex);
-    }
-    const assetSrc = await asset.locator("img").first().getAttribute("src").catch(() => null);
-    const assetUuid = assetUuidFromUrl(assetSrc);
-    if (!assetUuid || (existingUuids.has(assetUuid) && assetUuid !== reusedExistingUuid)) {
-      throw new Error("Library entry for " + filename + " did not have a verifiable new UUID or an explicitly identified reusable UUID.");
-    }
-    if (reusedExistingUuid) console.warn(`Reusing existing Flow library asset ${filename} -> UUID ${assetUuid}; inspect its thumbnail during dry-run before any execute.`);
-
-    await asset.click({ timeout: 2500 });
-    let attached = false;
-    const chipsAfterClick = await chips.count().catch(() => -1);
-    for (let i = 0; i < chipsAfterClick; i += 1) {
-      const src = await chips.nth(i).locator("img.chip-image").getAttribute("src").catch(() => null);
-      if (assetUuidFromUrl(src) === assetUuid) attached = true;
-    }
-    if (!attached) {
-      const addToPrompt = await exactVisibleLocator(page, selectors.ingredient_add_to_prompt, "Add to prompt button");
-      let attachedAfterClick = false;
-      let lastClickError = null;
-      // This Flow button occasionally remains visible/enabled/stable while its first
-      // click times out. Retry at most twice, but verify the UUID after every attempt
-      // before clicking again so an accepted first click cannot create a duplicate.
-      for (let clickAttempt = 0; clickAttempt < 3; clickAttempt += 1) {
-        try {
-          await addToPrompt.click({ timeout: 6000 });
-          lastClickError = null;
-        } catch (error) {
-          lastClickError = error;
+      let currentCount = 0;
+      let stableUniqueCountReads = 0;
+      let matchingLabels = [];
+      let freshMatching = null;
+      let refreshedPickerContainer = null;
+      let reopenAttempted = false;
+      let settleElapsedMs = 0;
+      const inspectFreshPicker = async () => {
+        // Read the whole visible picker inventory in one DOM round-trip. Repeated
+        // Playwright count/visibility/text/attribute calls against Flow's rebuilt
+        // overlay were taking tens of seconds per poll in some sessions.
+        const scanStarted = Date.now();
+        const snapshot = await page.evaluate(({ tileSelector, name, stem, pinnedUuid }) => {
+          const visible = element => {
+            const style = getComputedStyle(element), rect = element.getBoundingClientRect();
+            return style.display !== "none" && style.visibility !== "hidden"
+              && Number(style.opacity || 1) > 0 && rect.width > 0 && rect.height > 0;
+          };
+          const uuidFrom = value => String(value || "").match(/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/i)?.[0]?.toLowerCase() || null;
+          const overlays = Array.from(document.querySelectorAll('[role="dialog"], [aria-modal="true"], .cdk-overlay-pane'));
+          let best = { containerIndex: -1, matches: [], visibleTileCount: 0 };
+          overlays.forEach((overlay, containerIndex) => {
+            if (!visible(overlay)) return;
+            const tiles = Array.from(overlay.querySelectorAll(tileSelector)).filter(visible);
+            const matching = tiles.filter(tile => {
+              const text = String(tile.innerText || tile.textContent || "").replace(/\s+/g, " ").trim().toLowerCase();
+              return text.includes(name.toLowerCase()) || (stem !== name && text.includes(stem.toLowerCase()));
+            }).map((tile, index) => {
+              const values = [];
+              const add = node => {
+                if (!node) return;
+                for (const attr of ["href", "src", "id", "data-id", "data-uuid", "data-asset-id", "data-media-id", "aria-label", "title", "alt"]) {
+                  const value = node.getAttribute?.(attr); if (value) values.push(value);
+                }
+              };
+              add(tile);
+              for (const node of [tile, ...tile.querySelectorAll("*")]) {
+                add(node);
+                for (const attr of Array.from(node.attributes || [])) values.push(attr.value);
+              }
+              const uuids = values.map(uuidFrom).filter(Boolean);
+              const uniqueUuids = Array.from(new Set(uuids));
+              return {
+                index,
+                label: String(tile.innerText || tile.textContent || "").replace(/\s+/g, " ").trim().slice(0, 180),
+                aria_label: tile.getAttribute("aria-label"),
+                uuid: uniqueUuids.includes(pinnedUuid) ? pinnedUuid : (uniqueUuids[0] || null),
+              };
+            });
+            if (matching.length > best.matches.length || best.containerIndex < 0) {
+              best = { containerIndex, matches: matching, visibleTileCount: tiles.length };
+            }
+          });
+          return { ...best, overlayCount: overlays.length };
+        }, { tileSelector: selectors.ingredient_library_item, name: filename, stem: filenameStem, pinnedUuid: reusedExistingUuid });
+        const elapsedMs = Date.now() - scanStarted;
+        currentCount = snapshot.matches.length;
+        matchingLabels = snapshot.matches;
+        reuseIndex = snapshot.matches.findIndex(item => item.uuid === reusedExistingUuid);
+        refreshedPickerContainer = snapshot.containerIndex >= 0
+          ? page.locator('[role="dialog"], [aria-modal="true"], .cdk-overlay-pane').nth(snapshot.containerIndex)
+          : null;
+        const matchedByFullName = snapshot.matches.some(item => item.label.toLowerCase().includes(filename.toLowerCase()));
+        freshMatching = snapshot.containerIndex >= 0
+          ? refreshedPickerContainer.locator(selectors.ingredient_library_item + ':visible')
+            .filter({ hasText: matchedByFullName ? filename : filenameStem })
+          : null;
+        // Use the exact observed matching index after the fast DOM scan. If the
+        // picker matches the filename stem instead, the selection below falls back
+        // to the unique matching tile rather than guessing among duplicate names.
+        if (currentCount === 1 && reuseIndex < 0 && snapshot.matches[0]?.uuid === reusedExistingUuid) reuseIndex = 0;
+        return { elapsedMs, overlayCount: snapshot.overlayCount, visibleTileCount: snapshot.visibleTileCount };
+      };
+      const settleFreshPicker = async (durationMs) => {
+        const started = Date.now();
+        const deadline = started + durationMs;
+        let previousSignature = null;
+        stableUniqueCountReads = 0;
+        let slowestScanMs = 0;
+        let polls = 0;
+        while (Date.now() < deadline) {
+          let scan = { elapsedMs: 0, overlayCount: 0, visibleTileCount: 0 };
+          try { scan = await inspectFreshPicker(); }
+          catch { currentCount = 0; matchingLabels = []; freshMatching = null; reuseIndex = -1; }
+          polls += 1;
+          slowestScanMs = Math.max(slowestScanMs, scan.elapsedMs || 0);
+          const signature = currentCount === 1 ? JSON.stringify(matchingLabels.map(item => ({ label: item.label, uuid: item.uuid }))) : null;
+          const exactFilenameMatch = currentCount === 1 && matchingLabels[0]?.label?.toLowerCase().includes(filename.toLowerCase());
+          const identitySignalAvailable = reuseIndex >= 0 || exactFilenameMatch;
+          if (currentCount === 1 && identitySignalAvailable && signature && signature === previousSignature) {
+            stableUniqueCountReads += 1;
+            if (stableUniqueCountReads >= 1) {
+              const elapsedMs = Date.now() - started;
+              console.log(JSON.stringify({ event: "asset_library_picker_settle_timing", filename, elapsed_ms: elapsedMs, polls, slowest_scan_ms: slowestScanMs, final_count: currentCount, uuid_match: reuseIndex >= 0, exact_filename_match: exactFilenameMatch, stable_unique_count_reads: stableUniqueCountReads, timeout: false }));
+              return elapsedMs;
+            }
+          } else stableUniqueCountReads = 0;
+          previousSignature = signature;
+          await page.waitForTimeout(250);
         }
-        attachedAfterClick = await page.waitForFunction(({ selector, uuid }) => Array.from(document.querySelectorAll(selector)).some(chip => {
-          const src = chip.querySelector("img.chip-image")?.getAttribute("src") || "";
-          return src.toLowerCase().includes(uuid);
-        }), { selector: selectors.ingredient_reference_items, uuid: assetUuid }, { timeout: 2500 }).then(() => true).catch(() => false);
-        if (attachedAfterClick) break;
-        if (clickAttempt < 2) await page.waitForTimeout(350);
+        const elapsedMs = Date.now() - started;
+        console.log(JSON.stringify({ event: "asset_library_picker_settle_timing", filename, elapsed_ms: elapsedMs, polls, slowest_scan_ms: slowestScanMs, final_count: currentCount, uuid_match: reuseIndex >= 0, exact_filename_match: currentCount === 1 && Boolean(matchingLabels[0]?.label?.toLowerCase().includes(filename.toLowerCase())), stable_unique_count_reads: stableUniqueCountReads, timeout: true }));
+        return elapsedMs;
+      };
+      settleElapsedMs += await settleFreshPicker(4500);
+      if ((currentCount !== 1 || (reuseIndex < 0 && !matchingLabels[0]?.label?.toLowerCase().includes(filename.toLowerCase()))) && !reopenAttempted) {
+        reopenAttempted = true;
+        const reopenStartedAt = Date.now();
+        console.warn(JSON.stringify({ event: "asset_library_reuse_picker_reopen", filename, pinned_uuid: reusedExistingUuid, reason: "fresh picker inventory did not settle to one exact matching tile", first_inventory_count: currentCount, first_inventory_uuid_match: reuseIndex >= 0, first_inventory_exact_filename_match: currentCount === 1 && Boolean(matchingLabels[0]?.label?.toLowerCase().includes(filename.toLowerCase())) }));
+        await resetIngredientsPicker(page, selectors);
+        await openIngredientsPicker(page, selectors, filename);
+        settleElapsedMs += await settleFreshPicker(4500);
+        console.log(JSON.stringify({ event: "asset_library_picker_reopen_timing", filename, elapsed_ms: Date.now() - reopenStartedAt, second_inventory_count: currentCount, second_inventory_uuid_match: reuseIndex >= 0 }));
       }
-      if (!attachedAfterClick) {
-        await closeIngredientsPicker(page, selectors);
-        const detail = lastClickError ? ` Last click error: ${lastClickError.message}` : "";
-        throw new Error(`Add to prompt did not attach asset ${filename} after 3 verified click attempts.${detail}`);
+      console.log(JSON.stringify({ event: "asset_library_reuse_recheck", filename, pinned_uuid: reusedExistingUuid,
+        currentCount, matching_labels: matchingLabels, stable_unique_count_reads: stableUniqueCountReads,
+        fresh_container_resolved: Boolean(refreshedPickerContainer), reopen_attempted: reopenAttempted, settle_wait_ms: settleElapsedMs }));
+      if (!freshMatching || currentCount !== 1 || (reuseIndex < 0 && !matchingLabels[0]?.label?.toLowerCase().includes(filename.toLowerCase()))) {
+        throw new Error(`Reusable asset UUID ${reusedExistingUuid} is not readable from the refreshed picker; matching-name count did not settle to exactly one after fresh inventory${reopenAttempted ? " and one reopen" : ""}; currentCount=${currentCount}; matching_labels=${JSON.stringify(matchingLabels)}. Refusing to select an ambiguous item.`);
       }
-      try {
-        await page.waitForFunction(({ selector, uuid }) => Array.from(document.querySelectorAll(selector)).some(chip => {
-          const src = chip.querySelector("img.chip-image")?.getAttribute("src") || "";
-          return src.toLowerCase().includes(uuid);
-        }), { selector: selectors.ingredient_reference_items, uuid: assetUuid }, { timeout: 5000 });
-      } catch {
-        await closeIngredientsPicker(page, selectors);
-        throw new Error(`Asset ${filename} was selected but its UUID ${assetUuid} never appeared in an attached prompt chip. Stopping before prompt fill/Create.`);
+      // A single exact-filename card may hide its UUID in the tile DOM; verify the pinned UUID against the attached chip after selection.
+      asset = reuseIndex >= 0 ? freshMatching.nth(reuseIndex) : freshMatching.first();
+    }
+    const requestedAssetUuidForPin = requestedAssetUuid || null;
+    const networkCandidates = networkAssetRecords.filter(record =>
+      record.strings.some(value => value.includes(filename.toLowerCase()) || value.includes(filenameStem.toLowerCase()))
+    );
+    const networkUuids = Array.from(new Set(networkCandidates.map(record => record.uuid)));
+    const uuidLookupStartedAt = Date.now();
+    // A previously pinned/reused UUID is verified against the attached chip below.
+    // Avoid querying a stale picker locator for up to Playwright's default 60s timeout.
+    let assetUuid = reusedExistingUuid || await assetUuidFromLocator(asset, 1200);
+    console.log(JSON.stringify({ event: "asset_uuid_resolution_timing", filename, elapsed_ms: Date.now() - uuidLookupStartedAt,
+      reused_existing_uuid_shortcut: Boolean(reusedExistingUuid), dom_lookup_skipped: Boolean(reusedExistingUuid), resolved_from_dom_or_pin: Boolean(assetUuid) }));
+    if (!assetUuid && requestedAssetUuidForPin && networkUuids.includes(requestedAssetUuidForPin)) {
+      assetUuid = requestedAssetUuidForPin;
+    }
+    if (!assetUuid && networkUuids.length === 1) assetUuid = networkUuids[0];
+    const allowUniqueUnresolvedAsset = existingCount === 1 && !assetUuid;
+    if (requestedAssetUuidForPin && assetUuid && assetUuid !== requestedAssetUuidForPin) {
+      throw new Error(`Pinned Flow asset UUID mismatch for ${filename}: requested ${requestedAssetUuidForPin}, library/network resolved ${assetUuid}.`);
+    }
+    if (!assetUuid && !allowUniqueUnresolvedAsset) {
+      throw new Error(`Library entry for ${filename} has no stable UUID in DOM or matching Flow JSON response; matching_asset_count=${existingCount}, network_candidate_uuids=${networkUuids.join(",") || "none"}. Refusing to guess among ambiguous entries.`);
+    }
+    logReferencePhase("inventory_and_identity", inventoryStartedAt, { matching_asset_count: existingCount, reused_existing_uuid: Boolean(reusedExistingUuid), uuid_resolved: Boolean(assetUuid) });
+    const selectionAndAttachStartedAt = Date.now();
+    if (reusedExistingUuid) console.warn(`Reusing existing Flow library asset ${filename} -> UUID ${reusedExistingUuid}; inspect its thumbnail during dry-run before any execute.`);
+
+    // Snapshot the currently attached chip identities before selecting this asset.
+    // Flow can keep earlier chips mounted while a new chip is added; never verify a
+    // requested asset by scanning all chips and accidentally reading an earlier one.
+    const beforeAttachChipCount = await chips.count();
+    const beforeAttachChipUuids = [];
+    for (let i = 0; i < beforeAttachChipCount; i += 1) {
+      const src = await chips.nth(i).locator("img.chip-image").getAttribute("src").catch(() => null);
+      const uuid = assetUuidFromUrl(src);
+      if (!uuid) throw new Error(`Existing Ingredients chip ${i + 1} has no verifiable UUID before attaching ${filename}.`);
+      beforeAttachChipUuids.push(uuid);
+    }
+    // Flow may render same-name library cards outside the picker; asset is deliberately
+    // selected from the visible picker-scoped locator resolved above.
+    const addToPromptSelector = selectors.ingredient_add_to_prompt;
+    const addToPromptCandidates = pickerContainer.locator(addToPromptSelector);
+    const selectionWaitStartedAt = Date.now();
+    const selectionWaitTimeoutMs = 8000;
+    const selectionDeadline = selectionWaitStartedAt + selectionWaitTimeoutMs;
+    let selectedAssetAriaSelected = null;
+    let addToPromptVisibleCount = 0;
+    let referenceSelectionReady = false;
+    let selectionRetried = false;
+    let previewContext = null;
+    let previewIdentitySignal = "unverified";
+    const expectedPreviewUuid = (requestedAssetUuidForPin || assetUuid || "").toLowerCase();
+    const targetFilename = filename.split(/[\\\\/]/).pop().toLowerCase();
+    const pickerContainerSelector = '[role="dialog"], [aria-modal="true"], .cdk-overlay-pane';
+    const readPickerDiagnostics = async (tileBox = null) => page.evaluate(({ containerSelector, tileSelector, filename, x, y }) => {
+      const visible = node => {
+        if (!node || !node.isConnected) return false;
+        const style = getComputedStyle(node), rect = node.getBoundingClientRect();
+        return style.display !== "none" && style.visibility !== "hidden" && Number(style.opacity || 1) > 0 && rect.width > 0 && rect.height > 0;
+      };
+      const containers = Array.from(document.querySelectorAll(containerSelector)).filter(visible);
+      const tiles = containers.flatMap(container => Array.from(container.querySelectorAll(tileSelector)).filter(visible)
+        .filter(tile => String(tile.innerText || tile.textContent || "").toLowerCase().includes(filename.toLowerCase())));
+      const detailPanes = Array.from(document.querySelectorAll("flow-add-menu-detail-pane")).filter(visible);
+      const paneNodes = Array.from(document.querySelectorAll("body *")).filter(visible);
+      const previewNodes = paneNodes.filter(node => node.children.length < 8
+        && /Preview of\s+.+\.(?:png|jpe?g|webp|gif|avif)/i.test(String(node.innerText || node.textContent || "")));
+      const addNodes = paneNodes.filter(node => /add to prompt/i.test(String(node.innerText || node.getAttribute("aria-label") || ""))
+        && /^(BUTTON|[A-Z0-9-]+)$/.test(node.tagName) && visible(node));
+      const summarizeAncestors = node => {
+        const out = [];
+        for (let current = node, depth = 0; current && depth < 4; current = current.parentElement, depth += 1) {
+          const text = String(current.innerText || current.textContent || "").replace(/\s+/g, " ").trim();
+          const rect = current.getBoundingClientRect();
+          out.push({ depth, tag: current.tagName.toLowerCase(), role: current.getAttribute("role"),
+            class_name: String(current.className?.baseVal || current.className || "").slice(0, 100),
+            box: { x: Math.round(rect.x), y: Math.round(rect.y), width: Math.round(rect.width), height: Math.round(rect.height) },
+            has_preview_label: /Preview of\s+.+\.(?:png|jpe?g|webp|gif|avif)/i.test(text),
+            has_add_button: Array.from(current.querySelectorAll("button,[role='button']")).some(el => visible(el)
+              && /add to prompt/i.test(String(el.innerText || el.getAttribute("aria-label") || ""))),
+            text: text.slice(0, 240) });
+        }
+        return out;
+      };
+      const pane = containers.map(container => {
+        const text = String(container.innerText || "").replace(/\s+/g, " ").trim();
+        return { role: container.getAttribute("role"), has_preview_label: /Preview of\s+.+\.(?:png|jpe?g|webp|gif|avif)/i.test(text),
+          visible_add_button_count: Array.from(container.querySelectorAll("button,[role='button']")).filter(visible)
+            .filter(el => /add to prompt/i.test(String(el.innerText || el.getAttribute("aria-label") || ""))).length,
+          text: text.slice(0, 180) };
+      });
+      const hit = Number.isFinite(x) && Number.isFinite(y) ? document.elementFromPoint(x, y) : null;
+      return {
+        visible_picker_count: containers.length, matching_visible_tile_count: tiles.length,
+        matching_tiles: tiles.slice(0, 4).map(tile => { const r = tile.getBoundingClientRect(); return {
+          aria_selected: tile.getAttribute("aria-selected"),
+          box: { x: Math.round(r.x), y: Math.round(r.y), width: Math.round(r.width), height: Math.round(r.height) },
+          outer_html: tile.outerHTML.slice(0, 700),
+          parent_html: tile.parentElement?.outerHTML.slice(0, 900) || "",
+          grandparent_html: tile.parentElement?.parentElement?.outerHTML.slice(0, 1100) || "",
+          selected_ancestors: [tile, tile.parentElement, tile.parentElement?.parentElement].filter(Boolean)
+            .map(node => ({ tag: node.tagName.toLowerCase(), role: node.getAttribute("role"), aria_selected: node.getAttribute("aria-selected"), tabindex: node.getAttribute("tabindex") })),
+          text: String(tile.innerText || tile.textContent || "").replace(/\s+/g, " ").trim().slice(0, 120) }; }),
+        detail_pane: detailPanes.map(node => ({ tag: node.tagName.toLowerCase(), text: String(node.innerText || node.textContent || "").replace(/\s+/g, " ").trim().slice(0, 240), preview_labels: Array.from(node.querySelectorAll("img[alt]")).map(img => img.getAttribute("alt")).filter(alt => /Preview of/i.test(alt || "")), image_sources: Array.from(node.querySelectorAll("img")).map(img => ({ src: img.getAttribute("src"), current_src: img.currentSrc, alt: img.getAttribute("alt") })).slice(0, 8), ancestors: summarizeAncestors(node) })),
+        preview_nodes: previewNodes.slice(0, 3).map(node => ({ tag: node.tagName.toLowerCase(), text: String(node.innerText || node.textContent || "").replace(/\s+/g, " ").trim().slice(0, 160) })),
+        add_button_contexts: addNodes.slice(0, 3).map(node => ({ text: String(node.innerText || node.getAttribute("aria-label") || "").slice(0, 100), ancestors: summarizeAncestors(node) })),
+        picker_container_diagnostics: pane,
+        click_hit_inside_matching_tile: Boolean(hit && tiles.some(tile => tile === hit || tile.contains(hit))),
+        click_hit_tag: hit?.tagName?.toLowerCase() || null,
+        click_hit_text: String(hit?.innerText || hit?.textContent || "").replace(/\s+/g, " ").trim().slice(0, 100)
+      };
+    }, { containerSelector: pickerContainerSelector, tileSelector: selectors.ingredient_library_item, filename,
+      x: tileBox ? tileBox.x + tileBox.width / 2 : null, y: tileBox ? tileBox.y + tileBox.height / 2 : null })
+      .catch(error => ({ diagnostic_error: error.message }));
+    const freshTile = async () => {
+      const containers = page.locator(pickerContainerSelector);
+      const containerCount = await containers.count().catch(() => 0);
+      for (let i = 0; i < containerCount && Date.now() < selectionDeadline; i += 1) {
+        const container = containers.nth(i);
+        if (!(await container.isVisible({ timeout: 150 }).catch(() => false))) continue;
+        const tiles = container.locator(`${selectors.ingredient_library_item}:visible`);
+        let found = tiles.filter({ hasText: filename });
+        if (await found.count().catch(() => 0) === 0 && filenameStem !== filename) found = tiles.filter({ hasText: filenameStem });
+        if (await found.count().catch(() => 0) === 1 && await found.first().isVisible({ timeout: 150 }).catch(() => false)) return { container, tile: found.first() };
+      }
+      return null;
+    };
+    let activeAsset = asset;
+    const initialAssetBox = await activeAsset.boundingBox({ timeout: 300 }).catch(() => null);
+    console.log(JSON.stringify({
+      event: "ingredients_picker_target_tile", filename,
+      matching_tile_count: await matchingAssets.count().catch(() => 0),
+      target_tile_box: initialAssetBox ? { x: Math.round(initialAssetBox.x), y: Math.round(initialAssetBox.y), width: Math.round(initialAssetBox.width), height: Math.round(initialAssetBox.height) } : null,
+      target_tile_aria_selected_before_click: await activeAsset.getAttribute("aria-selected", { timeout: 300 }).catch(() => null),
+      target_tile_text: (await activeAsset.innerText({ timeout: 300 }).catch(() => "")).replace(/\s+/g, " ").trim().slice(0, 160),
+    }));
+    await activeAsset.scrollIntoViewIfNeeded({ timeout: 400 }).catch(() => {});
+    let current = await freshTile();
+    if (!current) {
+      console.log(JSON.stringify({ event: "ingredients_picker_step_diagnostics", step: "before_initial_click", ...(await readPickerDiagnostics(initialAssetBox)) }));
+      throw new Error(`Picker closed or target tile became ambiguous before selecting ${filename}; stopping before Add/prompt fill/Create.`);
+    }
+    activeAsset = current.tile;
+    const firstBox = await activeAsset.boundingBox({ timeout: 300 }).catch(() => null);
+    if (firstBox) {
+      const center = { x: firstBox.x + firstBox.width / 2, y: firstBox.y + firstBox.height / 2 };
+      const targetMeta = await page.evaluate(({ x, y }) => {
+        const hit = document.elementFromPoint(x, y);
+        const interactive = hit?.closest('[role="option"],[role="button"],button,[tabindex]');
+        return { hit_tag: hit?.tagName?.toLowerCase() || null, hit_text: String(hit?.innerText || hit?.textContent || "").replace(/\s+/g, " ").trim().slice(0, 100),
+          interactive_tag: interactive?.tagName?.toLowerCase() || null, interactive_role: interactive?.getAttribute("role") || null,
+          interactive_tabindex: interactive?.getAttribute("tabindex") || null, interactive_text: String(interactive?.innerText || interactive?.textContent || "").replace(/\s+/g, " ").trim().slice(0, 140),
+          interactive_is_inside_tile: Boolean(interactive && hit && (interactive === hit || interactive.contains(hit))) };
+      }, center).catch(() => ({}));
+      console.log(JSON.stringify({ event: "ingredients_picker_click_target", step: "initial", filename, ...targetMeta }));
+      const clickableAncestor = activeAsset.locator('xpath=ancestor-or-self::*[@role="option" or @role="button" or self::button or @tabindex][1]').first();
+      const ancestorCount = await clickableAncestor.count().catch(() => 0);
+      const initialActivationStartedAt = Date.now();
+      if (ancestorCount === 1 && await clickableAncestor.isVisible({ timeout: 200 }).catch(() => false)) {
+        const ancestorBox = await clickableAncestor.boundingBox({ timeout: 200 }).catch(() => null);
+        if (ancestorBox) await clickableAncestor.click({ position: { x: Math.floor(ancestorBox.width / 2), y: Math.floor(ancestorBox.height / 2) }, timeout: 600 }).catch(() => {});
+      } else {
+        await activeAsset.click({ position: { x: Math.max(2, Math.floor(firstBox.width / 2)), y: Math.max(2, Math.floor(firstBox.height / 2)) }, timeout: 600 }).catch(() => {});
+      }
+      console.log(JSON.stringify({ event: "ingredients_picker_activation_timing", filename, step: "initial_click", elapsed_ms: Date.now() - initialActivationStartedAt, clicked_interactive_ancestor: ancestorCount === 1 }));
+    }
+    console.log(JSON.stringify({ event: "ingredients_picker_step_diagnostics", step: "after_initial_click", ...(await readPickerDiagnostics(firstBox)) }));
+    while (Date.now() < selectionDeadline) {
+      current = await freshTile();
+      if (!current) {
+        console.log(JSON.stringify({ event: "ingredients_picker_step_diagnostics", step: "target_missing_during_poll", ...(await readPickerDiagnostics()) }));
+        break;
+      }
+      activeAsset = current.tile;
+      selectedAssetAriaSelected = await activeAsset.getAttribute("aria-selected", { timeout: 200 }).catch(() => null);
+      const addCandidates = current.container.locator(selectors.ingredient_add_to_prompt);
+      const candidateCount = await addCandidates.count().catch(() => 0);
+      addToPromptVisibleCount = 0;
+      let visibleButton = null;
+      for (let i = 0; i < candidateCount && Date.now() < selectionDeadline; i += 1) {
+        if (await addCandidates.nth(i).isVisible({ timeout: 150 }).catch(() => false)) { addToPromptVisibleCount += 1; visibleButton = addCandidates.nth(i); }
+      }
+      previewContext = addToPromptVisibleCount === 1 && visibleButton ? await inspectAddToPromptContext(visibleButton) : null;
+      if (previewContext) console.log(JSON.stringify({ event: "ingredients_picker_preview_context", filename,
+        depth: previewContext.depth, context_tag: previewContext.context_tag, context_role: previewContext.context_role,
+        context_text: previewContext.context_text, preview_labels: previewContext.preview_labels, uuids: previewContext.uuids,
+        image_sources: previewContext.image_sources?.slice(0, 8) || [] }));
+      const previewLabels = (previewContext?.preview_labels || []).map(label => String(label).trim().toLowerCase());
+      const labelMatches = previewLabels.includes(targetFilename);
+      const uuidMatches = Boolean(expectedPreviewUuid && previewContext?.uuids?.includes(expectedPreviewUuid));
+      previewIdentitySignal = uuidMatches ? "uuid" : labelMatches ? "exact_preview_filename" : "unverified";
+      if (addToPromptVisibleCount === 1 && (selectedAssetAriaSelected === "true" || labelMatches) && previewIdentitySignal !== "unverified") {
+        referenceSelectionReady = true; break;
+      }
+      if (!selectionRetried && Date.now() - selectionWaitStartedAt >= 1000 && Date.now() < selectionDeadline) {
+        selectionRetried = true;
+        const box = await activeAsset.boundingBox({ timeout: 200 }).catch(() => null);
+        await activeAsset.scrollIntoViewIfNeeded({ timeout: 300 }).catch(() => {});
+        await activeAsset.hover({ timeout: 300 }).catch(() => {});
+        console.log(JSON.stringify({ event: "ingredients_picker_step_diagnostics", step: "before_retry_click", ...(await readPickerDiagnostics(box)) }));
+        current = await freshTile();
+        if (!current || !box || Date.now() >= selectionDeadline) break;
+        activeAsset = current.tile;
+        const currentBox = await activeAsset.boundingBox({ timeout: 200 }).catch(() => null);
+        if (!currentBox) break;
+        const point = { x: Math.floor(currentBox.width / 2), y: Math.floor(currentBox.height / 2) };
+        const ancestor = activeAsset.locator('xpath=ancestor-or-self::*[@role="option" or @role="button" or self::button or @tabindex][1]').first();
+        const ancestorCount = await ancestor.count().catch(() => 0);
+        const hitTest = await page.evaluate(({ x, y, tileSelector, filename }) => {
+          const hit = document.elementFromPoint(x, y);
+          const tiles = Array.from(document.querySelectorAll(tileSelector)).filter(tile => String(tile.innerText || tile.textContent || "").toLowerCase().includes(filename.toLowerCase()));
+          return Boolean(hit && tiles.some(tile => tile === hit || tile.contains(hit)));
+        }, { x: currentBox.x + point.x, y: currentBox.y + point.y, tileSelector: selectors.ingredient_library_item, filename }).catch(() => false);
+        const retryActivationStartedAt = Date.now();
+        if (hitTest && ancestorCount === 1 && await ancestor.isVisible({ timeout: 150 }).catch(() => false)) {
+          const ancestorBox = await ancestor.boundingBox({ timeout: 150 }).catch(() => null);
+          if (ancestorBox) await ancestor.click({ position: { x: Math.floor(ancestorBox.width / 2), y: Math.floor(ancestorBox.height / 2) }, timeout: 500 }).catch(() => {});
+        } else if (hitTest) {
+          await activeAsset.click({ position: point, timeout: 500 }).catch(() => {});
+        }
+        console.log(JSON.stringify({ event: "ingredients_picker_activation_timing", filename, step: "retry_click", elapsed_ms: Date.now() - retryActivationStartedAt, hit_test_inside_tile: hitTest, clicked_interactive_ancestor: ancestorCount === 1 }));
+        console.log(JSON.stringify({ event: "ingredients_picker_click_target", step: "retry", filename, clicked_interactive_ancestor: ancestorCount === 1, ...await readPickerDiagnostics(currentBox) }));
+        console.log(JSON.stringify({ event: "ingredients_picker_step_diagnostics", step: "after_retry_click", hit_test_inside_tile: hitTest, ...(await readPickerDiagnostics(currentBox)) }));
+        const fallbackMethods = ["thumbnail_hover_click", "thumbnail_pointer_sequence", "option_double_click", "focus_space"];
+        for (const method of fallbackMethods) {
+          if (Date.now() >= selectionDeadline) break;
+          const activationStartedAt = Date.now();
+          const latest = await freshTile();
+          if (!latest) {
+            console.log(JSON.stringify({ event: "ingredients_picker_activation_attempt", filename, method, elapsed_ms: Date.now() - activationStartedAt, skipped: true, reason: "picker_closed_or_tile_missing" }));
+            break;
+          }
+          activeAsset = latest.tile;
+          const option = activeAsset.locator('xpath=ancestor-or-self::*[@role="option" or @role="button" or self::button or @tabindex][1]').first();
+          const optionCount = await option.count().catch(() => 0);
+          const target = optionCount === 1 ? option : activeAsset;
+          const img = activeAsset.locator("img").first();
+          try {
+            if (method === "thumbnail_hover_click") {
+              if (await img.count().catch(() => 0) === 1 && await img.isVisible({ timeout: 150 }).catch(() => false)) {
+                await img.hover({ timeout: 250 });
+                await img.click({ timeout: 300 });
+              } else { await target.hover({ timeout: 250 }); await target.click({ timeout: 300 }); }
+            } else if (method === "thumbnail_pointer_sequence") {
+              const hasImg = await img.count().catch(() => 0) === 1 && await img.isVisible({ timeout: 150 }).catch(() => false);
+              const eventTarget = hasImg ? img : target;
+              await eventTarget.evaluate(node => {
+                const r = node.getBoundingClientRect();
+                const init = { bubbles: true, cancelable: true, composed: true, view: window, clientX: r.left + r.width / 2, clientY: r.top + r.height / 2, button: 0, buttons: 1, pointerId: 1, pointerType: "mouse" };
+                node.dispatchEvent(new PointerEvent("pointerover", { ...init, buttons: 0 }));
+                node.dispatchEvent(new PointerEvent("pointerenter", { ...init, buttons: 0 }));
+                node.dispatchEvent(new MouseEvent("mouseover", { ...init, buttons: 0 }));
+                node.dispatchEvent(new MouseEvent("mouseenter", { ...init, buttons: 0 }));
+                node.dispatchEvent(new PointerEvent("pointerdown", init));
+                node.dispatchEvent(new MouseEvent("mousedown", init));
+                node.dispatchEvent(new PointerEvent("pointerup", { ...init, buttons: 0 }));
+                node.dispatchEvent(new MouseEvent("mouseup", { ...init, buttons: 0 }));
+                node.dispatchEvent(new MouseEvent("click", { ...init, buttons: 0 }));
+              }, { timeout: 350 });
+            } else if (method === "option_double_click") await target.dblclick({ timeout: 350 });
+            else { await target.focus({ timeout: 250 }); await target.press("Space", { timeout: 250 }); }
+          } catch (error) { console.log(JSON.stringify({ event: "ingredients_picker_activation_action_error", filename, method, elapsed_ms: Date.now() - activationStartedAt, action_error: String(error.message || error).slice(0, 180) })); }
+          await page.waitForTimeout(Math.min(150, Math.max(0, selectionDeadline - Date.now())));
+          const after = await freshTile();
+          const afterSelected = after ? await after.tile.getAttribute("aria-selected", { timeout: 150 }).catch(() => null) : null;
+          const afterAddCount = after ? await countVisibleMatches(after.container, selectors.ingredient_add_to_prompt) : 0;
+          const afterAdd = after && afterAddCount === 1 ? after.container.locator(selectors.ingredient_add_to_prompt).first() : null;
+          const afterPreview = afterAdd ? await inspectAddToPromptContext(afterAdd) : null;
+          console.log(JSON.stringify({ event: "ingredients_picker_activation_attempt", filename, method, elapsed_ms: Date.now() - activationStartedAt, picker_still_open: Boolean(after),
+            selected_aria_selected: afterSelected, add_to_prompt_visible_count: afterAddCount,
+            preview_context: afterPreview ? { depth: afterPreview.depth, context_tag: afterPreview.context_tag, context_role: afterPreview.context_role,
+              context_text: afterPreview.context_text, preview_labels: afterPreview.preview_labels, uuids: afterPreview.uuids, image_sources: afterPreview.image_sources?.slice(0, 8) } : null,
+            ...(await readPickerDiagnostics(currentBox)) }));
+          if (!after || afterSelected === "true" || (afterPreview?.preview_labels || []).some(label => label.toLowerCase() === targetFilename)) break;
+        }
+      }
+      await page.waitForTimeout(Math.min(100, Math.max(0, selectionDeadline - Date.now())));
+    }
+    console.log(JSON.stringify({
+      event: "reference_asset_selection_ready",
+      filename,
+      selected_asset_aria_selected: selectedAssetAriaSelected,
+      add_to_prompt_visible_count: addToPromptVisibleCount,
+      preview_labels: previewContext?.preview_labels || [],
+      preview_uuids: previewContext?.uuids || [],
+      preview_identity_signal: previewIdentitySignal,
+      wait_ms: Date.now() - selectionWaitStartedAt,
+      elapsed_ms: Date.now() - selectionWaitStartedAt,
+      timeout_ms: selectionWaitTimeoutMs,
+      selection_retried: selectionRetried,
+      ready: referenceSelectionReady,
+      readiness_signal: "unique_visible_add_button_plus_exact_preview_filename_or_uuid",
+    }));
+    if (!referenceSelectionReady) {
+      throw new Error(`Reference selection did not verify the target preview for ${filename}; configured wait budget=${selectionWaitTimeoutMs}ms, actual elapsed=${Date.now() - selectionWaitStartedAt}ms, aria-selected=${JSON.stringify(selectedAssetAriaSelected)}, visible Add to prompt buttons=${addToPromptVisibleCount}, preview labels=${JSON.stringify(previewContext?.preview_labels || [])}, preview UUIDs=${JSON.stringify(previewContext?.uuids || [])}, selection_retried=${selectionRetried}. Stopping before Add/prompt fill/Create.`);
+    }
+    // Re-resolve the selected tile and action inside the current overlay. A reuse
+    // recheck may have closed/reopened the picker, detaching pickerResolution.container.
+    current = await freshTile();
+    if (!current) {
+      throw new Error("The current Ingredients picker no longer contains exactly one visible target tile; stopping before chip attach.");
+    }
+    const activePickerContainer = current.container;
+    const addToPromptCandidatesFresh = activePickerContainer.locator(addToPromptSelector);
+    const addToPromptCandidateCount = await addToPromptCandidatesFresh.count().catch(() => 0);
+    let addToPrompt = null;
+    let finalVisibleAddCount = 0;
+    for (let i = 0; i < addToPromptCandidateCount; i += 1) {
+      const candidate = addToPromptCandidatesFresh.nth(i);
+      if (await candidate.isVisible().catch(() => false)) {
+        finalVisibleAddCount += 1;
+        addToPrompt = candidate;
       }
     }
+    if (finalVisibleAddCount !== 1 || !addToPrompt) {
+      throw new Error(`Ingredients picker Add to prompt must be uniquely visible in the current picker; visible count=${finalVisibleAddCount}, DOM matches=${addToPromptCandidateCount}. Stopping before chip attach.`);
+    }
+    // Re-read identity from the exact fresh action context immediately before click.
+    previewContext = await inspectAddToPromptContext(addToPrompt);
+    const immediatePreviewLabels = (previewContext?.preview_labels || []).map(label => String(label).trim().toLowerCase());
+    const immediateLabelMatches = immediatePreviewLabels.includes(targetFilename);
+    const immediateUuidMatches = Boolean(expectedPreviewUuid && previewContext?.uuids?.includes(expectedPreviewUuid));
+    console.log(JSON.stringify({
+      event: "ingredients_picker_add_action_identity",
+      filename,
+      expected_asset_uuid: expectedPreviewUuid || null,
+      target_filename: targetFilename,
+      preview_context: previewContext,
+      identity_verified: immediateUuidMatches || immediateLabelMatches,
+      identity_signal: immediateUuidMatches ? "uuid" : immediateLabelMatches ? "exact_preview_filename" : "unverified",
+      final_visible_add_button_count: finalVisibleAddCount,
+      action_clicked: false,
+    }));
+    if (!immediateUuidMatches && !immediateLabelMatches) {
+      throw new Error(`Cannot verify Add to prompt preview identity for ${filename}; target filename=${targetFilename}, preview labels=${JSON.stringify(previewContext?.preview_labels || [])}, preview UUIDs=${JSON.stringify(previewContext?.uuids || [])}. Refusing to click Add to prompt.`);
+    }
+    let attachedAfterClick = false;
+    let lastClickError = null;
+    const chipAttachStartedAt = Date.now();
+    let addClickAttemptTimings = [];
+    for (let clickAttempt = 0; clickAttempt < 3; clickAttempt += 1) {
+      const addClickStartedAt = Date.now();
+      try {
+        await addToPrompt.click({ timeout: 6000 });
+        lastClickError = null;
+      } catch (error) {
+        lastClickError = error;
+      }
+      attachedAfterClick = await page.waitForFunction(({ selector, beforeCount }) =>
+        document.querySelectorAll(selector).length > beforeCount,
+        { selector: selectors.ingredient_reference_items, beforeCount: beforeAttachChipCount },
+        { timeout: 2500 }).then(() => true).catch(() => false);
+      addClickAttemptTimings.push({ attempt: clickAttempt + 1, elapsed_ms: Date.now() - addClickStartedAt, attached: attachedAfterClick, click_error: lastClickError ? String(lastClickError.message || lastClickError).slice(0, 140) : null });
+      console.log(JSON.stringify({ event: "ingredient_add_to_prompt_attempt_timing", filename, ...addClickAttemptTimings[addClickAttemptTimings.length - 1] }));
+      if (attachedAfterClick) break;
+      if (clickAttempt < 2) await page.waitForTimeout(350);
+    }
+    console.log(JSON.stringify({ event: "ingredient_add_to_prompt_chip_attach_timing", filename, elapsed_ms: Date.now() - chipAttachStartedAt, attempts: addClickAttemptTimings, attached: attachedAfterClick }));
+    if (!attachedAfterClick) {
+      await closeIngredientsPicker(page, selectors);
+      const detail = lastClickError ? ` Last click error: ${lastClickError.message}` : "";
+      throw new Error(`Add to prompt did not add a new Ingredients chip for ${filename} after 3 verified click attempts.${detail}`);
+    }
+    // Identify the newly attached chip by set difference against the pre-click
+    // snapshot. This works whether Flow appends or prepends chips in its UI.
+    const attachedChipCount = await chips.count();
+    if (attachedChipCount !== beforeAttachChipCount + 1) {
+      await closeIngredientsPicker(page, selectors);
+      throw new Error(`Attaching ${filename} should add exactly one Ingredients chip; before=${beforeAttachChipCount}, after=${attachedChipCount}. Stopping before prompt fill/Create.`);
+    }
+    const afterAttachChipUuids = [];
+    for (let i = 0; i < attachedChipCount; i += 1) {
+      const src = await chips.nth(i).locator("img.chip-image").getAttribute("src").catch(() => null);
+      afterAttachChipUuids.push(assetUuidFromUrl(src));
+    }
+    const newChipUuids = afterAttachChipUuids.filter(uuid => uuid && !beforeAttachChipUuids.includes(uuid));
+    const selectedChipUuid = newChipUuids.length === 1 ? newChipUuids[0] : null;
+    if (!selectedChipUuid) {
+      await closeIngredientsPicker(page, selectors);
+      throw new Error(`Selected asset ${filename} was attached, but neither its library metadata nor Ingredients chip exposed a stable UUID. Stopping before prompt fill/Create.`);
+    }
+    if (assetUuid && selectedChipUuid !== assetUuid) {
+      await closeIngredientsPicker(page, selectors);
+      throw new Error(`Flow asset UUID mismatch after attach for ${filename}: library/network resolved ${assetUuid}, newly attached chip UUID ${selectedChipUuid}. Stopping before prompt fill/Create.`);
+    }
+    if (requestedAssetUuidForPin && selectedChipUuid !== requestedAssetUuidForPin) {
+      await closeIngredientsPicker(page, selectors);
+      throw new Error(`Pinned Flow asset UUID mismatch after attach for ${filename}: requested ${requestedAssetUuidForPin}, newly attached chip UUID ${selectedChipUuid}. Stopping before prompt fill/Create.`);
+    }
+    assetUuid = selectedChipUuid;
+    logReferencePhase("select_asset_and_attach_chip", selectionAndAttachStartedAt, { selected_chip_uuid_verified: true });
+    const closeAndVerifyStartedAt = Date.now();
     await closeIngredientsPicker(page, selectors);
     const attachedUuids = [];
     const finalChipCount = await chips.count();
@@ -911,41 +2432,36 @@ async function uploadSceneReferencesUnsafe(page, selectors, referenceImages) {
     if (new Set(attachedUuids).size !== attachedUuids.length) throw new Error("Duplicate Ingredients chip UUID detected; refusing to continue.");
     if (!attachedUuids.includes(assetUuid)) throw new Error(`Attached chip identity mismatch for ${filename}: expected asset UUID ${assetUuid}, observed ${attachedUuids.join(", ")}.`);
     expectedUuids.push(assetUuid);
-    console.log(`Verified Ingredients asset ${filename} -> UUID ${assetUuid}`);
+    logReferencePhase("close_picker_and_verify_chips", closeAndVerifyStartedAt, { final_chip_count: finalChipCount, attached_uuid_count: attachedUuids.length });
+    console.log(JSON.stringify({ event: "reference_step_end", filename, elapsed_ms: Date.now() - assetStartedAt, phases: referenceTiming, selected_asset_uuid_verified: true, total_references_so_far: expectedUuids.length }));
+    console.log(`Verified Ingredients asset ${filename} -> UUID ${assetUuid}; total reference step ${Date.now() - assetStartedAt}ms`);
   }
 
   const finalCount = await chips.count();
   if (finalCount !== referenceImages.length) throw new Error(`Ingredients chip count mismatch: expected ${referenceImages.length}, observed ${finalCount}. Stopping before prompt fill/Create.`);
+  const finalUuidVerifyStartedAt = Date.now();
   await verifyAttachedReferenceUuids(page, selectors, expectedUuids);
+  console.log(JSON.stringify({ event: "reference_batch_final_uuid_verification_timing", elapsed_ms: Date.now() - finalUuidVerifyStartedAt, reference_count: finalCount }));
+  console.log(JSON.stringify({ event: "reference_upload_batch_end", elapsed_ms: Date.now() - batchStartedAt, reference_count: finalCount, verified: true }));
   console.log(`Verified exact asset identity and loaded thumbnails for ${finalCount} reference chip(s).`);
+  page.off("response", assetResponseListener);
   return expectedUuids;
 }
 
-async function uploadSceneReferences(page, selectors, referenceImages, prompt) {
-  let uploadError = null;
+async function uploadSceneReferences(page, selectors, referenceImages, prompt, referenceAssetUuids = new Map()) {
   try {
-    return await uploadSceneReferencesUnsafe(page, selectors, referenceImages);
+    return await uploadSceneReferencesUnsafe(page, selectors, referenceImages, referenceAssetUuids);
   } catch (error) {
-    uploadError = error;
-    throw error;
-  } finally {
-    if (uploadError) {
-      const cleanup = [];
-      try {
-        await closeIngredientsPicker(page, selectors);
-        cleanup.push("picker closed and verified");
-      } catch (closeError) {
-        cleanup.push(`picker closure FAILED: ${closeError.message}`);
-      }
-      try {
-        // Attempt clearing even if backdrop closure verification failed; report either failure explicitly.
-        await clearPromptContentsVerified(prompt, selectors, 4000);
-        cleanup.push("prompt and Ingredients chips cleared and verified");
-      } catch (clearError) {
-        cleanup.push(`prompt/chip cleanup FAILED: ${clearError.message}`);
-      }
-      console.error(`Upload failure cleanup (finally): ${cleanup.join("; ")}`);
+    // Close the picker here, but leave prompt/chip cleanup to the single outer
+    // pre-submit failure handler. That avoids contradictory "cleanup failed" and
+    // "cleanup succeeded" messages from two independent cleanup attempts.
+    try {
+      await closeIngredientsPicker(page, selectors);
+      console.error("Upload failure: Ingredients picker closed and verified; outer handler will verify prompt/chip cleanup.");
+    } catch (closeError) {
+      console.error(`Upload failure: picker closure FAILED: ${closeError.message}; outer handler will still attempt prompt/chip cleanup.`);
     }
+    throw error;
   }
 }
 
@@ -971,6 +2487,10 @@ async function loadInputs(args) {
   if (!["include", "hybrid", "reference_only"].includes(faceDescriptionMode)) {
     throw new Error("face_description_mode must be 'include', 'hybrid', or 'reference_only'.");
   }
+  const referenceLanguageMode = scene.reference_language_mode ?? "identity_preserving";
+  if (!["identity_preserving", "neutral_reference"].includes(referenceLanguageMode)) {
+    throw new Error("reference_language_mode must be 'identity_preserving' or 'neutral_reference'.");
+  }
   if (typeof scene.character_description !== "string") {
     throw new Error("Scene JSON must contain character_description as a string (it may be empty when face_description_mode is 'reference_only').");
   }
@@ -982,28 +2502,66 @@ async function loadInputs(args) {
   }
   if (scene.expression && !/^[\x00-\x7F]+$/.test(scene.expression)) throw new Error("Expression must be ASCII/English only; non-ASCII characters are blocked before touching Flow.");
   if (!/^[\x00-\x7F]+$/.test(scene.prompt)) throw new Error("Prompt must be ASCII/English only; non-ASCII characters are blocked before touching Flow.");
-  const variants = scene.variants === undefined ? 1 : scene.variants;
+  const variants = scene.variants === undefined ? 2 : scene.variants;
   if (!Number.isInteger(variants) || variants < 1 || variants > 3) throw new Error("variants must be an integer from 1 to 3.");
   const seatedShot = /\b(?:seated|sitting|sit|sits|kneeling|kneel|kneels)\b/i.test(scene.scene_id + " " + scene.prompt);
+  // Set framing_helper=false when the scene prompt already defines its own framing.
+  // Alternatively, provide framing_helper_text to replace the default helper sentence.
+  // The custom sentence is only appended when the helper is enabled for this scene.
   scene.framing_helper_applied = scene.framing_helper === false ? false : (scene.framing_helper === true || seatedShot);
   if (scene.framing_helper_applied) {
-    const framingSentence = "Locked-off tripod shot from the first frame: the camera does not move, pan, tilt, dolly, or zoom at any time. Camera pulled back, with a wide margin on both sides of the knees; keep both knees comfortably inside the frame.";
+    scene.prompt = scene.prompt.replace(/\\b(?:fills?|occupies?)\\s+(?:about\\s+)?\\d{1,3}\\s*(?:percent|%)\\s+of\\s+(?:the\\s+)?frame\\s+width\\b/gi, "is framed from head to knees");
+    const defaultFramingSentence = "Medium-wide full-body shot. The person and yoga mat fill most of the frame while keeping the entire head, both knees, feet, and mat visible with a modest, clear margin on every side. Keep the face large enough for facial features to remain readable; do not leave excessive empty floor or make the person appear small. Do not crop the body or mat. Locked-off tripod shot from the first frame: the camera does not move, pan, tilt, dolly, or zoom at any time.";
+    const framingSentence = typeof scene.framing_helper_text === "string" && scene.framing_helper_text.trim()
+      ? scene.framing_helper_text.trim()
+      : defaultFramingSentence;
     if (!scene.prompt.includes(framingSentence)) scene.prompt = scene.prompt.trim() + " " + framingSentence;
   }
   if (scene.character_description && !/^[\x00-\x7F]+$/.test(scene.character_description)) throw new Error("Character description must be ASCII/English only; non-ASCII characters are blocked before touching Flow.");
   if (!Array.isArray(scene.reference_images) || scene.reference_images.length < 1 || scene.reference_images.length > 3) {
     throw new Error("Scene JSON must provide reference_images as an array of 1 to 3 local file paths.");
   }
+  const inlineAssetUuids = new Map();
   const referenceImages = scene.reference_images.map((value, index) => {
-    if (typeof value !== "string" || !value.trim()) throw new Error(`reference_images[${index}] must be a non-empty local path.`);
-    const resolved = path.resolve(path.dirname(scenePath), value);
+    const entry = typeof value === "string" ? { path: value } : value;
+    if (!entry || typeof entry !== "object" || typeof entry.path !== "string" || !entry.path.trim()) {
+      throw new Error(`reference_images[${index}] must be a path string or {path, flow_asset_uuid} object.`);
+    }
+    const resolved = path.resolve(path.dirname(scenePath), entry.path);
     if (!fs.existsSync(resolved) || !fs.statSync(resolved).isFile()) throw new Error(`Reference image does not exist or is not a file: ${resolved}`);
     if (![".png", ".jpg", ".jpeg", ".webp"].includes(path.extname(resolved).toLowerCase())) {
       throw new Error(`Reference image must be PNG, JPG, JPEG, or WEBP: ${resolved}`);
     }
+    if (entry.flow_asset_uuid !== undefined) {
+      const uuid = String(entry.flow_asset_uuid).trim().toLowerCase();
+      if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/.test(uuid)) {
+        throw new Error(`reference_images[${index}].flow_asset_uuid must be a UUID.`);
+      }
+      inlineAssetUuids.set(resolved, uuid);
+    }
     return resolved;
   });
   if (new Set(referenceImages).size !== referenceImages.length) throw new Error("reference_images must contain distinct file paths.");
+  scene.reference_images = referenceImages;
+  const referenceAssetUuids = new Map(inlineAssetUuids);
+  const declaredAssetUuids = scene.reference_asset_uuids;
+  const declaredEntries = declaredAssetUuids === undefined ? []
+    : Array.isArray(declaredAssetUuids) ? declaredAssetUuids.map((entry, index) => {
+      if (!entry || typeof entry !== "object") throw new Error(`reference_asset_uuids[${index}] must be {path, flow_asset_uuid}.`);
+      return [entry.path, entry.flow_asset_uuid];
+    })
+    : declaredAssetUuids && typeof declaredAssetUuids === "object" ? Object.entries(declaredAssetUuids)
+    : (() => { throw new Error("reference_asset_uuids must be an object keyed by image path or an array of {path, flow_asset_uuid}."); })();
+  for (const [rawPath, rawUuid] of declaredEntries) {
+    if (typeof rawPath !== "string" || !rawPath.trim()) throw new Error("reference_asset_uuids entries require a non-empty path.");
+    const resolvedPath = path.resolve(path.dirname(scenePath), rawPath);
+    const matches = referenceImages.filter(imagePath => imagePath === resolvedPath || path.basename(imagePath) === rawPath);
+    if (matches.length !== 1) throw new Error(`reference_asset_uuids path ${JSON.stringify(rawPath)} must uniquely match one reference_images entry.`);
+    const uuid = String(rawUuid || "").trim().toLowerCase();
+    if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/.test(uuid)) throw new Error(`reference_asset_uuids[${JSON.stringify(rawPath)}] must be a UUID.`);
+    if (referenceAssetUuids.has(matches[0]) && referenceAssetUuids.get(matches[0]) !== uuid) throw new Error(`Conflicting Flow asset UUID declarations for ${rawPath}.`);
+    referenceAssetUuids.set(matches[0], uuid);
+  }
   const requestedFaceReferences = scene.face_reference_ids;
   let faceReferenceImages;
   if (requestedFaceReferences !== undefined) {
@@ -1054,25 +2612,54 @@ async function loadInputs(args) {
   scene.face_reference_id = faceReferenceImages[0];
   scene.character_description = scene.character_description.trim();
   scene.scene_prompt = scene.prompt;
-  const faceAnchorInstructions = faceReferenceImages.length > 1
-    ? "The first attached image shows the character. Keep the same character as the reference image: facial structure, eye shape and spacing, nose, lips, cheeks, and jawline. The other selected face reference images show the same character from additional angles. Use them to understand the character's features; do not mix them with supporting references."
-    : "The first attached image shows the character. Keep the same character as the reference image: facial structure, eye shape and spacing, nose, lips, cheeks, and jawline.";
+  const faceAnchorInstructions = referenceLanguageMode === "neutral_reference"
+    ? "Use the character shown in the reference image as a visual guide."
+    : faceReferenceImages.length > 1
+      ? "The first attached image shows the character. Keep the same character as the reference image: facial structure, eye shape and spacing, nose, lips, cheeks, and jawline. The other selected face reference images show the same character from additional angles. Use them to understand the character's features; do not mix them with supporting references."
+      : "The first attached image shows the character. Keep the same character as the reference image: facial structure, eye shape and spacing, nose, lips, cheeks, and jawline.";
   const characterDescriptionSection = faceDescriptionMode === "reference_only" || !scene.character_description
-    ? "Use the attached reference images for all appearance details; do not invent or reinterpret facial features."
+    ? "Use the reference image as the visual guide for the character's overall appearance."
     : faceDescriptionMode === "hybrid"
       ? `HYBRID FACE DESCRIPTION (brief matching traits only; reference images remain authoritative): ${scene.character_description.trim().replace(/[.\s]+$/, "")}. Match the reference images and do not add conflicting traits.`
       : `CHARACTER DESCRIPTION (supporting traits only; do not override the face reference): ${scene.character_description}`;
-  const expressionSection = scene.expression
-    ? `\n\nEXPRESSION AND EYE STATE (follow throughout the entire shot): ${scene.expression}. Keep this expression and eye state consistent from the first frame to the last; this instruction takes priority over breathing or other subtle motion.`
+  const rawNormalizedExpression = scene.expression
+    ? scene.expression.trim().replace(/[.!?]+\s*$/, "")
     : "";
-  scene.prompt = `PRIMARY FACE REFERENCE: ${faceAnchorInstructions} Keep the same person throughout the clip.\n\n${characterDescriptionSection}\n\nSCENE: ${scene.prompt.trim()}${expressionSection}\n\nUse remaining attached images only as supporting references for clothing, body, or context. Keep the same character, hair, and skin tone throughout. Do not substitute a different person.`;
+  const openEyesRequested = /\b(?:eyes?\s+(?:stay|remain|are|clearly)?\s*open|open eyes)\b/i.test(rawNormalizedExpression);
+  // If the job already says "natural brief blinks only", remove that clause before
+  // appending the standard guard so the composed prompt states it exactly once.
+  const normalizedExpression = openEyesRequested
+    ? rawNormalizedExpression
+      // The standard guard below already states this full eye/smile requirement.
+      // Remove equivalent short-form wording as well as the blink clause to avoid duplication.
+      .replace(/(?:[,;.]?\s*)natural brief blinks only\b/ig, "")
+      .replace(/(?:[,;.]?\s*)eyes?\s+(?:stay|remain)\s+open\s*,?\s*(?:gentle|warm)?\s*smile\s+showing\s+teeth\b/ig, "")
+      .trim().replace(/[.!?]+\s*$/, "")
+    : rawNormalizedExpression;
+  // The scene's expression is authoritative. The guard only enforces eye state;
+  // it must not inject a conflicting fixed smile (e.g. toothy smile vs small smile).
+  const openEyesGuard = openEyesRequested
+    ? "Eyes remain clearly open throughout the entire shot, with natural brief blinks only. No prolonged eye closure or eyes-closed meditation."
+    : "";
+  const expressionContent = [normalizedExpression, openEyesGuard].filter(Boolean).join(normalizedExpression ? ". " : "");
+  const expressionSection = expressionContent
+    ? `\n\nEXPRESSION AND EYE STATE (follow throughout the entire shot): ${expressionContent}${/[.!?]$/.test(expressionContent) ? "" : "."} Keep this expression and eye state consistent from the first frame to the last; this instruction takes priority over breathing or other subtle motion.`
+    : "";
+  const supportingReferenceImages = referenceImages.filter(imagePath => !faceReferenceImages.includes(imagePath));
+  const supportingReferenceSection = supportingReferenceImages.length
+    ? "Use remaining attached images only as supporting references for clothing, body, or context."
+    : "";
+  const supportingReferencePrefix = supportingReferenceSection ? `${supportingReferenceSection} ` : "";
+  scene.prompt = referenceLanguageMode === "neutral_reference"
+    ? `${faceAnchorInstructions}\n\n${characterDescriptionSection}\n\nSCENE: ${scene.prompt.trim()}${expressionSection}\n\n${supportingReferencePrefix}Keep the overall visual design and clothing consistent with the reference images.`
+    : `PRIMARY FACE REFERENCE: ${faceAnchorInstructions} Keep the same person throughout the clip.\n\n${characterDescriptionSection}\n\nSCENE: ${scene.prompt.trim()}${expressionSection}\n\n${supportingReferencePrefix}Keep the same character, hair, and skin tone throughout. Do not substitute a different person.`;
   if (!/^[\x00-\x7F]+$/.test(scene.prompt)) throw new Error("Composed prompt must contain ASCII characters only.");
   if (scene.model !== "Omni 1.1 Flash" || scene.resolution !== "360p") {
     throw new Error("Phase 3 pilot is restricted to model='Omni 1.1 Flash' and resolution='360p'.");
   }
   if (scene.duration && scene.duration !== "8s") throw new Error("Phase 3 pilot is restricted to duration='8s'.");
   requiredSelectorConfig(selectors);
-  return { scene, selectors, referenceImages: orderedReferenceImages, faceReferenceImage: faceReferenceImages[0], faceReferenceImages };
+  return { scene, selectors, referenceImages: orderedReferenceImages, faceReferenceImage: faceReferenceImages[0], faceReferenceImages, referenceAssetUuids };
 }
 async function chooseFlowTab(browser, args) {
   const pages = await listPages(browser);
@@ -1120,7 +2707,21 @@ async function closeAccountMenuIfOpen(page, selectors, expectedEmail) {
 
 async function verifyAccount(page, selectors, expectedEmail) {
   const selector = selectors.account_button || '[role="button"][aria-label^="Google Account:"]';
-  const account = await exactVisibleLocator(page, selector, "Google account button");
+  let account = null;
+  let lastVisibilityError = null;
+  for (let attempt = 1; attempt <= 3; attempt += 1) {
+    try {
+      account = await exactVisibleLocator(page, selector, "Google account button");
+      break;
+    } catch (error) {
+      lastVisibilityError = error;
+      if (attempt < 3) {
+        await page.keyboard.press("Escape").catch(() => {});
+        await page.waitForTimeout(400 * attempt);
+      }
+    }
+  }
+  if (!account) throw new Error(`Google account button remained unavailable after 3 read-only visibility checks: ${lastVisibilityError?.message || "not visible"}`);
   const label = await account.getAttribute("aria-label") || "";
   const match = label.match(/\(([^()\s]+@[^()\s]+)\)/);
   const observedEmail = match?.[1]?.toLowerCase() ?? null;
@@ -1137,8 +2738,59 @@ async function readCreditCost(page) {
   return match ? Number(match[1]) : null;
 }
 
+function firstTileMatchesByStableNeighbors({ expectedToken, currentToken, baselineTokens, currentTokens, baselineTileCount, currentTileCount }) {
+  // The baseline is a thumbnail identity, not necessarily a media UUID. Flow can
+  // expose the same tile as an "asb:" URL at capture and a "media:" UUID elsewhere.
+  // Permit signed-thumbnail rotation when both adjacent thumbnail identities and
+  // the overall tile count remain unchanged.
+  const validToken = token => typeof token === "string" && token.length > 0;
+  const secondNeighborMatches = validToken(baselineTokens?.[1]) && baselineTokens[1] === currentTokens?.[1];
+  const thirdNeighborMatches = validToken(baselineTokens?.[2]) && validToken(currentTokens?.[2])
+    && baselineTokens[2] === currentTokens[2];
+  // If Flow has not loaded the third thumbnail yet, accept only when the second
+  // neighbor is an exact match and the grid count/order has stayed unchanged.
+  const thirdNeighborStillLoading = currentTokens?.[2] == null;
+  return Boolean((expectedToken?.startsWith("media:") || expectedToken?.startsWith("asb:"))
+    && currentToken?.startsWith("asb:")
+    && Array.isArray(baselineTokens) && baselineTokens.length >= 3
+    && Array.isArray(currentTokens) && currentTokens.length >= 3
+    && Number.isInteger(baselineTileCount) && baselineTileCount === currentTileCount
+    && secondNeighborMatches && (thirdNeighborMatches || thirdNeighborStillLoading));
+}
+
+async function waitForPreCreateThumbnailSnapshot(readSnapshot, wait, maxWaitMs = 10000) {
+  const startedAt = Date.now();
+  let previousTokens = null;
+  let previousTileCount = null;
+  let stableFirstToken = false;
+  let lastSnapshot = { tokens: [], tileCount: 0 };
+  while (Date.now() - startedAt < maxWaitMs) {
+    lastSnapshot = await readSnapshot();
+    const tokens = Array.isArray(lastSnapshot.tokens) ? lastSnapshot.tokens : [];
+    const tileCount = Number(lastSnapshot.tileCount) || 0;
+    const firstToken = tokens[0] || null;
+    stableFirstToken = Boolean(firstToken && previousTokens?.[0] === firstToken
+      && previousTileCount === tileCount);
+    const fullyStable = tileCount >= 3 && tokens.length >= 3 && tokens.slice(0, 3).every(Boolean)
+      && previousTokens?.length === tokens.length
+      && tokens.every((token, index) => token === previousTokens[index])
+      && previousTileCount === tileCount;
+    if (fullyStable) {
+      return { ...lastSnapshot, tokens, tileCount, stableFirstToken: true, fullyStable: true,
+        acceptedByNeighborRule: false, waitMs: Date.now() - startedAt };
+    }
+    previousTokens = tokens.slice();
+    previousTileCount = tileCount;
+    if (Date.now() - startedAt < maxWaitMs) await wait(250);
+  }
+  return { ...lastSnapshot, tokens: lastSnapshot.tokens || [], tileCount: Number(lastSnapshot.tileCount) || 0,
+    stableFirstToken, fullyStable: false,
+    acceptedByNeighborRule: stableFirstToken && (Number(lastSnapshot.tileCount) || 0) >= 3,
+    waitMs: Date.now() - startedAt };
+}
+
 async function prepare(args, browser, rl) {
-  const { scene, selectors, referenceImages, faceReferenceImage } = await loadInputs(args);
+  const { scene, selectors, referenceImages, faceReferenceImage, referenceAssetUuids } = await loadInputs(args);
   const variantIndex = args._variantIndex || 1;
   const variantCount = args._variantCount || scene.variants || 1;
   scene.variant_index = variantIndex;
@@ -1150,7 +2802,9 @@ async function prepare(args, browser, rl) {
   let createMayHaveBeenClicked = false;
   try {
   console.log(`Selected existing tab [${chosen.index}] context=${chosen.contextIndex}\nTitle: ${chosen.title}\nURL: ${chosen.url}\nProject ID: ${chosen.projectId || "legacy Flow route"}`);
+  const accountStartedAt = Date.now();
   const account = await verifyAccount(chosen.page, selectors, args.expectedEmail);
+  console.log(`Phase timing: account verification completed in ${Date.now() - accountStartedAt}ms.`);
   console.log(`Verified account email from page DOM: ${account.observedEmail}`);
   if (!args._accountConfirmed) {
     await askExact(
@@ -1165,12 +2819,22 @@ async function prepare(args, browser, rl) {
   const create = await exactVisibleLocator(chosen.page, selectors.create, "Create button");
   const settings = await exactVisibleLocator(chosen.page, selectors.settings_trigger, "settings trigger");
 
+  const settingsStartedAt = Date.now();
+  // Diagnose image mode before video-only controls are queried.
+  const visibleModelBeforeSettings = chosen.page.locator(selectors.model);
+  if (await visibleModelBeforeSettings.count().catch(() => 0) === 1
+    && await visibleModelBeforeSettings.isVisible().catch(() => false)) {
+    const currentModelLabel = (await visibleModelBeforeSettings.innerText({ timeout: 2000 }).catch(() => "")).replace(/\s+/g, " ").trim();
+    if (/nano banana|imagen|image generation/i.test(currentModelLabel)) {
+      throw new Error(`Composer is in Image mode (current model: ${JSON.stringify(currentModelLabel)}); switch to Video mode and select ${scene.model} before rerunning. Prompt and references were not changed.`);
+    }
+  }
   // Normalize the settings overlay state. If its controls are already visible, toggle it
   // closed first. A separate account-menu overlay is not dismissed blindly; stop safely.
   const modelAlreadyVisible = await chosen.page.locator(selectors.model).count() === 1
     && await chosen.page.locator(selectors.model).isVisible().catch(() => false);
   if (modelAlreadyVisible) {
-    await settings.click({ timeout: 2500 }).catch(() => {
+    await settings.click({ timeout: 8000 }).catch(() => {
       throw new Error("Settings overlay could not be closed. Close the Flow overlay manually and rerun; prompt remains untouched.");
     });
   } else {
@@ -1180,7 +2844,7 @@ async function prepare(args, browser, rl) {
     }
   }
   // Open settings; the model/radio controls are rendered only while this panel is open.
-  await settings.click({ timeout: 2500 }).catch(() => {
+  await settings.click({ timeout: 8000 }).catch(() => {
     throw new Error("Could not open Flow settings (possibly blocked by an account overlay). Close any overlay manually and rerun; prompt remains untouched.");
   });
 
@@ -1198,7 +2862,16 @@ async function prepare(args, browser, rl) {
     const resolution = await exactVisibleLocator(chosen.page, selectors.resolution, "resolution radio");
     const ingredients = await exactVisibleLocator(chosen.page, selectors.ingredients_mode, "Ingredients mode radio");
     const aspect = await exactVisibleLocator(chosen.page, selectors.aspect_9_16, "9:16 aspect radio");
-    const duration = await exactVisibleLocator(chosen.page, selectors.duration, "8s duration radio");
+    let duration;
+    try {
+      duration = await exactVisibleLocator(chosen.page, selectors.duration, "8s duration radio");
+    } catch (error) {
+      const visibleModelLabel = (await model.innerText({ timeout: 1500 }).catch(() => "")).replace(/\s+/g, " ").trim();
+      if (/nano banana|imagen|image generation/i.test(visibleModelLabel)) {
+        throw new Error(`Composer is in Image mode (current model: ${JSON.stringify(visibleModelLabel)}); switch to Video mode and select ${scene.model} before rerunning.`);
+      }
+      throw error;
+    }
     const radioChecks = await Promise.all([resolution, ingredients, aspect, duration].map(locator => locator.getAttribute("role")));
     if (radioChecks.some(role => role !== "radio")) {
       throw new Error("Resolution, Ingredients, 9:16 and duration selectors must all match role=radio controls.");
@@ -1214,7 +2887,7 @@ async function prepare(args, browser, rl) {
     creditCost = await readCreditCost(chosen.page);
 
     const settingsAgain = await exactVisibleLocator(chosen.page, selectors.settings_trigger, "settings trigger to close panel");
-    await settingsAgain.click({ timeout: 2500 });
+    await settingsAgain.click({ timeout: 8000 });
   } catch (error) {
     // First close a nested model menu, then toggle Settings closed if it remains open.
     await chosen.page.keyboard.press("Escape").catch(() => {});
@@ -1222,11 +2895,12 @@ async function prepare(args, browser, rl) {
       count === 1 && await chosen.page.locator(selectors.model).isVisible().catch(() => false)).catch(() => false);
     const overlayStillVisible = await chosen.page.locator(".cdk-overlay-backdrop:visible").count().catch(() => 0) > 0;
     if (modelStillVisible || overlayStillVisible) {
-      await chosen.page.locator(selectors.settings_trigger).click({ timeout: 1500 }).catch(() => {});
+      await chosen.page.locator(selectors.settings_trigger).click({ timeout: 4000 }).catch(() => {});
       await chosen.page.keyboard.press("Escape").catch(() => {});
     }
     throw new Error(`Settings preparation failed; attempted to close Flow overlays before stopping: ${error.message}`);
   }
+  console.log(`Phase timing: settings preparation completed in ${Date.now() - settingsStartedAt}ms.`);
   if (chosen.page.url() !== originalUrl || !isFlowUrl(chosen.page.url())) {
     throw new Error("Flow tab URL changed unexpectedly while preparing. Stopping before Create.");
   }
@@ -1236,43 +2910,278 @@ async function prepare(args, browser, rl) {
   // Attach and verify the exact per-scene reference images only after closing Settings.
   // If Flow does not expose a unique add button, file input, and visible reference-item selector,
   // stop before filling the prompt or enabling a possible Create action.
-  const attachedReferenceUuids = await uploadSceneReferences(chosen.page, selectors, referenceImages, prompt);
-  if (args.waitForResult) {
+  if (args.waitForResult || args.dryRun) {
+    const waitPreflightStartedAt = Date.now();
+    const baselineUuidCache = new Map();
     try {
-      const initialBalance = await readCreditBalance(chosen.page, selectors);
-      if (initialBalance === null) throw new Error("Could not read an integer credit balance.");
+      const initialBalance = args.waitForResult ? await readCreditBalance(chosen.page, selectors) : null;
+      if (args.waitForResult && initialBalance === null) throw new Error("Could not read an integer credit balance.");
+      if (typeof selectors.generated_video_items !== "string" || !selectors.generated_video_items.trim()) throw new Error("Dry-run baseline scan requires a configured generated_video_items selector.");
       const videosTabState = await activateVideosTab(chosen.page, selectors);
-      const initialScan = await collectAllGeneratedItems(chosen.page, selectors.generated_video_items);
+      const waitForFirstRowThumbnailTokens = async (reason, maxWaitMs = 15000) => {
+        const startedAt = Date.now();
+        let snapshot = [];
+        let previousReadySnapshot = null;
+        while (Date.now() - startedAt < maxWaitMs) {
+          snapshot = await chosen.page.locator(selectors.generated_video_items).evaluateAll(elements => elements.slice(0, 3).map(element => {
+            const source = element.querySelector("img")?.getAttribute("src") || "";
+            if (!source) return null;
+            const asbIndex = source.toLowerCase().indexOf("/asb/");
+            if (asbIndex >= 0) {
+              const token = source.slice(asbIndex + 5).split(/[/?#]/, 1)[0];
+              if (token) return `asb:${token}`;
+            }
+            try {
+              const url = new URL(source, location.href);
+              return /^https?:$/.test(url.protocol) ? url.pathname : null;
+            } catch { return null; }
+          })).catch(() => []);
+          // Lazy-loaded thumbnails can arrive one tile at a time. Require all three
+          // tokens in two consecutive snapshots so we don't capture a transient null
+          // just as Flow finishes painting the final tile.
+          if (snapshot.length >= 3 && snapshot.every(Boolean)
+            && previousReadySnapshot?.length === snapshot.length
+            && snapshot.every((token, index) => token === previousReadySnapshot[index])) {
+            console.log(JSON.stringify({
+              event: "baseline_thumbnail_tokens_ready",
+              reason,
+              tile_count: snapshot.length,
+              thumbnail_tokens: snapshot,
+              wait_ms: Date.now() - startedAt,
+              stable_snapshots: 2,
+            }));
+            return snapshot;
+          }
+          previousReadySnapshot = snapshot.length >= 3 && snapshot.every(Boolean) ? [...snapshot] : null;
+          await chosen.page.waitForTimeout(250);
+        }
+        console.warn(JSON.stringify({
+          event: "baseline_thumbnail_token_missing_at_capture",
+          reason,
+          tile_count: snapshot.length,
+          thumbnail_tokens: snapshot,
+          missing_indexes: snapshot.map((token, index) => token ? null : index).filter(index => index !== null),
+          wait_ms: Date.now() - startedAt,
+          max_wait_ms: maxWaitMs,
+        }));
+        return snapshot;
+      };
+      // Save the grid scroll before forcing lazy thumbnails into view; the inventory
+      // helper restores its own entry position, which may already have been changed below.
+      const preflightScrollPosition = await chosen.page.evaluate(selectorText => {
+        const first = document.querySelector(selectorText);
+        let node = first?.parentElement || null;
+        while (node && node !== document.body) {
+          const style = getComputedStyle(node);
+          if (node.scrollHeight > node.clientHeight + 8 && /(auto|scroll|overlay)/.test(style.overflowY)) return { kind: "element", top: node.scrollTop };
+          node = node.parentElement;
+        }
+        return { kind: "document", top: (document.scrollingElement || document.documentElement).scrollTop };
+      }, selectors.generated_video_items).catch(() => null);
+      const restorePreflightScrollPosition = async () => {
+        if (!preflightScrollPosition) return { restored: false, reason: "initial_scroll_unavailable" };
+        return chosen.page.evaluate(({ selectorText, saved }) => {
+          const first = document.querySelector(selectorText);
+          let node = first?.parentElement || null;
+          while (node && node !== document.body) {
+            const style = getComputedStyle(node);
+            if (node.scrollHeight > node.clientHeight + 8 && /(auto|scroll|overlay)/.test(style.overflowY)) {
+              if (saved.kind === "element") node.scrollTop = saved.top;
+              return { restored: true, kind: "element", top: node.scrollTop };
+            }
+            node = node.parentElement;
+          }
+          const root = document.scrollingElement || document.documentElement;
+          if (saved.kind === "document") root.scrollTop = saved.top;
+          return { restored: true, kind: "document", top: root.scrollTop };
+        }, { selectorText: selectors.generated_video_items, saved: preflightScrollPosition }).catch(error => ({ restored: false, error: String(error?.message || error).slice(0, 300) }));
+      };
+      // Force the first-row tile shells through the viewport so lazy image loading
+      // has a chance to populate every thumbnail before the first baseline snapshot.
+      const firstRowTiles = chosen.page.locator(selectors.generated_video_items);
+      const firstRowCount = await firstRowTiles.count().catch(() => 0);
+      const firstRowScrollStartedAt = Date.now();
+      for (let tileIndex = 0; tileIndex < Math.min(3, firstRowCount); tileIndex += 1) {
+        await firstRowTiles.nth(tileIndex).scrollIntoViewIfNeeded({ timeout: 2500 }).catch(() => {});
+        await chosen.page.waitForTimeout(100);
+      }
+      console.log(JSON.stringify({ event: "wait_preflight_phase_timing", phase: "scroll_first_row", elapsed_ms: Date.now() - firstRowScrollStartedAt, tile_count: firstRowCount }));
+      const firstThumbnailWaitStartedAt = Date.now();
+      await waitForFirstRowThumbnailTokens("before_initial_capture_after_scroll");
+      console.log(JSON.stringify({ event: "wait_preflight_phase_timing", phase: "first_row_thumbnail_wait", elapsed_ms: Date.now() - firstThumbnailWaitStartedAt }));
+      const initialInventoryStartedAt = Date.now();
+      let initialScan = await collectAllGeneratedItems(chosen.page, selectors.generated_video_items, { uuidCache: baselineUuidCache, topLimit: 3, selectors });
+      console.log(JSON.stringify({ event: "wait_preflight_phase_timing", phase: "initial_media_inventory", elapsed_ms: Date.now() - initialInventoryStartedAt, item_count: initialScan.items.length, uuid_count: initialScan.items.filter(item => item.mediaUuid).length }));
+      // If a thumbnail was still missing at capture time, wait and re-capture the row
+      // rather than retrying tile re-identification forever with an expected null token.
+      for (let thumbnailRetry = 1; thumbnailRetry <= 2
+        && initialScan.items.length >= 3
+        && initialScan.items.some(item => !item.thumbnailSrc || !thumbnailIdentityToken(item.thumbnailSrc)); thumbnailRetry += 1) {
+        const missingIndexes = initialScan.items
+          .map((item, index) => !item.thumbnailSrc || !thumbnailIdentityToken(item.thumbnailSrc) ? index : null)
+          .filter(index => index !== null);
+        console.warn(JSON.stringify({
+          event: "baseline_thumbnail_token_missing_at_capture",
+          retry: thumbnailRetry,
+          max_retries: 2,
+          tile_count: initialScan.items.length,
+          uuid_count: initialScan.items.filter(item => item.mediaUuid).length,
+          missing_tile_indexes: missingIndexes,
+          missing_thumbnail_token_indexes: missingIndexes,
+          wait_ms: 500,
+        }));
+        await chosen.page.waitForTimeout(500);
+        await waitForFirstRowThumbnailTokens(`recapture_retry_${thumbnailRetry}`);
+        baselineUuidCache.clear();
+        initialScan = await collectAllGeneratedItems(chosen.page, selectors.generated_video_items, {
+          uuidCache: baselineUuidCache, topLimit: 3, selectors,
+        });
+      }
+      // Flow may render the three tile shells before its media UUID metadata arrives.
+      // Retry only the all-unresolved case; never accept partial/ambiguous identities.
+      for (let baselineRetry = 1; baselineRetry <= 2
+        && initialScan.items.length > 0
+        && initialScan.items.every(item => !item.mediaUuid); baselineRetry += 1) {
+        console.warn(JSON.stringify({
+          event: "baseline_uuid_retry",
+          retry: baselineRetry,
+          max_retries: 2,
+          tile_count: initialScan.items.length,
+          uuid_count: initialScan.items.filter(item => item.mediaUuid).length,
+          wait_ms: 600,
+        }));
+        await chosen.page.waitForTimeout(600);
+        baselineUuidCache.clear();
+        initialScan = await collectAllGeneratedItems(chosen.page, selectors.generated_video_items, {
+          uuidCache: baselineUuidCache, topLimit: 3, selectors,
+        });
+      }
+      const restoredPreflightScroll = await restorePreflightScrollPosition();
+      console.log(JSON.stringify({ event: "wait_preflight_scroll_restored", saved: preflightScrollPosition, result: restoredPreflightScroll }));
+      // Keep every stable media UUID in the baseline, including Failed tiles, so a
+      // later disappearing/refunded tile cannot make another existing card look new.
+      // Failed tiles are diagnostics only and never count as usable video candidates.
+      if (!initialScan.topLimited || initialScan.items.length < 3) throw new Error(`Pre-Create first-row baseline requires at least three visible tiles; observed ${initialScan.items.length}. Refusing to Create with an incomplete baseline.`);
       const initialItems = initialScan.items.map(item => item.key);
+      const baselineUuids = initialScan.items.map(item => item.mediaUuid).filter(Boolean);
+      const failedBaselineItems = initialScan.items.filter(item =>
+        /\bfailed\b/i.test(`${item.state} ${item.text}`) || isGenerationFailureText(`${item.state} ${item.text}`));
+      args._waitInitialFailedTileTexts = failedBaselineItems.map(item => String(item.text || "").replace(/\s+/g, " ").trim().toLowerCase());
+      console.log(JSON.stringify({
+        event: "baseline_media_inventory_summary",
+        baseline_strategy: "visible_first_row_min_3",
+        reached_bottom: initialScan.reachedBottom,
+        tile_count: initialScan.items.length,
+        uuid_count: baselineUuids.length,
+        baseline_media_uuids: baselineUuids,
+        uuid_sample_first_5: baselineUuids.slice(0, 5),
+        unkeyed_items_detected: initialScan.unkeyedItemsDetected,
+        duplicate_visible_key_detected: initialScan.duplicateVisibleKeyDetected,
+      }, null, 2));
       if (initialScan.unkeyedItemsDetected || initialScan.duplicateVisibleKeyDetected
-        || initialItems.some(key => !key) || new Set(initialItems).size !== initialItems.length) {
-        throw new Error("generated_video_items selector must expose a stable key for every tile and distinct keys within each viewport across a full virtualized-grid sweep.");
+        || baselineUuids.length !== initialScan.items.length || initialItems.some(key => !key) || new Set(initialItems).size !== initialItems.length) {
+        throw new Error(`First-row baseline requires unique, stable media UUIDs/keys (tiles=${initialScan.items.length}, UUIDs=${baselineUuids.length}, sample=${baselineUuids.slice(0, 6).join(",") || "none"}).`);
       }
       args._waitInitialBalance = initialBalance;
       args._waitInitialItemKeys = initialItems;
-      args._waitInitialItemCount = initialItems.length;
-      console.log("WAIT SELECTOR PREFLIGHT (read-only; no Create click; Videos tab selected when available; virtualized grid swept)");
-      console.log(JSON.stringify({ credit_balance: initialBalance, videos_tab_state: videosTabState, existing_video_tile_count: initialItems.length, existing_video_tile_keys: initialItems }, null, 2));
-    } catch (error) {
-      let cleanup = "Prompt/Ingredients cleanup was not verified.";
-      try {
-        await clearPromptVerified(prompt, selectors, 2500);
-        cleanup = "Prompt and Ingredients were cleared and verified.";
-      } catch (cleanupError) {
-        cleanup += ` Cleanup error: ${cleanupError.message}`;
+      args._waitInitialDomTileCount = await chosen.page.locator(selectors.generated_video_items).count();
+      // Capture the baseline with the exact same DOM identity precedence used by
+      // the pre-Create check. Do not substitute media UUIDs here: Flow may expose
+      // the same card as a media UUID during network inventory and an /asb/ token
+      // in the visible grid, making a cross-domain comparison impossible.
+      const domThumbnailBaseline = await chosen.page.locator(selectors.generated_video_items).evaluateAll(elements => ({
+        tileCount: elements.length,
+        tokens: elements.slice(0, 3).map(element => {
+          const dataValues = [
+            element.getAttribute("data-media-id"),
+            element.getAttribute("data-asset-id"),
+            element.getAttribute("data-uuid"),
+            element.getAttribute("data-id"),
+            ...Array.from(element.querySelectorAll("[data-media-id], [data-asset-id], [data-uuid], [data-id]"))
+              .flatMap(node => ["data-media-id", "data-asset-id", "data-uuid", "data-id"]
+                .map(name => node.getAttribute(name))),
+          ].filter(Boolean).map(String);
+          for (const value of dataValues) {
+            const uuid = value.match(/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/i);
+            if (uuid) return `media:${uuid[0].toLowerCase()}`;
+          }
+          const routeHrefs = Array.from(element.querySelectorAll('a[href*="/edit/"], a[href*="/video/"]'))
+            .map(anchor => anchor.getAttribute("href")).filter(Boolean);
+          const ownHref = element.getAttribute("href");
+          if (ownHref && (ownHref.includes("/edit/") || ownHref.includes("/video/"))) routeHrefs.unshift(ownHref);
+          for (const href of routeHrefs) {
+            const parts = String(href).split("/").filter(Boolean);
+            const routeIndex = parts.findIndex(part => part === "edit" || part === "video");
+            const routeUuid = routeIndex >= 0 ? parts[routeIndex + 1] : null;
+            if (routeUuid && /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(routeUuid)) {
+              return `media:${routeUuid.toLowerCase()}`;
+            }
+          }
+          const source = element.querySelector("img")?.getAttribute("src") || "";
+          if (!source) return null;
+          let pathname = source;
+          try { pathname = new URL(source, location.href).pathname; } catch {}
+          const segments = pathname.split("/").filter(Boolean);
+          const assetIndex = segments.findIndex(part => part === "image" || part === "asb");
+          if (assetIndex < 0 || !segments[assetIndex + 1]) {
+            try { return new URL(source, location.href).pathname; }
+            catch { return source.split(/[?#]/, 1)[0] || null; }
+          }
+          const token = segments[assetIndex + 1];
+          if (/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(token)) {
+            return `media:${token.toLowerCase()}`;
+          }
+          return segments[assetIndex] === "asb" ? `asb:${token}` : pathname;
+        }),
+      })).catch(() => ({ tileCount: 0, tokens: [] }));
+      args._waitInitialThumbnailTokens = domThumbnailBaseline.tokens;
+      if (domThumbnailBaseline.tileCount < 3 || args._waitInitialThumbnailTokens.length < 3
+        || args._waitInitialThumbnailTokens.slice(0, 3).some(token => !token)) {
+        throw new Error(`First-row baseline requires loaded DOM thumbnail identities for all three tiles; observed tile count=${domThumbnailBaseline.tileCount}, tokens=${JSON.stringify(args._waitInitialThumbnailTokens)}.`);
       }
-      throw new Error(`Wait selector preflight failed: ${error.message}. ${cleanup}`);
+      console.log(JSON.stringify({ event: "baseline_dom_thumbnail_identity", tile_count: domThumbnailBaseline.tileCount,
+        first_three_tokens: args._waitInitialThumbnailTokens.slice(0, 3), identity_source: "same_precreate_dom_precedence" }));
+      args._waitUuidCache = baselineUuidCache;
+      args._waitInitialItemCount = initialItems.length - failedBaselineItems.length;
+      console.log(args.waitForResult
+        ? "WAIT SELECTOR PREFLIGHT (read-only; no Create click; Videos tab selected when available; visible first row only; Failed tiles retained only as baseline UUIDs)"
+        : "DRY-RUN MEDIA BASELINE (read-only; no Create click; Videos tab selected when available; visible first row only; no full-grid sweep)");
+      console.log(JSON.stringify({
+        mode: args.waitForResult ? "wait-preflight" : "dry-run-baseline",
+        credit_balance: initialBalance,
+        videos_tab_state: videosTabState,
+        existing_video_tile_count: args._waitInitialItemCount,
+        ignored_failed_tile_count: failedBaselineItems.length,
+        ignored_failed_tile_keys: failedBaselineItems.map(item => item.key),
+        baseline_media_key_count: initialItems.length,
+        baseline_media_keys: initialItems,
+      }, null, 2));
+      console.log(`Phase timing: wait selector preflight completed in ${Date.now() - waitPreflightStartedAt}ms.`);
+    } catch (error) {
+      // The outer pre-submit failure handler owns cleanup and emits the only
+      // authoritative success/failure message after verifying the actual state.
+      throw new Error(`Wait selector preflight failed: ${error.message}`);
     }
   }
 
+  const referenceUploadStartedAt = Date.now();
+  console.log(`Phase timing: reference upload started (${referenceImages.length} image(s)); asset-ready timeout=${ASSET_READY_TIMEOUT_MS}ms per image.`);
+  const attachedReferenceUuids = await uploadSceneReferences(chosen.page, selectors, referenceImages, prompt, referenceAssetUuids);
+  console.log(`Phase timing: reference upload completed in ${Date.now() - referenceUploadStartedAt}ms.`);
   // Only now modify the prompt. If fill fails, attempt to clear it before returning an error.
   const screenshot = path.resolve(args.screenshot || `flow-pilot-${scene.scene_id.replace(/[^a-zA-Z0-9_-]/g, "_")}-${args.execute ? "execute" : "dry-run"}.png`);
+  const promptFillStartedAt = Date.now();
   try {
     await prompt.fill(scene.prompt, { timeout: 2500 });
     await waitForCreateEnabled(chosen.page, create, 5000);
     await verifyAttachedReferenceUuids(chosen.page, selectors, attachedReferenceUuids);
-    fs.mkdirSync(path.dirname(screenshot), { recursive: true });
-    await chosen.page.screenshot({ path: screenshot, fullPage: false, timeout: 4000 });
+    // A screenshot is diagnostic only; a slow Chrome render must not invalidate an otherwise good preflight.
+    try {
+      fs.mkdirSync(path.dirname(screenshot), { recursive: true });
+      await chosen.page.screenshot({ path: screenshot, fullPage: false, timeout: 10000 });
+    } catch (screenshotError) {
+      console.warn(`Could not save preflight screenshot (non-fatal): ${screenshotError.message}`);
+    }
   } catch (error) {
     let cleanupStatus;
     try {
@@ -1283,6 +3192,7 @@ async function prepare(args, browser, rl) {
     }
     throw new Error(`Dry-run preparation failed after prompt fill: ${error.message}. ${cleanupStatus}`);
   }
+  console.log(`Phase timing: prompt fill, readiness checks and screenshot completed in ${Date.now() - promptFillStartedAt}ms.`);
   const createEnabled = await create.isEnabled().catch(() => false);
   console.log("\nREADY-TO-CREATE CHECK (reference images were attached and verified before this check)");
   console.log(JSON.stringify({
@@ -1363,28 +3273,123 @@ async function prepare(args, browser, rl) {
       const currentBalance = await readCreditBalance(chosen.page, selectors);
       if (currentBalance === null) throw new Error("Credit balance could not be re-read immediately before Create; refusing to click.");
       args._waitInitialBalance = currentBalance;
-      await activateVideosTab(chosen.page, selectors);
-      const currentScan = await collectAllGeneratedItems(chosen.page, selectors.generated_video_items);
-      args._waitInitialItemKeys = currentScan.items.map(item => item.key);
-      if (currentScan.unkeyedItemsDetected || currentScan.duplicateVisibleKeyDetected
-        || new Set(args._waitInitialItemKeys).size !== args._waitInitialItemKeys.length) {
-        throw new Error("Pre-Create media inventory is ambiguous; every tile must have a stable unique key. Refusing to click Create.");
+      // Read-only pre-Create recheck: do not open tiles or resolve UUIDs again.
+      // The Ingredients/prompt UI can change the visible grid; re-opening a tile can
+      // also discard attached chips. Compare the first thumbnail token to the baseline.
+      const expectedFirstToken = args._waitInitialThumbnailTokens?.[0];
+      if (!expectedFirstToken) throw new Error("Pre-Create baseline has no first-tile thumbnail token; refusing to click Create.");
+      const preCreateSnapshot = await waitForPreCreateThumbnailSnapshot(async () => {
+        return chosen.page.locator(selectors.generated_video_items).evaluateAll(elements => ({
+          tileCount: elements.length,
+          tokens: elements.slice(0, 3).map(element => {
+            // Prefer the tile's own media/edit URL or data ID; thumbnail src is
+            // only a fallback because Flow can rotate /image/<uuid> to /asb/<token>.
+            const dataValues = [
+              element.getAttribute("data-media-id"),
+              element.getAttribute("data-asset-id"),
+              element.getAttribute("data-uuid"),
+              element.getAttribute("data-id"),
+              ...Array.from(element.querySelectorAll("[data-media-id], [data-asset-id], [data-uuid], [data-id]"))
+                .flatMap(node => ["data-media-id", "data-asset-id", "data-uuid", "data-id"]
+                  .map(name => node.getAttribute(name))),
+            ].filter(Boolean).map(String);
+            for (const value of dataValues) {
+              const uuid = value.match(/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/i);
+              if (uuid) return `media:${uuid[0].toLowerCase()}`;
+            }
+            const routeHrefs = Array.from(element.querySelectorAll('a[href*="/edit/"], a[href*="/video/"]'))
+              .map(anchor => anchor.getAttribute("href")).filter(Boolean);
+            const ownHref = element.getAttribute("href");
+            if (ownHref && /\/(?:edit|video)\//i.test(ownHref)) routeHrefs.unshift(ownHref);
+            for (const href of routeHrefs) {
+              const routeUuid = String(href).match(/\/(?:edit|video)\/([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})(?:[/?#]|$)/i);
+              if (routeUuid) return `media:${routeUuid[1].toLowerCase()}`;
+            }
+            const source = element.querySelector("img")?.getAttribute("src") || "";
+            if (!source) return null;
+            const imageUuid = source.match(/\/image\/([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})(?:[/?#]|$)/i)
+              || source.match(/\/asb\/([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})(?:[/?#]|$)/i);
+            if (imageUuid) return `media:${imageUuid[1].toLowerCase()}`;
+            const asb = source.match(/\/asb\/([^/?#]+)/i);
+            if (asb) return `asb:${asb[1]}`;
+            try { return new URL(source, location.href).pathname; }
+            catch { return source.split(/[?#]/, 1)[0] || null; }
+          }),
+        })).catch(() => ({ tileCount: 0, tokens: [] }));
+      }, ms => chosen.page.waitForTimeout(ms), 10000);
+      const currentTokens = preCreateSnapshot.tokens;
+      const currentFirstToken = currentTokens[0] || null;
+      const baselineTokens = args._waitInitialThumbnailTokens || [];
+      const sameFirstTileAfterThumbnailRotation = firstTileMatchesByStableNeighbors({
+        expectedToken: expectedFirstToken, currentToken: currentFirstToken, baselineTokens, currentTokens,
+        baselineTileCount: args._waitInitialDomTileCount, currentTileCount: preCreateSnapshot.tileCount,
+      });
+      // Do not open any media tile after prompt/references are attached: Flow
+      // discards the composer when returning from an editor route. UUID resolution
+      // already ran during wait-selector preflight, before attachment. At this stage
+      // use only the read-only thumbnail/neighbor snapshot and preserve composer state.
+      const baselineMediaKeys = args._waitInitialItemKeys || [];
+      const currentMediaKeys = [];
+      const sameFirstRowMediaIdentity = false;
+      const stableCurrentGrid = preCreateSnapshot.fullyStable || preCreateSnapshot.acceptedByNeighborRule;
+      console.log(JSON.stringify({
+        event: "pre_create_first_tile_identity_recheck",
+        expected_first_thumbnail_token: expectedFirstToken,
+        current_first_thumbnail_token: currentFirstToken,
+        visible_first_three_thumbnail_tokens: currentTokens,
+        visible_tile_count: preCreateSnapshot.tileCount,
+        stable_first_token: preCreateSnapshot.stableFirstToken || preCreateSnapshot.fullyStable,
+        accepted_by_neighbor_rule: preCreateSnapshot.acceptedByNeighborRule,
+        accepted_by_media_uuid_neighbor_identity: sameFirstRowMediaIdentity,
+        baseline_first_three_media_keys: baselineMediaKeys.slice(0, 3),
+        current_first_three_media_keys: currentMediaKeys.slice(0, 3),
+        baseline_dom_tile_count: args._waitInitialDomTileCount,
+        wait_ms: preCreateSnapshot.waitMs,
+        read_only_dom_check: true,
+      }, null, 2));
+      if (!stableCurrentGrid || preCreateSnapshot.tileCount < 3 || !currentFirstToken) {
+        throw new Error(`Pre-Create recheck could not confirm a stable first tile and three-tile row (observed ${preCreateSnapshot.tileCount}); refusing to click Create.`);
+      }
+      if (currentFirstToken !== expectedFirstToken && !sameFirstTileAfterThumbnailRotation && !sameFirstRowMediaIdentity) {
+        throw new Error("Pre-Create first tile identity differs from the validated baseline; stable-neighbor identity check did not confirm a thumbnail-only change. Refusing to click Create.");
       }
       args._waitInitialItemCount = args._waitInitialItemKeys.length;
+      console.log(sameFirstTileAfterThumbnailRotation || sameFirstRowMediaIdentity
+        ? `Pre-Create first tile passed stable-neighbor identity check; preserving ${args._waitInitialItemKeys.length} baseline UUIDs.`
+        : `Pre-Create first tile token matches baseline; preserving ${args._waitInitialItemKeys.length} baseline UUIDs.`);
     }
-    createMayHaveBeenClicked = true; // Conservatively preserve state if the click result is ambiguous.
-    await finalButton.click({ timeout: 2500 });
+    args._waitCreateClickedAt = new Date().toISOString();
+    console.log(`Pre-Create baseline UUID count: ${args._waitInitialItemKeys?.length ?? 0}. Create timestamp: ${args._waitCreateClickedAt}`);
+    try {
+      await finalButton.click({ timeout: 2500 });
+      createMayHaveBeenClicked = true;
+    } catch (clickError) {
+      // A Playwright actionability timeout while disabled means no click was dispatched.
+      const message = String(clickError?.message || clickError);
+      const disabledBeforeDispatch = /waiting for element to be enabled|element is not enabled|button.*disabled|disabled.*button/i.test(message);
+      if (disabledBeforeDispatch) {
+        createMayHaveBeenClicked = false;
+        appendEvent(args.log, { event: "create_click_blocked_disabled", scene_id: scene.scene_id,
+          status: "not_submitted", error: message });
+      } else {
+        createMayHaveBeenClicked = true; // Other click errors can be ambiguous.
+      }
+      throw clickError;
+    }
     appendEvent(args.log, { event: "create_click_returned", scene_id: scene.scene_id, model: scene.model,
-      resolution: scene.resolution, status: "submitted_unverified",
-      note: "Click returned; generation completion and credit charge are not inferred." });
-    console.log(`Create click returned once. Completion/credit status is unverified. Receipt: ${path.resolve(args.log)}`);
+      resolution: scene.resolution, status: "click_returned_unconfirmed",
+      note: "The UI click returned; this is not proof that Flow accepted a generation." });
+    console.log(`Create click returned once; submission is NOT confirmed until a new media UUID or credit decrease is observed. Receipt: ${path.resolve(args.log)}`);
     if (args.waitForResult) {
       let resultStatus = "unknown";
       let mediaUri = chosen.page.url();
       let downloadedFile = null;
       let downloadError = null;
+      let actualResolution = null;
+      let downloadQualityLabel = null;
       let timeoutError = null;
       let afterBalance = null;
+      let submissionEvidence = false;
       let attemptNumber = 1;
       args._waitAttemptId = "attempt-" + randomUUID();
       try {
@@ -1392,47 +3397,87 @@ async function prepare(args, browser, rl) {
         const result = await waitForGenerationAndDownload(chosen.page, selectors, {
           beforeKeys: args._waitInitialItemKeys,
           beforeBalance: args._waitInitialBalance,
+          createClickedAt: args._waitCreateClickedAt,
+          uuidCache: args._waitUuidCache || new Map(),
           beforeCount: args._waitInitialItemCount,
           timeoutMs: args.waitTimeoutMs,
           downloadDir: args.downloadDir,
           sceneId: scene.scene_id,
           attemptId: args._waitAttemptId,
+          initialFailedTileTexts: args._waitInitialFailedTileTexts || [],
           timeoutScreenshot: `${screenshot}.wait-timeout.png`,
+          onSubmissionEvidence: evidence => {
+            submissionEvidence = true;
+            appendEvent(args.log, { event: "submission_confirmed_by_new_media_uuid", scene_id: scene.scene_id, evidence });
+          },
           variantIndex,
           variantCount,
         });
         downloadedFile = result.downloadedFile;
         mediaUri = result.mediaUri || chosen.page.url();
         downloadError = result.downloadError;
+        actualResolution = result.actualResolution || null;
+        downloadQualityLabel = result.downloadQualityLabel || null;
         resultStatus = "succeeded";
       } catch (error) {
         timeoutError = String(error.message || error);
         mediaUri = chosen.page.url();
-        if (timeoutError.startsWith("FLOW_GENERATION_FAILED:")) resultStatus = "failed";
-        appendEvent(args.log, { event: resultStatus === "failed" ? "generation_failed_detected" : "generation_wait_unverified", scene_id: scene.scene_id, status: resultStatus === "failed" ? "failed_do_not_retry" : "unknown_do_not_retry", error: timeoutError });
+        if (timeoutError.startsWith("FLOW_REJECTED_UNUSUAL_ACTIVITY:")) resultStatus = "rejected_unusual_activity";
+        else if (timeoutError.startsWith("FLOW_GENERATION_FAILED:")) resultStatus = "failed";
+        else if (timeoutError.startsWith("FLOW_SUBMITTED_UNIDENTIFIED:")) resultStatus = "submitted_unidentified";
+        appendEvent(args.log, {
+          event: resultStatus === "rejected_unusual_activity" ? "flow_rejected_unusual_activity"
+            : resultStatus === "failed" ? "generation_failed_detected"
+              : resultStatus === "submitted_unidentified" ? "submitted_unidentified" : "generation_wait_unverified",
+          scene_id: scene.scene_id,
+          status: resultStatus === "rejected_unusual_activity" ? "FLOW_REJECTED_UNUSUAL_ACTIVITY_DO_NOT_RETRY"
+            : resultStatus === "failed" ? "failed_do_not_retry"
+              : resultStatus === "submitted_unidentified" ? "submitted_unidentified_do_not_retry" : "unknown_do_not_retry",
+          error: timeoutError,
+        });
         console.error(`WAIT STOPPED SAFELY: ${timeoutError}`);
       }
       // Detail pages do not expose credits; return to the original project before polling.
       if (chosen.page.url() !== originalUrl) {
         await chosen.page.goBack({ waitUntil: "domcontentloaded", timeout: 15000 }).catch(() => {});
       }
-      // Start the polling budget only after navigation recovery has had its chance.
-      const balanceDeadline = Date.now() + 30000;
-      do {
+      // A confirmed provider failure needs one balance snapshot for the ledger, not
+      // another 30-second submission-evidence poll. Keep polling only ambiguous outcomes.
+      if (["failed", "rejected_unusual_activity"].includes(resultStatus)) {
         try { afterBalance = await readCreditBalance(chosen.page, selectors); } catch {}
-        if (afterBalance !== null && args._waitInitialBalance !== null && afterBalance !== args._waitInitialBalance) break;
-        await chosen.page.waitForTimeout(1000);
-      } while (Date.now() < balanceDeadline);
+      } else {
+        const balanceDeadline = Date.now() + 30000;
+        do {
+          try { afterBalance = await readCreditBalance(chosen.page, selectors); } catch {}
+          if (afterBalance !== null && args._waitInitialBalance !== null && afterBalance < args._waitInitialBalance) {
+            submissionEvidence = true;
+            appendEvent(args.log, { event: "submission_confirmed_by_credit_decrease", scene_id: scene.scene_id,
+              before_balance: args._waitInitialBalance, after_balance: afterBalance });
+            break;
+          }
+          await chosen.page.waitForTimeout(1000);
+        } while (Date.now() < balanceDeadline);
+      }
+      if (!submissionEvidence && !["failed", "rejected_unusual_activity"].includes(resultStatus)) {
+        resultStatus = "create_not_confirmed";
+        args._stopVariants = true;
+        timeoutError = "CREATE_NOT_CONFIRMED: No new media UUID and no credit decrease were observed after Create; do not resubmit automatically without manual inspection.";
+        appendEvent(args.log, { event: "create_not_confirmed", scene_id: scene.scene_id,
+          status: "create_not_confirmed_do_not_retry", before_balance: args._waitInitialBalance, after_balance: afterBalance });
+        console.error(`CREATE NOT CONFIRMED: ${timeoutError}`);
+      }
       const ledgerRecord = makeGenerationLedgerRecord({
         scene, projectId: chosen.projectId, ledgerProjectId: args.ledgerProjectId, prompt: scene.prompt, estimatedCost: creditCost,
         beforeBalance: args._waitInitialBalance ?? null, afterBalance,
-        resultStatus, mediaUri, downloadedFile, downloadError, timeoutError, attemptNumber, attemptId: args._waitAttemptId, startedOn: args._waitStartedOn,
+        resultStatus, mediaUri, downloadedFile, downloadError, timeoutError, actualResolution, downloadQualityLabel,
+        attemptNumber, attemptId: args._waitAttemptId, startedOn: args._waitStartedOn,
         variantIndex, variantCount,
       });
       try {
         const ledgerPath = appendGenerationLedger(args.ledgerOutput, ledgerRecord);
         appendEvent(args.log, { event: "generation_ledger_recorded", scene_id: scene.scene_id, attempt_id: ledgerRecord.attempt_id, status: ledgerRecord.result.status, ledger_path: ledgerPath, before_balance: ledgerRecord.credits.before_balance, after_balance: ledgerRecord.credits.after_balance, actual_amount: ledgerRecord.credits.actual_amount, charge_status: ledgerRecord.credits.charge_status, media_uri: ledgerRecord.media.uri, downloaded_file: ledgerRecord.media.downloaded_file });
         console.log(`Generation ledger appended: ${ledgerPath}`);
+        if (resultStatus === "create_not_confirmed") process.exitCode = 2;
       } catch (error) {
         appendEvent(args.log, { event: "generation_ledger_write_failed", scene_id: scene.scene_id, error: String(error) });
         console.error(`CRITICAL: generation completed/unknown but ledger write failed: ${error.message}`);
@@ -1445,8 +3490,21 @@ async function prepare(args, browser, rl) {
           console.error(`Clip is ready but download failed: ${downloadError}`);
           process.exitCode = 2;
         }
+      } else if (resultStatus === "submitted_unidentified") {
+        console.error("Create was submitted, but no new media UUID could be identified before timeout. Receipt and ledger recorded; do NOT resubmit automatically.");
+        process.exitCode = 2;
+        if (variantCount > 1) args._stopVariants = true;
+      } else if (resultStatus === "rejected_unusual_activity") {
+        console.error("FLOW_REJECTED_UNUSUAL_ACTIVITY: Flow rejected this submission. The distinct status was recorded in the ledger; do not retry automatically or bypass anti-abuse checks.");
+        args._stopVariants = true;
+        process.exitCode = 2;
+        return;
       } else if (resultStatus === "failed") {
-        console.error("Flow generation failure was detected and recorded in the ledger. Do NOT retry automatically.");
+        if (/prominent people|might violate our policies/i.test(String(timeoutError || ""))) {
+          console.error("POLICY REFUSAL: Flow flagged this request under its prominent-people policy. The refusal is recorded in the ledger; this batch stops and no automatic retry or reference/prompt substitution will be attempted. Review Flow policy and the content before manually starting a new, policy-compliant attempt.");
+        } else {
+          console.error("Flow generation failure was detected and recorded in the ledger. Do NOT retry automatically.");
+        }
         if (variantCount > 1) {
           args._stopVariants = true;
           console.error(`Stopping variant batch after variant ${variantIndex}/${variantCount} failed; later variants will NOT be submitted with the same prompt.`);
@@ -1459,9 +3517,15 @@ async function prepare(args, browser, rl) {
       }
     }
   } catch (error) {
-    appendEvent(args.log, { event: "submission_outcome_unknown", scene_id: scene.scene_id,
-      status: "unknown_do_not_retry", error: String(error) });
-    console.error("Submission outcome is unknown. Do NOT click again or retry automatically. Inspect Flow manually.");
+    if (!createMayHaveBeenClicked) {
+      appendEvent(args.log, { event: "submission_aborted_before_create", scene_id: scene.scene_id,
+        status: "not_submitted", error: String(error) });
+      console.error("No generation was submitted. Create was not clicked; safe to correct the preflight issue before trying again.");
+    } else {
+      appendEvent(args.log, { event: "submission_outcome_unknown", scene_id: scene.scene_id,
+        status: "unknown_do_not_retry", error: String(error) });
+      console.error("Submission outcome is unknown. Do NOT click again or retry automatically. Inspect Flow manually.");
+    }
     throw error;
   }
   } catch (error) {
@@ -1500,7 +3564,7 @@ async function main() {
     let variantCount = 1;
     if (args.scene) {
       const inputScene = JSON.parse(fs.readFileSync(path.resolve(args.scene), "utf8"));
-      variantCount = inputScene.variants === undefined ? 1 : inputScene.variants;
+      variantCount = inputScene.variants === undefined ? 2 : inputScene.variants;
       if (!Number.isInteger(variantCount) || variantCount < 1 || variantCount > 3) throw new Error("variants must be an integer from 1 to 3.");
     }
     args._variantCount = variantCount;
@@ -1527,5 +3591,8 @@ async function main() {
 
 main().catch(error => {
   console.error(`Flow Pilot stopped safely: ${error.message}`);
-  process.exitCode = 2;
+  // Playwright/CDP or Chromium background handles can keep Node alive after a
+  // guarded pre-Create failure. All normal cleanup has already run through main's
+  // finally block; force a non-zero exit so a safe-stop cannot hang indefinitely.
+  process.exit(2);
 });
