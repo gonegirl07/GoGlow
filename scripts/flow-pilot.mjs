@@ -794,7 +794,8 @@ async function waitForGenerationAndDownload(page, selectors, { beforeKeys, befor
       }))).catch(() => []);
     const baselineFailedTexts = new Set(args._waitInitialFailedTileTexts || []);
     const unusualActivityTile = visibleTileFailures.find(item =>
-      /unusual activity|browser extensions? that modify the page/i.test(item.text));
+      /unusual activity|browser extensions? that modify the page/i.test(item.text)
+      && !baselineFailedTexts.has(item.text.replace(/\s+/g, " ").trim().toLowerCase()));
     if (unusualActivityTile) {
       throw new Error(`FLOW_REJECTED_UNUSUAL_ACTIVITY: Flow rejected this submission at visible tile position ${unusualActivityTile.index}: ${unusualActivityTile.text}`);
     }
