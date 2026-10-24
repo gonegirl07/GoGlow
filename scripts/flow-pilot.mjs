@@ -739,7 +739,7 @@ function findNewCompletedMediaItems(items, beforeKeys) {
   });
 }
 
-async function waitForGenerationAndDownload(page, selectors, { beforeKeys, beforeBalance, createClickedAt, uuidCache = new Map(), timeoutMs, downloadDir, sceneId, attemptId, timeoutScreenshot, onSubmissionEvidence = () => {}, variantIndex = 1, variantCount = 1 }) {
+async function waitForGenerationAndDownload(page, selectors, { beforeKeys, beforeBalance, createClickedAt, uuidCache = new Map(), timeoutMs, downloadDir, sceneId, attemptId, timeoutScreenshot, onSubmissionEvidence = () => {}, variantIndex = 1, variantCount = 1, initialFailedTileTexts = [] }) {
   const itemLocator = page.locator(selectors.generated_video_items);
   let deadline = Date.now() + timeoutMs;
   let chargedExtensionUsed = false;
@@ -792,7 +792,7 @@ async function waitForGenerationAndDownload(page, selectors, { beforeKeys, befor
       elements.slice(0, 6).map((element, index) => ({
         index, text: String(element.innerText || element.textContent || "").replace(/\s+/g, " ").trim(),
       }))).catch(() => []);
-    const baselineFailedTexts = new Set(args._waitInitialFailedTileTexts || []);
+    const baselineFailedTexts = new Set(initialFailedTileTexts);
     const unusualActivityTile = visibleTileFailures.find(item =>
       /unusual activity|browser extensions? that modify the page/i.test(item.text)
       && !baselineFailedTexts.has(item.text.replace(/\s+/g, " ").trim().toLowerCase()));
@@ -1329,6 +1329,39 @@ async function inspect(browser) {
           disabled: Boolean(node.disabled),
         }))).catch(() => []);
       console.log("    controls:", JSON.stringify(controls));
+      let session = null;
+      try {
+        session = await item.page.context().newCDPSession(item.page);
+        const contexts = [];
+        session.on("Runtime.executionContextCreated", event => {
+          const context = event.context || {};
+          const auxData = context.auxData || {};
+          contexts.push({
+            id: context.id,
+            name: context.name || "",
+            origin: context.origin || "",
+            isDefault: auxData.isDefault === true,
+            frameId: auxData.frameId || null,
+          });
+        });
+        await session.send("Runtime.enable");
+        await item.page.waitForTimeout(250);
+        const nonDefault = contexts.filter(context => !context.isDefault);
+        const extensionWorlds = nonDefault.filter(context => /^chrome-extension:\/\//i.test(context.origin));
+        if (nonDefault.length) {
+          console.warn("    WARNING: non-default JavaScript execution contexts are present on this Flow tab; inspect extensions or injected scripts before running. This is a diagnostic signal, not proof of the cause.");
+          console.log("    non-default execution contexts:", JSON.stringify(nonDefault));
+        } else {
+          console.log("    execution contexts: only default contexts observed during inspection.");
+        }
+        if (extensionWorlds.length) {
+          console.warn("    WARNING: extension-origin execution contexts detected on the Flow tab:", JSON.stringify(extensionWorlds));
+        }
+      } catch (error) {
+        console.warn(`    execution-context inspection unavailable: ${error.message}`);
+      } finally {
+        if (session) await session.detach().catch(() => {});
+      }
     }
   }
   console.log("\nRead-only inspection complete. No navigation, fill, click, or generation was performed.");
@@ -3117,6 +3150,7 @@ async function prepare(args, browser, rl) {
           downloadDir: args.downloadDir,
           sceneId: scene.scene_id,
           attemptId: args._waitAttemptId,
+          initialFailedTileTexts: args._waitInitialFailedTileTexts || [],
           timeoutScreenshot: `${screenshot}.wait-timeout.png`,
           onSubmissionEvidence: evidence => {
             submissionEvidence = true;
