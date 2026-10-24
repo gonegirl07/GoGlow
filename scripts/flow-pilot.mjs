@@ -2188,6 +2188,7 @@ async function uploadSceneReferencesUnsafe(page, selectors, referenceImages, ref
       preview_uuids: previewContext?.uuids || [],
       preview_identity_signal: previewIdentitySignal,
       wait_ms: Date.now() - selectionWaitStartedAt,
+      elapsed_ms: Date.now() - selectionWaitStartedAt,
       timeout_ms: selectionWaitTimeoutMs,
       selection_retried: selectionRetried,
       ready: referenceSelectionReady,
