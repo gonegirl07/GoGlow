@@ -321,7 +321,15 @@ async function collectAllGeneratedItems(page, selector, { targetKey = null, maxS
       try {
         // Re-enter the project grid and Videos tab for each attempt, then re-find
         // Prefer UUID/network metadata; thumbnail URL tokens are a hint only because /asb/ signatures can rotate.
-        await page.goto(gridUrl, { waitUntil: "domcontentloaded", timeout: 12000 }).catch(() => {});
+        // Avoid a needless route reload when already on the grid: Flow may rotate
+        // signed /asb/ thumbnail tokens on every navigation. Snapshot and identify
+        // the tile from the same live grid view whenever possible.
+        const currentPageUrl = page.url();
+        const alreadyOnGrid = currentPageUrl === gridUrl
+          && await page.locator(selector).count().catch(() => 0) >= 3;
+        if (!alreadyOnGrid) {
+          await page.goto(gridUrl, { waitUntil: "domcontentloaded", timeout: 12000 }).catch(() => {});
+        }
         const tabResult = await activateVideosTab(page, selectors).catch(error => `error:${error.message}`);
         if (/_click_failed|not_found_no_tab_switch|_not_found/.test(tabResult)) {
           throw new Error(`Videos tab activation could not be confirmed (${tabResult}); refusing tile identity lookup on an uncertain grid.`);
@@ -335,7 +343,7 @@ async function collectAllGeneratedItems(page, selector, { targetKey = null, maxS
         for (let gridPoll = 0; gridPoll < 30; gridPoll += 1) {
           currentTokens = await page.locator(selector).evaluateAll(elements => elements.slice(0, 6).map(element => {
             const source = element.querySelector("img")?.getAttribute("src") || "";
-            if (!source) return "";
+            if (!source || /\/image\//i.test(source)) return "";
             const asbIndex = source.toLowerCase().indexOf("/asb/");
             if (asbIndex >= 0) {
               const token = source.slice(asbIndex + 5).split(/[/?#]/, 1)[0];
@@ -473,8 +481,8 @@ async function collectAllGeneratedItems(page, selector, { targetKey = null, maxS
           await page.waitForFunction(pathname => location.pathname === pathname, new URL(gridUrl).pathname, { timeout: 10000 }).catch(() => {});
           await restoreScrollTop(scrollTop).catch(() => {});
         }
-        if (attempt < 5) {
-          console.warn(`Retrying media UUID lookup for tile index ${index} (attempt ${attempt}/5): ${error.message}`);
+        if (attempt < maxIdentityAttempts) {
+          console.warn(`Retrying media UUID lookup for tile index ${index} (attempt ${attempt}/${maxIdentityAttempts}): ${error.message}`);
           await page.waitForTimeout(400 * attempt);
         }
       }
@@ -3105,7 +3113,9 @@ async function prepare(args, browser, rl) {
         while (Date.now() - startedAt < maxWaitMs) {
           snapshot = await chosen.page.locator(selectors.generated_video_items).evaluateAll(elements => elements.slice(0, 3).map(element => {
             const source = element.querySelector("img")?.getAttribute("src") || "";
-            if (!source) return null;
+            // Flow's /image/<uuid> URL is a lazy-load placeholder, not a
+            // ready tile thumbnail. Wait for /asb/ or another non-placeholder URL.
+            if (!source || /\/image\//i.test(source)) return null;
             const asbIndex = source.toLowerCase().indexOf("/asb/");
             if (asbIndex >= 0) {
               const token = source.slice(asbIndex + 5).split(/[/?#]/, 1)[0];
