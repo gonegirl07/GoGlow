@@ -293,16 +293,30 @@ async function collectAllGeneratedItems(page, selector, { targetKey = null, maxS
     // Lazy thumbnails must load before attempting route-based tile re-identification.
     // Generic tile text is not a stable media identity and is never used as a key.
     if (!identity?.thumbnailSrc && Number.isInteger(index) && index >= 0) {
-      for (let tokenWait = 0; tokenWait < 20; tokenWait += 1) {
+      const tokenRecaptureStartedAt = Date.now();
+      for (let tokenWait = 0; tokenWait < 8; tokenWait += 1) {
         const source = await page.locator(selector).nth(index).locator("img").getAttribute("src").catch(() => null);
-        if (source) {
+        if (source && thumbnailIdentityToken(source)) {
           identity = { ...(identity || {}), thumbnailSrc: source };
           break;
         }
         await page.waitForTimeout(250);
       }
+      const hasStableUuid = Boolean(identity?.mediaUuid
+        || String(identity?.key || "").match(/^media:([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})$/i)?.[1]);
+      if (!identity?.thumbnailSrc && !hasStableUuid) {
+        console.warn(JSON.stringify({ event: "media_tile_identity_recapture_skipped",
+          tile_index: index, reason: "thumbnail_token_still_missing_and_no_stable_uuid",
+          elapsed_ms: Date.now() - tokenRecaptureStartedAt, attempts: 0,
+          next_step: "return_unresolved_for_bounded_inventory_recapture" }));
+        return null;
+      }
     }
-    for (let attempt = 1; attempt <= 5; attempt += 1) {
+    // Five editor round-trips per tile caused multi-minute preflight stalls when
+    // signed thumbnail tokens rotated. Two bounded attempts are enough to gather
+    // fresh UUID/network evidence; unresolved identity must fail closed.
+    const maxIdentityAttempts = 2;
+    for (let attempt = 1; attempt <= maxIdentityAttempts; attempt += 1) {
       const reidentificationAttemptStartedAt = Date.now();
       try {
         // Re-enter the project grid and Videos tab for each attempt, then re-find
@@ -465,7 +479,7 @@ async function collectAllGeneratedItems(page, selector, { targetKey = null, maxS
         }
       }
     }
-    console.warn(`Could not resolve media UUID by opening tile index ${index} after 5 attempts: ${lastError?.message || "unknown error"}`);
+    console.warn(`Could not resolve media UUID by opening tile index ${index} after ${maxIdentityAttempts} bounded attempts: ${lastError?.message || "unknown error"}`);
     return null;
   };
   let stableBottomRounds = 0;
