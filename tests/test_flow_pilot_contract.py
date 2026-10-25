@@ -726,6 +726,19 @@ class FlowPilotContractTests(unittest.TestCase):
         self.assertIn('event: "media_tile_identity_recapture_skipped"', self.script)
         self.assertIn('reason: "thumbnail_token_still_missing_and_no_stable_uuid"', self.script)
         self.assertIn('next_step: "return_unresolved_for_bounded_inventory_recapture"', self.script)
+        resolver = self.script.split("const resolveUuidByOpeningTile", 1)[1].split("let stableBottomRounds = 0;", 1)[0]
+        self.assertIn("if (attempt < maxIdentityAttempts)", resolver)
+        self.assertIn("(attempt ${attempt}/${maxIdentityAttempts})", resolver)
+        self.assertNotIn("(attempt ${attempt}/5)", resolver)
+        self.assertIn("const alreadyOnGrid = currentPageUrl === gridUrl", resolver)
+        self.assertIn('if (!source || /\\/image\\//i.test(source)) return "";', resolver)
+
+    def test_first_row_wait_rejects_image_placeholder_until_thumbnail_is_ready(self):
+        preflight = self.script.split('const waitForFirstRowThumbnailTokens = async (reason, maxWaitMs = 15000)', 1)[1].split(
+            '// Save the grid scroll before forcing lazy thumbnails into view;', 1
+        )[0]
+        self.assertIn('if (!source || /\\/image\\//i.test(source)) return null;', preflight)
+        self.assertIn('Wait for /asb/ or another non-placeholder URL.', preflight)
 
     def test_asset_uuid_lookup_waits_for_lazy_loaded_thumbnail_and_rejects_ambiguity(self):
         self.assertIn("const thumbnailDeadline = networkUuidShortcut ? Date.now() : Date.now() + 7000;", self.script)
