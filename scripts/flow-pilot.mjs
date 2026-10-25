@@ -2297,30 +2297,36 @@ async function uploadSceneReferencesUnsafe(page, selectors, referenceImages, ref
     }));
     await activeAsset.scrollIntoViewIfNeeded({ timeout: 400 }).catch(() => {});
     let current = await freshTile();
-    if (!current && matchCount === 1 && requestedAssetUuid) {
-      // The picker can unmount between inventory and click. Re-open once only when
-      // the filename match was unique and the asset UUID is pinned; the attached
-      // Ingredients chip remains the authoritative post-click identity check.
+    let targetPickerReopenAttempted = false;
+    if (!current) {
+      // A stale/ambiguous target and a picker that closed between inventory and
+      // click get the same single safe recovery attempt. Reopen never clicks a tile
+      // or Add: after reopening, require a unique filename match AND a pinned UUID.
+      targetPickerReopenAttempted = true;
       const visiblePickerCount = await page.locator(pickerContainerSelector).evaluateAll(nodes =>
         nodes.filter(node => {
           const style = getComputedStyle(node);
           const rect = node.getBoundingClientRect();
           return style.visibility !== "hidden" && style.display !== "none" && rect.width > 0 && rect.height > 0;
         }).length).catch(() => 0);
-      if (visiblePickerCount === 0) {
-        console.warn(JSON.stringify({ event: "ingredients_picker_reopen_retry", filename, reason: "unique_pinned_match_picker_closed", pinned_uuid: requestedAssetUuid }));
-        await openIngredientsPicker(page, selectors, filename);
-        pickerResolutionCurrent = await resolveVisibleIngredientsPicker(page, selectors, filename, filenameStem);
-        pickerContainer = pickerResolutionCurrent.container;
-        picker = pickerContainer.locator(`${selectors.ingredient_library_item}:visible`);
-        matchingAssets = pickerResolutionCurrent.matching;
-        const reopenedCount = await matchingAssets.count().catch(() => 0);
-        console.log(JSON.stringify({ event: "ingredients_picker_reopen_retry_result", filename, matching_tile_count: reopenedCount,
-          picker_visible: await pickerContainer.isVisible().catch(() => false) }));
-        if (reopenedCount === 1) {
-          activeAsset = matchingAssets.first();
-          current = await freshTile();
-        }
+      console.warn(JSON.stringify({ event: "ingredients_picker_reopen_retry", filename,
+        reason: visiblePickerCount === 0 ? "picker_closed_before_target_selection" : "target_tile_missing_or_ambiguous",
+        visible_picker_count: visiblePickerCount, initial_matching_tile_count: matchCount,
+        pinned_uuid: requestedAssetUuid || null }));
+      await resetIngredientsPicker(page, selectors);
+      await openIngredientsPicker(page, selectors, filename);
+      pickerResolutionCurrent = await resolveVisibleIngredientsPicker(page, selectors, filename, filenameStem);
+      pickerContainer = pickerResolutionCurrent.container;
+      picker = pickerContainer.locator(`${selectors.ingredient_library_item}:visible`);
+      matchingAssets = pickerResolutionCurrent.matching;
+      const reopenedCount = await matchingAssets.count().catch(() => 0);
+      const reopenedPickerVisible = await pickerContainer.isVisible().catch(() => false);
+      console.log(JSON.stringify({ event: "ingredients_picker_reopen_retry_result", filename,
+        matching_tile_count: reopenedCount, picker_visible: reopenedPickerVisible,
+        pinned_uuid_required: true, pinned_uuid_available: Boolean(requestedAssetUuid) }));
+      if (reopenedPickerVisible && reopenedCount === 1 && requestedAssetUuid) {
+        activeAsset = matchingAssets.first();
+        current = await freshTile();
       }
     }
     if (!current) {
