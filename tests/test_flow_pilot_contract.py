@@ -997,11 +997,11 @@ assert.deepEqual(findNewCompletedMediaItems([
         node_test = "function assetUuidFromUrl" + helper + r"""
 const assert = await import('node:assert/strict');
 const uuid = '4d8c7d18-d76a-479a-8164-8414f9ddaff7';
-assert.equal(assetUuidFromUrl('/image/' + uuid), uuid);\nassert.equal(thumbnailIdentityToken('/image/' + uuid), '/image/' + uuid);
+assert.equal(assetUuidFromUrl('/image/' + uuid), uuid);
+assert.equal(thumbnailIdentityToken('/image/' + uuid), '/image/' + uuid);
 assert.equal(thumbnailIdentityToken('https://flow.google.com/asb/opaque-signed-token'), 'asb:opaque-signed-token');
 assert.equal(thumbnailIdentityToken('https://flow.google.com/asb/' + uuid), 'media:' + uuid);
-// Baseline was identified by the tile's media UUID, while the same tile now
-// exposes only an opaque signed thumbnail URL: the tile UUID must win.
+// A known media UUID hint remains authoritative when thumbnail URLs rotate.
 assert.equal(thumbnailIdentityToken('https://flow.google.com/asb/ANqvLObmDmk_6XQl', uuid), 'media:' + uuid);
 """
         result = subprocess.run(["node", "--input-type=module", "-e", node_test],
