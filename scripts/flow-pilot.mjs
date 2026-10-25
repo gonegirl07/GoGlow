@@ -1582,23 +1582,23 @@ function assetUuidFromUrl(value) {
   const source = String(value || "");
   const match = source.match(/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/i);
   // A UUID embedded in a thumbnail image URL identifies the image, not the video.
-  if (/\\/image\\//i.test(source)) return null;
+  if (/\/image\//i.test(source)) return null;
   return match?.[0]?.toLowerCase() || null;
 }
 
 function thumbnailIdentityToken(value, mediaUuidHint = null) {
   const source = String(value || "");
-  if (mediaUuidHint) return `media:${String(mediaUuidHint).toLowerCase()}`;
+  if (mediaUuidHint) return \`media:\${String(mediaUuidHint).toLowerCase()}\`;
   // /image/<uuid> is a thumbnail-image identifier, not reliable proof of the
   // underlying video UUID. Keep it as a thumbnail identity token only.
-  if (/\\/image\\//i.test(source)) {
+  if (/\/image\//i.test(source)) {
     try { return new URL(source, "https://flow.google.com").pathname; }
     catch { return source.split(/[?#]/, 1)[0]; }
   }
   const mediaUuid = assetUuidFromUrl(source);
-  if (mediaUuid) return `media:${mediaUuid}`;
-  const asbToken = source.match(/\\/asb\\/([^/?#]+)/i);
-  if (asbToken) return `asb:${asbToken[1]}`;
+  if (mediaUuid) return \`media:\${mediaUuid}\`;
+  const asbToken = source.match(/\/asb\/([^/?#]+)/i);
+  if (asbToken) return \`asb:\${asbToken[1]}\`;
   try { return new URL(source, "https://flow.google.com").pathname; }
   catch { return source.split(/[?#]/, 1)[0]; }
 }
