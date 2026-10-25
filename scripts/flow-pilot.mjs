@@ -955,8 +955,31 @@ async function waitForGenerationAndDownload(page, selectors, { beforeKeys, befor
     }
     // UUID-backed failures remain covered by this check; no failed item is eligible
     // for download even if Flow exposes it as a completed media record.
-    const candidateItems = newItems.filter(item =>
+    let candidateItems = newItems.filter(item =>
       !(/\bfailed\b/i.test(`${item.state} ${item.text}`) || isGenerationFailureText(`${item.state} ${item.text}`)));
+    // Fallback for Flow builds where the newly completed first tile exposes only
+    // /image/<uuid> and no video UUID until its editor is opened. Infer insertion
+    // only when the next two visible tiles match the first two pre-Create UUIDs
+    // in order; position alone is never sufficient.
+    if (candidateItems.length === 0 && topItemsNow.length >= 3) {
+      const [first, second, third] = topItemsNow;
+      const firstKey = beforeKeys?.[0] || null;
+      const secondKey = beforeKeys?.[1] || null;
+      const shiftedBaselineConfirmed = Boolean(firstKey && secondKey
+        && second?.key === firstKey && third?.key === secondKey
+        && second?.mediaUuid && third?.mediaUuid
+        && first?.key && !baselineKeys.has(first.key)
+        && !first?.mediaUuid
+        && !first.progress
+        && !(/\\bfailed\\b/i.test(`${first.state || ""} ${first.text || ""}`)
+          || isGenerationFailureText(`${first.state || ""} ${first.text || ""}`)));
+      if (shiftedBaselineConfirmed) {
+        candidateItems = [{ ...first, inferredNewTile: true }];
+        console.log(JSON.stringify({ event: "post_create_new_first_tile_inferred",
+          method: "ordered_baseline_shift", first_tile_key: first.key,
+          confirmed_baseline_keys: [second.key, third.key] }));
+      }
+    }
     const failedTile = newItems.find(item =>
       /\bfailed\b/i.test(`${item.state} ${item.text}`)
       || isGenerationFailureText(`${item.state} ${item.text}`));
@@ -983,6 +1006,19 @@ async function waitForGenerationAndDownload(page, selectors, { beforeKeys, befor
       if (located.targetIndex !== null) {
         newItem = itemLocator.nth(located.targetIndex);
         await newItem.click({ timeout: 5000 });
+        if (candidate.inferredNewTile) {
+          const editRoute = /\\/edit\\/([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})(?:[/?#]|$)/i;
+          await page.waitForURL(url => editRoute.test(new URL(url).pathname), { timeout: 8000 }).catch(() => {});
+          const openedUrl = page.url();
+          const openedUuid = openedUrl.match(editRoute)?.[1]?.toLowerCase() || null;
+          const openedKey = openedUuid ? `media:${openedUuid}` : null;
+          if (!openedKey || baselineKeys.has(openedKey)) {
+            throw new Error(`FLOW_SUBMITTED_UNIDENTIFIED: New first-row tile was inferred from shifted neighbors, but opening it did not yield a verified non-baseline /edit/<uuid> URL (url=${openedUrl}). Do not retry automatically.`);
+          }
+          newKey = openedKey;
+          console.log(JSON.stringify({ event: "post_create_new_first_tile_verified",
+            media_uuid: openedUuid, url: openedUrl, method: "edit_route_after_ordered_baseline_shift" }));
+        }
         const shortWait = Math.min(3500, Math.max(500, deadline - Date.now()));
         const downloadButtonLocator = page.locator(selectors.download_media_button);
         try {
