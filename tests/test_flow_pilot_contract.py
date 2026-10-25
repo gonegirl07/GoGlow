@@ -718,10 +718,14 @@ class FlowPilotContractTests(unittest.TestCase):
 
     def test_edit_route_fallback_waits_then_force_clicks_animated_tile(self):
         self.assertIn("await tile.scrollIntoViewIfNeeded({ timeout: 3500 })", self.script)
-        self.assertIn("for (let attempt = 1; attempt <= 5; attempt += 1)", self.script)
+        self.assertIn("const maxIdentityAttempts = 2;", self.script)
+        self.assertIn("for (let attempt = 1; attempt <= maxIdentityAttempts; attempt += 1)", self.script)
         self.assertIn("await tile.click({ timeout: 4000, force: true });", self.script)
         self.assertIn("timeout: 8000", self.script)
-        self.assertIn("after 5 attempts", self.script)
+        self.assertIn("after ${maxIdentityAttempts} bounded attempts", self.script)
+        self.assertIn('event: "media_tile_identity_recapture_skipped"', self.script)
+        self.assertIn('reason: "thumbnail_token_still_missing_and_no_stable_uuid"', self.script)
+        self.assertIn('next_step: "return_unresolved_for_bounded_inventory_recapture"', self.script)
 
     def test_asset_uuid_lookup_waits_for_lazy_loaded_thumbnail_and_rejects_ambiguity(self):
         self.assertIn("const thumbnailDeadline = networkUuidShortcut ? Date.now() : Date.now() + 7000;", self.script)
