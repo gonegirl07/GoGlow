@@ -1617,8 +1617,6 @@ async function chooseModel(page, selectors, model) {
 function assetUuidFromUrl(value) {
   const source = String(value || "");
   const match = source.match(/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/i);
-  // A UUID embedded in a thumbnail image URL identifies the image, not the video.
-  if (/\/image\//i.test(source)) return null;
   return match?.[0]?.toLowerCase() || null;
 }
 
