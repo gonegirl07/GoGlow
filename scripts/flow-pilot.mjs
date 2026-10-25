@@ -971,7 +971,7 @@ async function waitForGenerationAndDownload(page, selectors, { beforeKeys, befor
         && first?.key && !baselineKeys.has(first.key)
         && !first?.mediaUuid
         && !first.progress
-        && !(/\\bfailed\\b/i.test(`${first.state || ""} ${first.text || ""}`)
+        && !(/\bfailed\b/i.test(`${first.state || ""} ${first.text || ""}`)
           || isGenerationFailureText(`${first.state || ""} ${first.text || ""}`)));
       if (shiftedBaselineConfirmed) {
         candidateItems = [{ ...first, inferredNewTile: true }];
@@ -1007,7 +1007,7 @@ async function waitForGenerationAndDownload(page, selectors, { beforeKeys, befor
         newItem = itemLocator.nth(located.targetIndex);
         await newItem.click({ timeout: 5000 });
         if (candidate.inferredNewTile) {
-          const editRoute = /\\/edit\\/([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})(?:[/?#]|$)/i;
+          const editRoute = /\/edit\/([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})(?:[/?#]|$)/i;
           await page.waitForURL(url => editRoute.test(new URL(url).pathname), { timeout: 8000 }).catch(() => {});
           const openedUrl = page.url();
           const openedUuid = openedUrl.match(editRoute)?.[1]?.toLowerCase() || null;
