@@ -2331,7 +2331,7 @@ async function uploadSceneReferencesUnsafe(page, selectors, referenceImages, ref
     }
     if (!current) {
       console.log(JSON.stringify({ event: "ingredients_picker_step_diagnostics", step: "before_initial_click", ...(await readPickerDiagnostics(initialAssetBox)) }));
-      throw new Error(`Picker closed or target tile became ambiguous before selecting ${filename}; stopping before Add/prompt fill/Create.`);
+      throw new Error(`Picker closed or target tile became ambiguous before selecting ${filename}${targetPickerReopenAttempted ? " even after one picker reopen" : ""}; stopping before Add/prompt fill/Create.`);
     }
     activeAsset = current.tile;
     const firstBox = await activeAsset.boundingBox({ timeout: 300 }).catch(() => null);
