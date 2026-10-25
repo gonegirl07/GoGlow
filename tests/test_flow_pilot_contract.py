@@ -731,6 +731,7 @@ class FlowPilotContractTests(unittest.TestCase):
         self.assertIn("(attempt ${attempt}/${maxIdentityAttempts})", resolver)
         self.assertNotIn("(attempt ${attempt}/5)", resolver)
         self.assertIn("const alreadyOnGrid = currentPageUrl === gridUrl", resolver)
+        self.assertIn("const expectedToken = alreadyOnGrid && currentTokens[index]", resolver)
         self.assertIn('if (!source || /\\/image\\//i.test(source)) return "";', resolver)
 
     def test_first_row_wait_rejects_image_placeholder_until_thumbnail_is_ready(self):
