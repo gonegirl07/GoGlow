@@ -360,7 +360,12 @@ async function collectAllGeneratedItems(page, selector, { targetKey = null, maxS
           previousTokens = currentTokens;
           await page.waitForTimeout(250);
         }
-        const expectedToken = identity?.thumbnailSrc ? thumbnailIdentityToken(identity.thumbnailSrc) : null;
+        // If the grid never left this route, bind the lookup to the freshly
+        // stabilized token at the requested index, not a stale signed token from
+        // an earlier snapshot. This is only safe after the two-snapshot grid check.
+        const expectedToken = alreadyOnGrid && currentTokens[index]
+          ? currentTokens[index]
+          : (identity?.thumbnailSrc ? thumbnailIdentityToken(identity.thumbnailSrc) : null);
         console.log(JSON.stringify({
           event: "media_tile_reidentification",
           attempt,
