@@ -990,14 +990,14 @@ assert.deepEqual(findNewCompletedMediaItems([
         self.assertIn("Keep the overall visual design and clothing consistent with the reference images.", self.script)
         self.assertIn('reference_language_mode: scene.reference_language_mode || "identity_preserving"', self.script)
 
-    def test_thumbnail_identity_uses_media_uuid_across_image_and_signed_asb_urls(self):
+    def test_thumbnail_identity_keeps_image_uuid_separate_from_media_uuid(self):
         helper = self.script.split("function assetUuidFromUrl", 1)[1].split(
             "async function assetUuidFromLocator", 1
         )[0]
         node_test = "function assetUuidFromUrl" + helper + r"""
 const assert = await import('node:assert/strict');
 const uuid = '4d8c7d18-d76a-479a-8164-8414f9ddaff7';
-assert.equal(thumbnailIdentityToken('/image/' + uuid), 'media:' + uuid);
+assert.equal(assetUuidFromUrl('/image/' + uuid), uuid);\nassert.equal(thumbnailIdentityToken('/image/' + uuid), '/image/' + uuid);
 assert.equal(thumbnailIdentityToken('https://flow.google.com/asb/opaque-signed-token'), 'asb:opaque-signed-token');
 assert.equal(thumbnailIdentityToken('https://flow.google.com/asb/' + uuid), 'media:' + uuid);
 // Baseline was identified by the tile's media UUID, while the same tile now
