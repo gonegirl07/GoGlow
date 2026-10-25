@@ -1620,7 +1620,8 @@ function assetUuidFromUrl(value) {
   return match?.[0]?.toLowerCase() || null;
 }
 
-function thumbnailIdentityToken(value, mediaUuidHint = null) {
+function thumbnailIdentityToken(value) {
+  const mediaUuidHint = arguments.length > 1 ? arguments[1] : null;
   const source = String(value || "");
   if (mediaUuidHint) return `media:${String(mediaUuidHint).toLowerCase()}`;
   // /image/<uuid> is a thumbnail-image identifier, not reliable proof of the
