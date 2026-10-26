@@ -3465,6 +3465,14 @@ async function prepare(args, browser, rl) {
       const domThumbnailBaseline = await chosen.page.locator(selectors.generated_video_items).evaluateAll(elements => ({
         tileCount: elements.length,
         texts: elements.slice(0, 3).map(element => String(element.innerText || element.textContent || "").replace(/\s+/g, " ").trim()),
+        // Keep the thumbnail image UUID as a separate alias. It is not the video
+        // UUID, but Flow may expose this same image UUID as the tile's only token
+        // during the immediate pre-Create snapshot.
+        imageTokens: elements.slice(0, 3).map(element => {
+          const source = element.querySelector("img")?.getAttribute("src") || "";
+          const match = source.match(/\/image\/([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})(?:[/?#]|$)/i);
+          return match ? `image:${match[1].toLowerCase()}` : null;
+        }),
         tokens: elements.slice(0, 3).map(element => {
           const dataValues = [
             element.getAttribute("data-media-id"),
@@ -3542,6 +3550,7 @@ async function prepare(args, browser, rl) {
         domThumbnailBaseline.tokens, initialScan.items, domThumbnailBaseline.texts, verifiedUuidThumbnailIndexes,
       );
       args._waitInitialThumbnailTokens = baselineTokensWithUuidFallback;
+      args._waitInitialThumbnailImageTokens = domThumbnailBaseline.imageTokens || [];
       if (domThumbnailBaseline.tileCount < 3 || args._waitInitialThumbnailTokens.length < 3
         || args._waitInitialThumbnailTokens.slice(0, 3).some(token => !token)) {
         throw new Error(`First-row baseline requires loaded DOM thumbnail identities for all three tiles; observed tile count=${domThumbnailBaseline.tileCount}, tokens=${JSON.stringify(args._waitInitialThumbnailTokens)}.`);
@@ -3807,7 +3816,9 @@ async function prepare(args, browser, rl) {
       const sameFirstRowMediaIdentity = firstThreeMediaKeysMatch(baselineMediaKeys, currentMediaKeys);
       // UUID-confirmed row identity can override a different virtualized DOM count
       // and a lazy third thumbnail, but never an absent/mismatched UUID.
-      const sameFirstThreeThumbnailTokens = firstThreeThumbnailTokensMatch(baselineTokens, currentTokens);
+      const sameFirstThreeThumbnailTokens = firstThreeThumbnailTokensMatch(
+        baselineTokens, currentTokens, args._waitInitialThumbnailImageTokens || [],
+      );
       const stableCurrentGrid = preCreateSnapshot.fullyStable || preCreateSnapshot.acceptedByNeighborRule
         || (preCreateSnapshot.stableFirstToken && preCreateSnapshot.tileCount >= 3 && sameFirstRowMediaIdentity)
         || (preCreateSnapshot.stableFirstToken && preCreateSnapshot.tileCount >= 3 && sameFirstThreeThumbnailTokens);
@@ -3816,6 +3827,7 @@ async function prepare(args, browser, rl) {
         expected_first_thumbnail_token: expectedFirstToken,
         current_first_thumbnail_token: currentFirstToken,
         visible_first_three_thumbnail_tokens: currentTokens,
+        baseline_first_three_thumbnail_image_tokens: (args._waitInitialThumbnailImageTokens || []).slice(0, 3),
         visible_tile_count: preCreateSnapshot.tileCount,
         stable_first_token: preCreateSnapshot.stableFirstToken || preCreateSnapshot.fullyStable,
         accepted_by_neighbor_rule: preCreateSnapshot.acceptedByNeighborRule,
