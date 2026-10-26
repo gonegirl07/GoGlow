@@ -316,7 +316,7 @@ const orderedBaselineShiftIsVerified = (first, shiftedItems, beforeKeys) => {
   const firstKey = failedPolicyBaselineKey(first) || first.key || "";
   const firstState = String(first.state || "") + " " + String(first.text || "");
   if (!firstKey || new Set(baselineKeys).has(firstKey) || first.mediaUuid || first.progress
-    || /\\bfailed\\b/i.test(firstState) || isGenerationFailureText(firstState)) return false;
+    || /\bfailed\b/i.test(firstState) || isGenerationFailureText(firstState)) return false;
   return baselineKeys.slice(0, 3).every((baselineKey, index) => {
     const item = shiftedItems[index];
     if (!item) return false;
