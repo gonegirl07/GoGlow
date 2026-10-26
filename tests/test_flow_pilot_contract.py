@@ -1340,6 +1340,7 @@ assert.equal(
         self.assertIn('classification: item.mediaUuid && initialItems[index] ? "stable_existing_baseline_tile"', self.script)
         self.assertIn('"known_policy_refusal_non_media_baseline"', self.script)
         self.assertIn('baselineKey.startsWith("failed-policy:") && isPolicyRefusal && sameUniqueText', self.script)
+        self.assertEqual(self.script.count('baselineKey.startsWith("failed-policy:")'), 2)
         self.assertIn("unresolvedBaselineIndexes.length > 0", self.script)
         self.assertIn('"unknown_identity_fail_closed"', self.script)
 
