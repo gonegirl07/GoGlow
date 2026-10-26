@@ -1852,8 +1852,12 @@ function buildVerifiedThumbnailBaselineTokens(domTokens, items, domTexts, verifi
 
 function thumbnailIdentityToken(value) {
   const mediaUuidHint = arguments.length > 1 ? arguments[1] : null;
-  const source = String(value || "");
+  const source = String(value || "").trim();
   if (mediaUuidHint) return `media:${String(mediaUuidHint).toLowerCase()}`;
+  // These are already-normalized identity tokens, not URLs. Handle them before
+  // URL parsing: new URL("asb:<token>", base).pathname drops the "asb:" prefix.
+  if (/^asb:/i.test(source)) return normalizeAsbIdentityToken(source);
+  if (/^media:/i.test(source)) return `media:${source.slice("media:".length).toLowerCase()}`;
   // /image/<uuid> is a thumbnail-image identifier, not reliable proof of the
   // underlying video UUID. Keep it as a thumbnail identity token only.
   if (/\/image\//i.test(source)) {
