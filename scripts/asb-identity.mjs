@@ -38,6 +38,6 @@ export function firstThreeThumbnailTokensMatch(
       // Accept it only as an explicitly captured alias for this same baseline tile,
       // and only when the other first-row identities also match.
       const posterUuid = imageUuid(baselineImageTokens[index]);
-      return Boolean(posterUuid && current === \`media:\${posterUuid}\`);
+      return Boolean(posterUuid && current === "media:" + posterUuid);
     });
 }
