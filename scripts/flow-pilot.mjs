@@ -3768,15 +3768,30 @@ async function prepare(args, browser, rl) {
               && texts.filter(value => value === currentText).length === 1
               && Array.isArray(baseline?.texts)
               && baseline.texts.filter(value => normalize(value) === currentText).length === 1) return `media:${uuid.toLowerCase()}`;
-            const source = element.querySelector("img")?.getAttribute("src") || "";
-            if (!source) return null;
-            const imageUuid = source.match(/\/image\/([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})(?:[/?#]|$)/i)
-              || source.match(/\/asb\/([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})(?:[/?#]|$)/i);
-            if (imageUuid) return `media:${imageUuid[1].toLowerCase()}`;
-            const asb = source.match(/\/asb\/([^/?#]+)/i);
-            if (asb) return `asb:${asb[1]}`;
-            try { return new URL(source, location.href).pathname; }
-            catch { return source.split(/[?#]/, 1)[0] || null; }
+            // Match baseline's img/video reader: playback may replace an img
+            // with a video element while the composer is open.
+            const sources = [
+              element.querySelector("img")?.getAttribute("src"),
+              element.querySelector("video")?.getAttribute("src"),
+              element.querySelector("video source")?.getAttribute("src"),
+              element.querySelector("video")?.getAttribute("poster"),
+              element.querySelector("source")?.getAttribute("src"),
+              element.querySelector("img")?.getAttribute("srcset")?.split(",")[0]?.trim().split(/\\s+/)[0],
+            ].filter(Boolean);
+            for (const source of sources) {
+              const imageUuid = source.match(/\\/image\\/([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})(?:[/?#]|$)/i)
+                || source.match(/\\/asb\\/([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})(?:[/?#]|$)/i);
+              if (imageUuid) return `media:${imageUuid[1].toLowerCase()}`;
+              const asb = source.match(/\\/asb\\/([^/?#]+)/i);
+              if (asb) return `asb:${asb[1]}`;
+              try {
+                const pathname = new URL(source, location.href).pathname;
+                if (pathname && pathname !== "/") return pathname;
+              } catch {}
+              const fallback = source.split(/[?#]/, 1)[0];
+              if (fallback) return fallback;
+            }
+            return null;
           }),
         }), { tileCount: args._waitInitialDomTileCount,
           texts: args._waitInitialItemTexts || [], keys: args._waitInitialItemKeys || [] })

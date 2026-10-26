@@ -843,6 +843,17 @@ class FlowPilotContractTests(unittest.TestCase):
         self.assertIn("}, ms => chosen.page.waitForTimeout(ms), 10000);", self.script)
         self.assertNotIn("const currentScan = await collectAllGeneratedItems(chosen.page, selectors.generated_video_items", self.script)
 
+    def test_pre_create_snapshot_reads_img_video_source_poster_and_srcset(self):
+        snapshot_start = self.script.index("const preCreateSnapshot = await waitForPreCreateThumbnailSnapshot")
+        snapshot_end = self.script.index("const currentTokens = preCreateSnapshot.tokens", snapshot_start)
+        snapshot = self.script[snapshot_start:snapshot_end]
+        self.assertIn('element.querySelector("img")?.getAttribute("src")', snapshot)
+        self.assertIn('element.querySelector("video")?.getAttribute("src")', snapshot)
+        self.assertIn('element.querySelector("video source")?.getAttribute("src")', snapshot)
+        self.assertIn('element.querySelector("video")?.getAttribute("poster")', snapshot)
+        self.assertIn('element.querySelector("img")?.getAttribute("srcset")', snapshot)
+        self.assertIn("firstThreeThumbnailTokensMatch(baselineTokens, currentTokens)", self.script)
+
     def test_pre_create_img_img_video_thumbnail_tokens_match_despite_virtualized_count(self):
         helper = "function firstThreeThumbnailTokensMatch" + self.script.split(
             "function firstThreeThumbnailTokensMatch", 1
