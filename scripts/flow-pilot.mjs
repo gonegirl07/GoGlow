@@ -806,7 +806,7 @@ function rawProviderMessage(value) {
   return message || null;
 }
 
-function makeGenerationLedgerRecord({ scene, projectId, ledgerProjectId, prompt, estimatedCost, beforeBalance, afterBalance, resultStatus, mediaUri, downloadedFile, downloadError, timeoutError, actualResolution, downloadQualityLabel, attemptNumber, attemptId, startedOn, variantIndex = 1, variantCount = 1 }) {
+function makeGenerationLedgerRecord({ scene, projectId, ledgerProjectId, prompt, estimatedCost, beforeBalance, afterBalance, resultStatus, mediaUri, downloadedFile, downloadError, timeoutError, actualResolution, downloadQualityLabel, verifiedMediaUuid = null, verificationState = "unverified", verificationEvidence = null, attemptNumber, attemptId, startedOn, variantIndex = 1, variantCount = 1 }) {
   const observedDelta = beforeBalance !== null && afterBalance !== null && beforeBalance >= afterBalance
     ? beforeBalance - afterBalance : null;
   const actualAmount = observedDelta !== null && observedDelta > 0 ? observedDelta : null;
@@ -891,6 +891,15 @@ function makeGenerationLedgerRecord({ scene, projectId, ledgerProjectId, prompt,
       uri: mediaUri || null,
       requested_resolution: scene.resolution || "360p",
       actual_resolution: actualResolution || null,
+      resolution_match_status: (() => {
+        const requested = String(scene.resolution || "360p").match(/(\d{3,4})p/i)?.[1];
+        const actual = String(actualResolution || "").match(/^(\d{2,5})x(\d{2,5})$/i);
+        if (!requested || !actual) return "unknown";
+        return Number(actual[1]) === Number(requested) || Number(actual[2]) === Number(requested) ? "match" : "mismatch";
+      })(),
+      verification_state: verificationState,
+      verified_media_uuid: verifiedMediaUuid || null,
+      verification_evidence: verificationEvidence || null,
       download_quality_label: downloadQualityLabel || null,
       downloaded_file: downloadedFile || null,
       sha256: downloadedFile && fs.existsSync(downloadedFile) ? createHash("sha256").update(fs.readFileSync(downloadedFile)).digest("hex") : null,
@@ -906,10 +915,31 @@ function findNewCompletedMediaItems(items, beforeKeys) {
   const baseline = new Set(beforeKeys || []);
   return (items || []).filter(item => {
     if (!item?.mediaUuid || !item.key || baseline.has(item.key)) return false;
-    const state = `${item.state || ""} ${item.text || ""}`;
+    const state = \`\${item.state || ""} \${item.text || ""}\`;
     if (item.progress || /\b(?:generating|generation in progress|processing|in progress|queued|pending)\b/i.test(state)) return false;
     return true;
   });
+}
+
+function openedMediaUuidMatches(candidateMediaUuid, openedUrl, baselineKeys = []) {
+  const route = /\/(?:edit|video)\/([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})(?:[/?#]|$)/i;
+  let pathname = "";
+  try { pathname = new URL(openedUrl).pathname; } catch { return false; }
+  const openedUuid = pathname.match(route)?.[1]?.toLowerCase() || null;
+  if (!openedUuid || !candidateMediaUuid || openedUuid !== String(candidateMediaUuid).toLowerCase()) return false;
+  return !new Set(baselineKeys || []).has(\`media:\${openedUuid}\`);
+}
+
+function orderedBaselineShiftIsVerified(first, second, third, beforeKeys) {
+  const baseline = new Set(beforeKeys || []);
+  return Boolean(first && second && third
+    && beforeKeys?.[0] && beforeKeys?.[1]
+    && second.key === beforeKeys[0] && third.key === beforeKeys[1]
+    && second.mediaUuid && third.mediaUuid
+    && first.key && !baseline.has(first.key)
+    && !first.mediaUuid && !first.progress
+    && !(/\bfailed\b/i.test(\`\${first.state || ""} \${first.text || ""}\`)
+      || isGenerationFailureText(\`\${first.state || ""} \${first.text || ""}\`)));
 }
 
 function readMp4VideoResolution(filename) {
@@ -1046,14 +1076,7 @@ async function waitForGenerationAndDownload(page, selectors, { beforeKeys, befor
       const [first, second, third] = topItemsNow;
       const firstKey = beforeKeys?.[0] || null;
       const secondKey = beforeKeys?.[1] || null;
-      const shiftedBaselineConfirmed = Boolean(firstKey && secondKey
-        && second?.key === firstKey && third?.key === secondKey
-        && second?.mediaUuid && third?.mediaUuid
-        && first?.key && !baselineKeys.has(first.key)
-        && !first?.mediaUuid
-        && !first.progress
-        && !(/\bfailed\b/i.test(`${first.state || ""} ${first.text || ""}`)
-          || isGenerationFailureText(`${first.state || ""} ${first.text || ""}`)));
+      const shiftedBaselineConfirmed = orderedBaselineShiftIsVerified(first, second, third, beforeKeys);
       if (shiftedBaselineConfirmed) {
         candidateItems = [{ ...first, inferredNewTile: true }];
         console.log(JSON.stringify({ event: "post_create_new_first_tile_inferred",
@@ -1099,6 +1122,15 @@ async function waitForGenerationAndDownload(page, selectors, { beforeKeys, befor
           newKey = openedKey;
           console.log(JSON.stringify({ event: "post_create_new_first_tile_verified",
             media_uuid: openedUuid, url: openedUrl, method: "edit_route_after_ordered_baseline_shift" }));
+        } else {
+          const candidateUuid = candidate.mediaUuid || String(candidate.key || "").match(/^media:([0-9a-f-]{36})$/i)?.[1] || null;
+          const openedUrl = page.url();
+          if (!openedMediaUuidMatches(candidateUuid, openedUrl, beforeKeys)) {
+            throw new Error(\`FLOW_SUBMITTED_UNIDENTIFIED: Opened detail route did not match the newly detected candidate media UUID (candidate=\${candidateUuid || "missing"}, url=\${openedUrl}). Refusing to download any media from this route; do not retry automatically.\`);
+          }
+          console.log(JSON.stringify({ event: "post_create_opened_media_uuid_verified",
+            candidate_media_uuid: candidateUuid.toLowerCase(), url: openedUrl,
+            verification: "candidate_uuid_matches_opened_detail_route" }));
         }
         const shortWait = Math.min(3500, Math.max(500, deadline - Date.now()));
         const downloadButtonLocator = page.locator(selectors.download_media_button);
@@ -1198,7 +1230,10 @@ async function waitForGenerationAndDownload(page, selectors, { beforeKeys, befor
     console.log(JSON.stringify({ event: "downloaded_media_metadata", file: target, selected_download_label: selectedDownloadLabel,
       actual_resolution: actualResolution?.label || null, codec: actualResolution?.codec || null, bytes: fs.statSync(target).size }));
     return { downloadedFile: target, mediaUri, downloadError: null,
-      actualResolution: actualResolution?.label || null, downloadQualityLabel: selectedDownloadLabel };
+      actualResolution: actualResolution?.label || null, downloadQualityLabel: selectedDownloadLabel,
+      verifiedMediaUuid: String(newKey).replace(/^media:/i, "").toLowerCase(),
+      verificationState: "verified_new_media_uuid",
+      verificationEvidence: "new_media_uuid_set_difference_and_matching_detail_route" };
   } catch (error) {
     return { downloadedFile: null, mediaUri, downloadError: String(error.message || error),
       actualResolution: null, downloadQualityLabel: null };
@@ -4262,7 +4297,10 @@ async function prepare(args, browser, rl) {
         downloadError = result.downloadError;
         actualResolution = result.actualResolution || null;
         downloadQualityLabel = result.downloadQualityLabel || null;
-        resultStatus = "succeeded";
+        var verifiedMediaUuid = result.verifiedMediaUuid || null;
+        var verificationState = result.verificationState || "unverified";
+        var verificationEvidence = result.verificationEvidence || null;
+        resultStatus = downloadError ? "download_failed" : "succeeded";
       } catch (error) {
         timeoutError = String(error.message || error);
         mediaUri = chosen.page.url();
@@ -4314,6 +4352,9 @@ async function prepare(args, browser, rl) {
         scene, projectId: chosen.projectId, ledgerProjectId: args.ledgerProjectId, prompt: scene.prompt, estimatedCost: creditCost,
         beforeBalance: args._waitInitialBalance ?? null, afterBalance,
         resultStatus, mediaUri, downloadedFile, downloadError, timeoutError, actualResolution, downloadQualityLabel,
+        verifiedMediaUuid: typeof verifiedMediaUuid === "undefined" ? null : verifiedMediaUuid,
+        verificationState: typeof verificationState === "undefined" ? "unverified" : verificationState,
+        verificationEvidence: typeof verificationEvidence === "undefined" ? null : verificationEvidence,
         attemptNumber, attemptId: args._waitAttemptId, startedOn: args._waitStartedOn,
         variantIndex, variantCount,
       });
@@ -4328,12 +4369,13 @@ async function prepare(args, browser, rl) {
         process.exitCode = 2;
       }
       if (resultStatus === "succeeded") {
-        console.log(`Generation result verified. Media URI: ${mediaUri}`);
-        if (downloadedFile) console.log(`Downloaded clip: ${downloadedFile}`);
-        else {
-          console.error(`Clip is ready but download failed: ${downloadError}`);
-          process.exitCode = 2;
-        }
+        console.log(\`Generation result verified. Media URI: \${mediaUri}\`);
+        if (downloadedFile) console.log(\`Downloaded clip: \${downloadedFile}\`);
+      } else if (resultStatus === "download_failed") {
+        console.error(\`New video UUID verified, but download failed; ledger status is download_failed: \${downloadError}\`);
+        process.exitCode = 2;
+        args._stopVariants = true;
+        return;
       } else if (resultStatus === "submitted_unidentified") {
         console.error("Create was submitted, but no new media UUID could be identified before timeout. Receipt and ledger recorded; do NOT resubmit automatically.");
         process.exitCode = 2;
