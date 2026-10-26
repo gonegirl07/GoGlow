@@ -1758,6 +1758,42 @@ function applyVerifiedRowUuidFallback(initialItems, refreshedItems, baselineText
   return verifiedIndexes;
 }
 
+function verifiedFirstRowIdentityIndexes(initialItems, refreshedItems) {
+  if (!Array.isArray(initialItems) || !Array.isArray(refreshedItems)
+    || initialItems.length < 3 || initialItems.length !== refreshedItems.length) return null;
+  const normalize = value => String(value || "").replace(/\\s+/g, " ").trim();
+  const mediaSet = items => {
+    const entries = [];
+    for (let index = 0; index < items.length; index += 1) {
+      const item = items[index];
+      if (item?.mediaUuid) entries.push({ index, uuid: String(item.mediaUuid).toLowerCase() });
+      else if (!isKnownPolicyRefusalTile(item)) return null;
+    }
+    const uuids = entries.map(item => item.uuid);
+    if (new Set(uuids).size !== uuids.length) return null;
+    return entries;
+  };
+  const initialMedia = mediaSet(initialItems);
+  const refreshedMedia = mediaSet(refreshedItems);
+  if (!initialMedia || !refreshedMedia) return null;
+  const initialUuids = new Set(initialMedia.map(item => item.uuid));
+  const refreshedUuids = new Set(refreshedMedia.map(item => item.uuid));
+  if (initialUuids.size !== refreshedUuids.size
+    || [...initialUuids].some(uuid => !refreshedUuids.has(uuid))) return null;
+  const refusalTexts = items => items.filter(item => !item?.mediaUuid)
+    .map(item => normalize(item?.text)).filter(Boolean);
+  const initialRefusals = refusalTexts(initialItems);
+  const refreshedRefusals = refusalTexts(refreshedItems);
+  if (initialRefusals.length !== refreshedRefusals.length
+    || new Set(initialRefusals).size !== initialRefusals.length
+    || new Set(refreshedRefusals).size !== refreshedRefusals.length
+    || initialRefusals.some(text => !refreshedRefusals.includes(text))) return null;
+  if (initialMedia.length + initialRefusals.length !== initialItems.length
+    || refreshedMedia.length + refreshedRefusals.length !== refreshedItems.length) return null;
+  // UUID membership, not row position or thumbnail URL shape, proves identity.
+  return new Set(initialMedia.map(item => item.index));
+}
+
 function buildVerifiedThumbnailBaselineTokens(domTokens, items, domTexts, verifiedUuidIndexes = new Set()) {
   const tokens = [...(domTokens || [])];
   const normalize = value => String(value || "").replace(/\s+/g, " ").trim();
@@ -3434,45 +3470,17 @@ async function prepare(args, browser, rl) {
           const refreshedTextCounts = new Map();
           for (const value of baselineTexts) baselineTextCounts.set(value, (baselineTextCounts.get(value) || 0) + 1);
           for (const value of refreshedTexts) refreshedTextCounts.set(value, (refreshedTextCounts.get(value) || 0) + 1);
-          const uniqueUuids = items => items.map(item => item?.mediaUuid).filter(Boolean);
-          const baselineUuids = uniqueUuids(initialScan.items);
-          const refreshedUuids = uniqueUuids(refreshedScan.items);
-          const baselineUuidSet = new Set(baselineUuids);
-          const refreshedUuidSet = new Set(refreshedUuids);
-          const policyTexts = items => items.filter(item => isKnownPolicyRefusalTile(item))
-            .map(item => normalizeTileText(item.text)).filter(Boolean);
-          const baselinePolicyTexts = policyTexts(initialScan.items);
-          const refreshedPolicyTexts = policyTexts(refreshedScan.items);
-          const sameMediaUuidSet = baselineUuids.length === initialScan.items.filter(item => item.mediaUuid).length
-            && refreshedUuids.length === refreshedScan.items.filter(item => item.mediaUuid).length
-            && baselineUuidSet.size === baselineUuids.length
-            && refreshedUuidSet.size === refreshedUuids.length
-            && baselineUuidSet.size === refreshedUuidSet.size
-            && [...baselineUuidSet].every(uuid => refreshedUuidSet.has(uuid));
-          const samePolicyRefusalSet = baselinePolicyTexts.length === refreshedPolicyTexts.length
-            && new Set(baselinePolicyTexts).size === baselinePolicyTexts.length
-            && new Set(refreshedPolicyTexts).size === refreshedPolicyTexts.length
-            && baselinePolicyTexts.every(text => refreshedPolicyTexts.includes(text));
-          // The gallery can reorder or swap /image/ and /video/ representations
-          // between scans. Verify the row as a set of independently resolved media
-          // UUIDs plus any exact known refusal, never by thumbnail UUID or position.
-          const sameVisibleRow = refreshedScan.items.length === initialScan.items.length
-            && sameMediaUuidSet && samePolicyRefusalSet
-            && baselineUuids.length + baselinePolicyTexts.length === initialScan.items.length
-            && refreshedUuids.length + refreshedPolicyTexts.length === refreshedScan.items.length;
+          // Flow may reorder cards or swap /image/ and /video/ URL forms between
+          // captures. Verify the unique resolved-media UUID set and exact refusal
+          // text, not same-position thumbnail tokens.
+          const verifiedRowIndexes = verifiedFirstRowIdentityIndexes(initialScan.items, refreshedScan.items);
+          const sameVisibleRow = verifiedRowIndexes !== null;
           if (sameVisibleRow) {
             if (thumbnailRetry === 2) {
               // UUID equality across independent full inventories verifies each media
               // tile even if its DOM position changes. Only mark UUIDs that are unique
               // and present in both inventories; refusal remains a text-keyed non-media tile.
-              const verifiedIndexes = new Set();
-              for (let index = 0; index < initialScan.items.length; index += 1) {
-                const item = initialScan.items[index];
-                if (item.mediaUuid && baselineUuidSet.has(item.mediaUuid) && refreshedUuidSet.has(item.mediaUuid)) {
-                  verifiedIndexes.add(index);
-                }
-              }
-              for (const index of verifiedIndexes) verifiedUuidThumbnailIndexes.add(index);
+              for (const index of verifiedRowIndexes) verifiedUuidThumbnailIndexes.add(index);
             }
             for (const missingIndex of missingIndexes) {
               const refreshed = refreshedScan.items[missingIndex];
