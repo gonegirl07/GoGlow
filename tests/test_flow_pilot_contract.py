@@ -1272,5 +1272,61 @@ assert.equal(
         self.assertEqual(result.returncode, 0, msg=result.stdout + result.stderr)
 
 
+    def test_precreate_accepts_captured_poster_alias_but_rejects_different_media_uuid(self):
+        helper_path = Path(__file__).parents[1] / "scripts" / "asb-identity.mjs"
+        node_test = f"""
+import assert from "node:assert/strict";
+import {{ firstThreeThumbnailTokensMatch }} from {helper_path.as_uri()!r};
+const video = "e4ebbe7d-2c9f-484b-b165-31480077cea5";
+const poster = "5752effd-6ead-4b18-ae1d-388ac421285b";
+const different = "a6f7c0aa-1f61-4d45-a92a-8a21f1f3d6c1";
+const baseline = ["media:" + video, "asb:neighbor-B", "asb:neighbor-C"];
+const posterAliases = ["image:" + poster, null, null];
+assert.equal(
+  firstThreeThumbnailTokensMatch(
+    baseline,
+    ["media:" + poster, "asb:neighbor-B", "asb:neighbor-C"],
+    posterAliases,
+  ),
+  true,
+  "accept the known poster UUID alias for the same baseline tile when both neighbors match",
+);
+assert.equal(
+  firstThreeThumbnailTokensMatch(
+    baseline,
+    ["media:" + different, "asb:neighbor-B", "asb:neighbor-C"],
+    posterAliases,
+  ),
+  false,
+  "a different first-tile UUID must fail closed",
+);
+assert.equal(
+  firstThreeThumbnailTokensMatch(
+    baseline,
+    ["media:" + poster, "asb:neighbor-X", "asb:neighbor-C"],
+    posterAliases,
+  ),
+  false,
+  "poster alias must not override a changed neighbor",
+);
+assert.equal(
+  firstThreeThumbnailTokensMatch(
+    baseline,
+    [null, "asb:neighbor-B", "asb:neighbor-C"],
+    posterAliases,
+  ),
+  false,
+  "missing current identity must fail closed",
+);
+"""
+        result = subprocess.run(
+            ["node", "--input-type=module", "-e", node_test],
+            capture_output=True, text=True, check=False, timeout=5,
+        )
+        self.assertEqual(result.returncode, 0, msg=result.stdout + result.stderr)
+        self.assertIn("baseline_first_three_thumbnail_image_tokens", self.script)
+        self.assertIn("args._waitInitialThumbnailImageTokens = domThumbnailBaseline.imageTokens || [];", self.script)
+
+
 if __name__ == "__main__":
     unittest.main()
