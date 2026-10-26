@@ -1115,7 +1115,11 @@ const tokens = buildVerifiedThumbnailBaselineTokens(
   items,
   ['Mai seated breathing', 'Mai standing', 'Mai kneeling'],
 );
-assert.deepEqual(tokens, items.map(item => 'media:' + item.mediaUuid));
+assert.deepEqual(tokens, [
+  'media:' + items[0].mediaUuid,
+  'asb:ANqvLOa3xUpF',
+  'media:' + items[2].mediaUuid,
+]);
 const ambiguous = buildVerifiedThumbnailBaselineTokens(
   [null, 'asb:ANqvLOa3xUpF', null],
   items,
