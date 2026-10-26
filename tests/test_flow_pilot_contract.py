@@ -1551,5 +1551,53 @@ assert.equal(
         self.assertIn('"unknown_identity_fail_closed"', self.script)
 
 
+    def test_precreate_matches_exact_preverified_asb_alias_when_media_uuid_missing_from_dom(self):
+        helper_path = Path(__file__).parents[1] / "scripts" / "asb-identity.mjs"
+        node_test = f"""
+import assert from "node:assert/strict";
+import {{ firstThreeThumbnailTokensMatch }} from {helper_path.as_uri()!r};
+const refusal = "failed-policy:failed: this generation might violate our policies for prominent people. you will be refunded.";
+const videoA = "4bcc1ce2-4018-43fc-9a8a-059fdc315750";
+const videoB = "07e82f95-f37f-412a-83bd-018fe25b1278";
+const asbA = "asb:ANqvLOa2QfGYyxGsXyVwvZ3X";
+const asbB = "asb:ANqvLOYk_pqHH4wW49MeXwk2";
+const baseline = [refusal, "media:" + videoA, "media:" + videoB];
+const current = [refusal, asbA, asbB];
+const verifiedAliases = [null, asbA, asbB];
+assert.equal(
+  firstThreeThumbnailTokensMatch(baseline, current, [null, null, null], verifiedAliases),
+  true,
+  "exact ASB tokens captured for UUID-verified tiles must bridge media UUID baseline keys",
+);
+assert.equal(
+  firstThreeThumbnailTokensMatch(baseline, [refusal, "asb:ANqvDIFFERENT", asbB], [null, null, null], verifiedAliases),
+  false,
+  "a changed ASB token must fail closed",
+);
+assert.equal(
+  firstThreeThumbnailTokensMatch(baseline, [refusal, null, asbB], [null, null, null], verifiedAliases),
+  false,
+  "a missing current token must fail closed",
+);
+assert.equal(
+  firstThreeThumbnailTokensMatch(baseline, current, [null, null, null], [null, null, null]),
+  false,
+  "an ASB token without a captured UUID-verified alias must fail closed",
+);
+assert.equal(
+  firstThreeThumbnailTokensMatch(baseline, [refusal, asbA, "asb:ANqvDIFFERENT"], [null, null, null], [null, asbA, asbB]),
+  false,
+  "the alias cannot override a mismatch in another row tile",
+);
+"""
+        result = subprocess.run(
+            ["node", "--input-type=module", "-e", node_test],
+            capture_output=True, text=True, check=False, timeout=5,
+        )
+        self.assertEqual(result.returncode, 0, msg=result.stdout + result.stderr)
+        self.assertIn("args._waitInitialVerifiedThumbnailAliases", self.script)
+        self.assertIn("args._waitInitialVerifiedThumbnailAliases || []", self.script)
+
+
 if __name__ == "__main__":
     unittest.main()
