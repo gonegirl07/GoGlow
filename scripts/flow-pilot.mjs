@@ -3504,26 +3504,6 @@ async function prepare(args, browser, rl) {
                 }
               }
             }
-            for (const missingIndex of missingIndexes) {
-              const refreshed = refreshedScan.items[missingIndex];
-              if (refreshed?.thumbnailSrc && thumbnailIdentityToken(refreshed.thumbnailSrc)
-                && !/\/image\//i.test(refreshed.thumbnailSrc)) {
-                initialScan.items[missingIndex].thumbnailSrc = refreshed.thumbnailSrc;
-              } else if (thumbnailRetry === 2 && initialScan.items[missingIndex]?.mediaUuid
-                && refreshed
-                && ((refreshed.mediaUuid && refreshed.mediaUuid === initialScan.items[missingIndex].mediaUuid)
-                  || (!refreshed.mediaUuid
-                    && normalizeTileText(refreshed.text) === baselineTexts[missingIndex]
-                    && Boolean(baselineTexts[missingIndex])
-                    && baselineTextCounts.get(baselineTexts[missingIndex]) === 1
-                    && refreshedTextCounts.get(refreshedTexts[missingIndex]) === 1))) {
-                // The same-position row is verified either by the same video UUID
-                // or by a unique, unchanged text fingerprint when UUID metadata is
-                // temporarily absent. Reuse only the UUID resolved for this exact
-                // baseline tile; never promote a /image/<uuid> thumbnail ID.
-                initialScan.items[missingIndex].thumbnailSrc = `media:${initialScan.items[missingIndex].mediaUuid}`;
-              }
-            }
           }
           console.log(JSON.stringify({
             event: "wait_preflight_phase_timing",
