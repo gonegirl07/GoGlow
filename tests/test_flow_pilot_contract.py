@@ -1335,6 +1335,7 @@ assert.equal(
         self.assertIn('if (!uuid && isKnownPolicyRefusalTile(item) && text', self.script)
         self.assertIn('tokens[index] = failedPolicyBaselineKey(item);', self.script)
         self.assertIn('verifiedUuidThumbnailIndexes.add(index);', self.script)
+        self.assertIn("if (initialScan.items.length >= 3 && refreshedScan.items.length >= 3) {", self.script)
         self.assertIn('candidateSegments.findIndex(part => part === "image" || part === "asb" || part === "video")', self.script)
         self.assertIn('segments.findIndex(part => part === "image" || part === "asb" || part === "video")', self.script)
         self.assertIn('if (segments[assetIndex] === "image") return null;', self.script)
