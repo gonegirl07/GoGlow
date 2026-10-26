@@ -833,6 +833,30 @@ class FlowPilotContractTests(unittest.TestCase):
         self.assertIn("}, ms => chosen.page.waitForTimeout(ms), 10000);", self.script)
         self.assertNotIn("const currentScan = await collectAllGeneratedItems(chosen.page, selectors.generated_video_items", self.script)
 
+    def test_neighbor_fallback_rejects_null_third_thumbnail_token(self):
+        helper = "function firstTileMatchesByStableNeighbors" + self.script.split(
+            "function firstTileMatchesByStableNeighbors", 1
+        )[1].split("\n\nasync function waitForPreCreateThumbnailSnapshot", 1)[0]
+        node_test = helper + r"""
+const assert = await import('node:assert/strict');
+const base = {
+  expectedToken: 'asb:old-first',
+  currentToken: 'asb:new-first',
+  baselineTokens: ['asb:old-first', 'asb:middle', 'asb:third'],
+  baselineTileCount: 3,
+  currentTileCount: 3,
+};
+assert.equal(firstTileMatchesByStableNeighbors({
+  ...base, currentTokens: ['asb:new-first', 'asb:middle', null],
+}), false, 'missing third token must not establish neighbor identity');
+assert.equal(firstTileMatchesByStableNeighbors({
+  ...base, currentTokens: ['asb:new-first', 'asb:middle', 'asb:third'],
+}), true, 'both stable neighbors and unchanged tile count may confirm rotation');
+"""
+        result = subprocess.run(["node", "--input-type=module", "-e", node_test],
+                                capture_output=True, text=True, check=False, timeout=5)
+        self.assertEqual(result.returncode, 0, msg=result.stdout + result.stderr)
+
     def test_pre_create_recheck_passes_when_third_thumbnail_loads_after_initial_nulls(self):
         helper = "async function waitForPreCreateThumbnailSnapshot" + self.script.split(
             "async function waitForPreCreateThumbnailSnapshot", 1
