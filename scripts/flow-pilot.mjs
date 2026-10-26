@@ -1687,7 +1687,7 @@ function buildVerifiedThumbnailBaselineTokens(domTokens, items, domTexts, verifi
   return tokens;
 }
 
-import { normalizeAsbIdentityToken } from "./asb-identity.mjs";
+import { normalizeAsbIdentityToken, firstThreeThumbnailTokensMatch } from "./asb-identity.mjs";
 
 function thumbnailIdentityToken(value) {
   const mediaUuidHint = arguments.length > 1 ? arguments[1] : null;
@@ -2969,14 +2969,6 @@ async function readCreditCost(page) {
   return match ? Number(match[1]) : null;
 }
 
-function firstThreeThumbnailTokensMatch(baselineTokens, currentTokens) {
-  const validThumbnail = value => typeof value === "string"
-    && /^(?:asb:.+|\/(?:asb|image)\/.+|https?:\/\/.+)$/i.test(value);
-  return Array.isArray(baselineTokens) && Array.isArray(currentTokens)
-    && baselineTokens.length >= 3 && currentTokens.length >= 3
-    && baselineTokens.slice(0, 3).every((token, index) => validThumbnail(token)
-      && validThumbnail(currentTokens[index]) && token === currentTokens[index]);
-}
 
 function firstThreeMediaKeysMatch(baselineKeys, currentKeys) {
   const isVideoKey = value => typeof value === "string"
