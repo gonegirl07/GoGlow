@@ -1177,6 +1177,54 @@ assert.equal(thumbnailIdentityToken('https://flow.google.com/asb/ANqvLObmDmk_6XQ
         self.assertIn("const retryTileCount = await retryTiles.count()", self.script)
         self.assertIn("continue;", self.script)
 
+    def test_image_thumbnail_uses_uuid_from_verified_same_position_row(self):
+        apply_helper = "function applyVerifiedRowUuidFallback" + self.script.split(
+            "function applyVerifiedRowUuidFallback", 1
+        )[1].split("\n\nfunction buildVerifiedThumbnailBaselineTokens", 1)[0]
+        baseline_helper = "function buildVerifiedThumbnailBaselineTokens" + self.script.split(
+            "function buildVerifiedThumbnailBaselineTokens", 1
+        )[1].split("\n\nfunction thumbnailIdentityToken", 1)[0]
+        node_test = apply_helper + "\\nfunction buildVerifiedThumbnailBaselineTokens" + baseline_helper.split(
+            "function buildVerifiedThumbnailBaselineTokens", 1
+        )[1] + r"""
+const assert = await import('node:assert/strict');
+const uuid = '07e82f95-f37f-412a-83bd-018fe25b1278';
+const initial = [
+  { text: 'Mai standing variant one' },
+  { mediaUuid: 'ae294080-b7e0-41d6-a825-30824b910dfc', text: 'Mai standing older' },
+  { mediaUuid: 'e4ebbe7d-2c9f-484b-b165-31480077cea5', text: 'Mai kneeling' },
+];
+const refreshed = [
+  { mediaUuid: uuid, text: 'Mai standing variant one' },
+  { mediaUuid: 'ae294080-b7e0-41d6-a825-30824b910dfc', text: 'Mai standing older' },
+  { mediaUuid: 'e4ebbe7d-2c9f-484b-b165-31480077cea5', text: 'Mai kneeling' },
+];
+const verified = applyVerifiedRowUuidFallback(
+  initial, refreshed,
+  initial.map(item => item.text), refreshed.map(item => item.text),
+);
+assert.deepEqual([...verified], [0]);
+assert.equal(initial[0].mediaUuid, uuid);
+assert.deepEqual(buildVerifiedThumbnailBaselineTokens(
+  [null, 'asb:older', 'asb:kneeling'], initial,
+  ['Mai standing variant one', 'Mai standing older', 'Mai kneeling'], verified,
+), ['media:' + uuid, 'asb:older', 'asb:kneeling']);
+
+// A text mismatch cannot inherit a UUID even when the refreshed UUID is unique.
+const mismatch = [{ text: 'different title' }, ...initial.slice(1).map(item => ({ ...item }))];
+const mismatchVerified = applyVerifiedRowUuidFallback(
+  mismatch, refreshed,
+  mismatch.map(item => item.text), refreshed.map(item => item.text),
+);
+assert.equal(mismatchVerified.has(0), false);
+assert.equal(mismatch[0].mediaUuid, undefined);
+"""
+        result = subprocess.run(["node", "--input-type=module", "-e", node_test],
+                                capture_output=True, text=True, check=False, timeout=5)
+        self.assertEqual(result.returncode, 0, msg=result.stdout + result.stderr)
+        self.assertIn("applyVerifiedRowUuidFallback", self.script)
+        self.assertIn("original.mediaUuid = uuid", self.script)
+
     def test_null_asb_null_thumbnail_pattern_uses_verified_video_uuids_and_not_image_uuid(self):
         helper = "function buildVerifiedThumbnailBaselineTokens" + self.script.split(
             "function buildVerifiedThumbnailBaselineTokens", 1
