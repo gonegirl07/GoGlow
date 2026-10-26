@@ -138,6 +138,64 @@ class FlowPilotContractTests(unittest.TestCase):
         self.assertIn('--wait requires a non-empty', self.script)
         self.assertIn('["credit_balance", "generated_video_items", "download_media_button", "download_360p_original_button", "account_panel_open", "account_panel_close"]', self.script)
 
+    def test_post_create_identity_helpers_and_resolution_parser_behave_fail_closed(self):
+        helper = self.script.split("function findNewCompletedMediaItems(items, beforeKeys)", 1)[1].split(
+            "\n\nasync function waitForGenerationAndDownload", 1
+        )[0]
+        helper = "function findNewCompletedMediaItems(items, beforeKeys)" + helper
+        node_test = r"""
+import assert from "node:assert/strict";
+import fs from "node:fs";
+import os from "node:os";
+import path from "node:path";
+const isGenerationFailureText = value => /generation failed|policy refusal/i.test(String(value || ""));
+""" + helper + r"""
+const baseline = [
+  "media:11111111-1111-4111-8111-111111111111",
+  "media:22222222-2222-4222-8222-222222222222",
+];
+const old = { key: baseline[0], mediaUuid: baseline[0].slice(6), text: "old video" };
+const generating = { key: "media:33333333-3333-4333-8333-333333333333", mediaUuid: "33333333-3333-4333-8333-333333333333", text: "generating", progress: 40 };
+const fresh = { key: "media:44444444-4444-4444-8444-444444444444", mediaUuid: "44444444-4444-4444-8444-444444444444", text: "completed" };
+assert.deepEqual(findNewCompletedMediaItems([old, generating, fresh], baseline), [fresh]);
+assert.equal(openedMediaUuidMatches(fresh.mediaUuid, "https://flow.google.com/project/aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa/edit/" + fresh.mediaUuid, baseline), true);
+assert.equal(openedMediaUuidMatches(fresh.mediaUuid, "https://flow.google.com/project/aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa/edit/" + old.mediaUuid, baseline), false, "stale editor UUID must not match the new candidate");
+assert.equal(openedMediaUuidMatches(fresh.mediaUuid, "https://flow.google.com/project/aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa/edit/" + baseline[1].slice(6), baseline), false, "baseline UUID must fail closed");
+assert.equal(openedMediaUuidMatches(fresh.mediaUuid, "https://flow.google.com/project/aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa", baseline), false, "non-detail route must fail closed");
+const first = { key: "media:55555555-5555-4555-8555-555555555555", mediaUuid: null, text: "new tile" };
+const second = { key: baseline[0], mediaUuid: baseline[0].slice(6) };
+const third = { key: baseline[1], mediaUuid: baseline[1].slice(6) };
+assert.equal(orderedBaselineShiftIsVerified(first, second, third, baseline), true);
+assert.equal(orderedBaselineShiftIsVerified(first, third, second, baseline), false, "neighbor order change must fail closed");
+assert.equal(orderedBaselineShiftIsVerified({ ...first, mediaUuid: "55555555-5555-4555-8555-555555555555" }, second, third, baseline), false);
+assert.equal(orderedBaselineShiftIsVerified({ ...first, text: "generation failed" }, second, third, baseline), false);
+const dir = fs.mkdtempSync(path.join(os.tmpdir(), "goglow-mp4-test-"));
+try {
+  const file = path.join(dir, "fixture.mp4");
+  const buffer = Buffer.alloc(48);
+  buffer.write("avc1", 4, "ascii");
+  buffer.writeUInt16BE(360, 32);
+  buffer.writeUInt16BE(640, 34);
+  fs.writeFileSync(file, buffer);
+  assert.deepEqual(readMp4VideoResolution(file), { width: 360, height: 640, label: "360x640", codec: "avc1" });
+  assert.equal(readMp4VideoResolution(path.join(dir, "missing.mp4")), null);
+} finally {
+  fs.rmSync(dir, { recursive: true, force: true });
+}
+"""
+        result = subprocess.run(
+            ["node", "--input-type=module", "-e", node_test],
+            capture_output=True, text=True, check=False, timeout=5,
+            cwd=Path(__file__).parents[1],
+        )
+        self.assertEqual(result.returncode, 0, msg=result.stdout + result.stderr)
+        self.assertIn("openedMediaUuidMatches(candidateUuid, openedUrl, beforeKeys)", self.script)
+        self.assertIn('resultStatus = downloadError ? "download_failed" : "succeeded";', self.script)
+        self.assertIn('verification_state: verificationState', self.script)
+        self.assertIn('verified_media_uuid: verifiedMediaUuid || null', self.script)
+        self.assertIn('verification_evidence: verificationEvidence || null', self.script)
+        self.assertIn('resolution_match_status:', self.script)
+
     def test_wait_tracks_new_tile_by_stable_identity_and_never_retries(self):
         self.assertIn('collectAllGeneratedItems(page, selectors.generated_video_items, {\n      uuidCache, topLimit: 3, selectors, skipUuidResolution: true,', self.script)
         self.assertIn('candidateItems.length === 1', self.script)
