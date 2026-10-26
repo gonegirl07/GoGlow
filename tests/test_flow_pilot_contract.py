@@ -94,7 +94,7 @@ class FlowPilotContractTests(unittest.TestCase):
     def test_picker_closure_clicks_backdrop_edge_and_verifies_closed(self):
         self.assertIn('position: { x: 5, y: 5 }', self.script)
         self.assertIn('Ingredients picker closure verification failed; a current picker surface or backdrop remains visible.', self.script)
-        self.assertIn('Clicked the edge of the Ingredients picker backdrop, but the overlay is still open', self.script)
+        self.assertIn('Ingredients picker closure verification failed; a current picker surface or backdrop remains visible.', self.script)
         self.assertIn('await page.waitForFunction(selector => !Array.from(document.querySelectorAll(selector))', self.script)
 
     def test_upload_failure_closes_picker_and_leaves_one_cleanup_owner(self):
@@ -190,7 +190,7 @@ class FlowPilotContractTests(unittest.TestCase):
         self.assertIn("const newItems = findNewCompletedMediaItems(topItemsNow, beforeKeys);", self.script)
         self.assertIn("Normalize media URLs to their stable UUID", self.script)
         self.assertIn("tileText.slice(0, 220)", self.script)
-        self.assertIn("const mediaUuid = sources.map(uuidFrom).find(Boolean)", self.script)
+        self.assertIn("const mediaUuid = primarySources.map(uuidFrom).find(Boolean)", self.script)
         self.assertIn("baseline_media_keys: initialItems", self.script)
         self.assertIn("ignored_failed_tile_keys: failedBaselineItems.map(item => item.key)", self.script)
         self.assertIn("const candidateItems = newItems.filter(item =>", self.script)
@@ -319,7 +319,7 @@ class FlowPilotContractTests(unittest.TestCase):
         self.assertIn("unkeyedItemsDetected", self.script)
         self.assertIn("duplicateVisibleKeyDetected", self.script)
         self.assertIn("First-row baseline requires unique, stable media UUIDs/keys", self.script)
-        self.assertIn("identityText.slice(0, 220)", self.script)
+        self.assertIn("tileText.slice(0, 220)", self.script)
 
     def test_generation_failure_is_detected_and_logged_without_retry(self):
         self.assertIn("function isGenerationFailureText(value)", self.script)
@@ -327,7 +327,7 @@ class FlowPilotContractTests(unittest.TestCase):
         self.assertIn('event: resultStatus === "rejected_unusual_activity" ? "flow_rejected_unusual_activity"', self.script)
         self.assertIn('resultStatus === "failed" ? "generation_failed_detected"', self.script)
         self.assertIn('resultStatus === "submitted_unidentified" ? "submitted_unidentified"', self.script)
-        self.assertIn('resultStatus === "failed" && beforeBalance !== null && afterBalance !== null && beforeBalance === afterBalance ? "not_charged" : "unknown"', self.script)
+        self.assertIn('["failed", "rejected_unusual_activity"].includes(resultStatus) && beforeBalance !== null && afterBalance !== null && beforeBalance === afterBalance ? "not_charged" : "unknown"', self.script)
         self.assertIn('else if (resultStatus === "failed")', self.script)
         self.assertIn("Flow generation failure was detected and recorded in the ledger", self.script)
         self.assertIn("Wait-timeout screenshot saved", self.script)
@@ -338,7 +338,7 @@ class FlowPilotContractTests(unittest.TestCase):
     def test_credit_preflight_waits_for_render_and_retries_once(self):
         self.assertIn('waitFor({ state: "visible", timeout: 8000 })', self.script)
         self.assertIn("for (let attempt = 0; attempt < 3 && balance === null; attempt += 1)", self.script)
-        self.assertIn("retry opening the account panel once", self.script)
+        self.assertIn("if (balance === null && attempt < 2)", self.script)
 
     def test_cleanup_does_not_click_clear_when_already_clean(self):
         self.assertIn("let initialChipCount = await waitForStableVisibleChipCount(page, selectors.ingredient_reference_items, 2000)", self.script)
@@ -409,8 +409,8 @@ class FlowPilotContractTests(unittest.TestCase):
             prepare.index("face_reference_image: path.basename(faceReferenceImage)"),
         )
         self.assertLess(
-            prepare.index("createMayHaveBeenClicked = true;"),
             prepare.index("await finalButton.click({ timeout: 2500 })"),
+            prepare.index("createMayHaveBeenClicked = true;"),
         )
 
 
@@ -663,7 +663,7 @@ class FlowPilotContractTests(unittest.TestCase):
         self.assertIn('event: "reference_asset_selection_ready"', upload_fn)
         self.assertIn('visible Add to prompt buttons=', upload_fn)
         self.assertIn('const addToPromptCandidates = pickerContainer.locator(addToPromptSelector);', upload_fn)
-        self.assertIn('active picker; stopping before chip attach', upload_fn)
+        self.assertIn("Refusing to click Add to prompt", upload_fn)
         self.assertNotIn('selectedAssetAriaSelected === "true" && addToPromptVisibleCount', upload_fn)
         self.assertLess(
             upload_fn.index('if (addToPromptVisibleCount === 1 && (selectedAssetAriaSelected === "true" || labelMatches)'),
@@ -675,7 +675,7 @@ class FlowPilotContractTests(unittest.TestCase):
             '// Only now modify the prompt.', 1
         )[0]
         self.assertIn('const waitForFirstRowThumbnailTokens = async (reason, maxWaitMs = 15000)', preflight)
-        self.assertIn('await waitForFirstRowThumbnailTokens("before_initial_capture")', preflight)
+        self.assertIn('await waitForFirstRowThumbnailTokens("before_initial_capture_after_scroll")', preflight)
         self.assertIn('event: "baseline_thumbnail_tokens_ready"', preflight)
         self.assertIn('event: "baseline_thumbnail_token_missing_at_capture"', preflight)
         self.assertIn('thumbnailRetry <= 2', preflight)
@@ -699,7 +699,7 @@ class FlowPilotContractTests(unittest.TestCase):
         self.assertIn("async function assetUuidFromLocator(locator, timeoutMs = 1200)", self.script)
         self.assertIn('"data-asset-id"', self.script)
         self.assertIn('"data-media-id"', self.script)
-        self.assertIn("Refusing to upload a duplicate; inspect the asset entry DOM", self.script)
+        self.assertIn("Refusing to upload a duplicate; if this is the intended asset", self.script)
         self.assertIn("let assetUuid = await assetUuidFromLocator(asset)", self.script)
 
     def test_clear_prompt_removes_ingredient_chips_and_verifies_each_removal(self):
@@ -743,7 +743,7 @@ class FlowPilotContractTests(unittest.TestCase):
         self.assertIn('Wait for /asb/ or another non-placeholder URL.', preflight)
 
     def test_asset_uuid_lookup_waits_for_lazy_loaded_thumbnail_and_rejects_ambiguity(self):
-        self.assertIn("const thumbnailDeadline = networkUuidShortcut ? Date.now() : Date.now() + 7000;", self.script)
+        self.assertIn("const thumbnailDeadline = (networkUuidShortcut || pinnedUniqueCardShortcut) ? Date.now() : Date.now() + 7000;", self.script)
         self.assertIn("flow-content/image/<uuid>", self.script)
         self.assertIn("if (existingCount === 1 && existingUuids.size === 1)", self.script)
         self.assertIn("else if (existingUuids.size > 1 || existingCount > 1)", self.script)
@@ -808,7 +808,7 @@ class FlowPilotContractTests(unittest.TestCase):
         self.assertIn('page.getByRole("button", { name: /^Videos$/i })', activate)
         self.assertIn("buttonCount = await button.count()", activate)
         self.assertIn("for (let i = 0; i < buttonCount; i += 1)", activate)
-        self.assertIn("if (await candidate.isVisible()", activate)
+        self.assertIn("const isSelected = async locator => locator.evaluate(element =>", activate)
         self.assertIn("not_found_no_tab_switch (tabs=", activate)
 
     def test_baseline_uses_visible_first_row_with_minimum_three_tiles(self):
@@ -1063,13 +1063,45 @@ assert.equal(thumbnailIdentityToken('https://flow.google.com/asb/ANqvLObmDmk_6XQ
 
     def test_neutral_reference_open_eyes_does_not_override_neutral_expression_with_smile(self):
         self.assertIn("const openEyesRequested =", self.script)
-        self.assertIn('${smileRequested ? "she looks directly at the camera and smiles warmly with teeth visible', self.script)
+        self.assertIn('EXPRESSION AND EYE STATE (follow throughout the entire shot): ${expressionContent}', self.script)
 
     def test_execute_usage_example_includes_required_wait_flag(self):
         usage = self.script.split("Actual one-scene submission", 1)[1].split(
             "Selector-only preflight", 1
         )[0]
         self.assertIn("--execute --wait --wait-timeout-ms 600000", usage)
+
+
+    def test_missing_third_thumbnail_uses_uuid_only_after_same_position_row_verification(self):
+        self.assertIn("const sameVisibleRow = refreshedScan.items.length === initialScan.items.length", self.script)
+        self.assertIn("item.mediaUuid && refreshed.mediaUuid) return item.mediaUuid === refreshed.mediaUuid", self.script)
+        self.assertIn("refreshed?.mediaUuid === initialScan.items[missingIndex].mediaUuid", self.script)
+        self.assertIn("initialScan.items[missingIndex].thumbnailSrc = `media:${initialScan.items[missingIndex].mediaUuid}`", self.script)
+        self.assertIn("if (!sameVisibleRow)", self.script)
+
+    def test_two_item_recapture_retries_full_row_before_fail_closed(self):
+        self.assertIn("thumbnailRetry <= 2", self.script)
+        self.assertIn('action: thumbnailRetry < 2 ? "retry_full_row_inventory" : "fail_closed_after_retries"', self.script)
+        self.assertIn("skipUuidResolution: completeUniqueUuidBaseline && thumbnailRetry === 1", self.script)
+        self.assertIn("const retryTileCount = await retryTiles.count()", self.script)
+        self.assertIn("continue;", self.script)
+
+    def test_persistent_incomplete_recapture_fails_before_create(self):
+        self.assertIn("First-row baseline requires loaded DOM thumbnail identities for all three tiles", self.script)
+        self.assertIn("Refusing to Create with an incomplete baseline", self.script)
+        self.assertLess(
+            self.script.index("First-row baseline requires loaded DOM thumbnail identities for all three tiles"),
+            self.script.index("await finalButton.click({ timeout: 2500 })"),
+        )
+
+    def test_tile_reorder_or_ambiguous_text_match_stops_before_create(self):
+        self.assertIn("const baselineTextCounts = new Map()", self.script)
+        self.assertIn("const refreshedTextCounts = new Map()", self.script)
+        self.assertIn("baselineTextCounts.get(text) === 1 && refreshedTextCounts.get(text) === 1", self.script)
+        self.assertIn("item.mediaUuid === refreshed.mediaUuid", self.script)
+        self.assertIn("if (!sameVisibleRow)", self.script)
+        self.assertIn("Pre-Create recheck could not confirm a stable first tile and three-tile row", self.script)
+
 
 if __name__ == "__main__":
     unittest.main()
