@@ -190,7 +190,7 @@ class FlowPilotContractTests(unittest.TestCase):
         self.assertIn("const newItems = findNewCompletedMediaItems(topItemsNow, beforeKeys);", self.script)
         self.assertIn("Normalize media URLs to their stable UUID", self.script)
         self.assertIn("tileText.slice(0, 220)", self.script)
-        self.assertIn("const mediaUuid = primarySources.map(uuidFrom).find(Boolean)", self.script)
+        self.assertIn("const mediaUuid = primarySources.filter(value => !/\\/image\\//i.test(value)).map(uuidFrom).find(Boolean)", self.script)
         self.assertIn("baseline_media_keys: initialItems", self.script)
         self.assertIn("ignored_failed_tile_keys: failedBaselineItems.map(item => item.key)", self.script)
         self.assertIn("let candidateItems = newItems.filter(item =>", self.script)
