@@ -2936,15 +2936,15 @@ function firstTileMatchesByStableNeighbors({ expectedToken, currentToken, baseli
   const secondNeighborMatches = validToken(baselineTokens?.[1]) && baselineTokens[1] === currentTokens?.[1];
   const thirdNeighborMatches = validToken(baselineTokens?.[2]) && validToken(currentTokens?.[2])
     && baselineTokens[2] === currentTokens[2];
-  // If Flow has not loaded the third thumbnail yet, accept only when the second
-  // neighbor is an exact match and the grid count/order has stayed unchanged.
-  const thirdNeighborStillLoading = currentTokens?.[2] == null;
+  // Missing third-thumbnail data is not evidence of stable neighbors. Wait for
+  // a complete row snapshot; if it never arrives, fail closed before Create.
   return Boolean((expectedToken?.startsWith("media:") || expectedToken?.startsWith("asb:"))
     && currentToken?.startsWith("asb:")
     && Array.isArray(baselineTokens) && baselineTokens.length >= 3
     && Array.isArray(currentTokens) && currentTokens.length >= 3
+    && currentTokens.slice(0, 3).every(validToken)
     && Number.isInteger(baselineTileCount) && baselineTileCount === currentTileCount
-    && secondNeighborMatches && (thirdNeighborMatches || thirdNeighborStillLoading));
+    && secondNeighborMatches && thirdNeighborMatches);
 }
 
 async function waitForPreCreateThumbnailSnapshot(readSnapshot, wait, maxWaitMs = 10000) {
@@ -2972,9 +2972,13 @@ async function waitForPreCreateThumbnailSnapshot(readSnapshot, wait, maxWaitMs =
     previousTileCount = tileCount;
     if (Date.now() - startedAt < maxWaitMs) await wait(250);
   }
-  return { ...lastSnapshot, tokens: lastSnapshot.tokens || [], tileCount: Number(lastSnapshot.tileCount) || 0,
+  const lastTokens = Array.isArray(lastSnapshot.tokens) ? lastSnapshot.tokens : [];
+  return { ...lastSnapshot, tokens: lastTokens, tileCount: Number(lastSnapshot.tileCount) || 0,
     stableFirstToken, fullyStable: false,
-    acceptedByNeighborRule: stableFirstToken && (Number(lastSnapshot.tileCount) || 0) >= 3,
+    // Neighbor fallback is only eligible when the complete first row is present.
+    // A null token cannot be treated as a matching neighbor.
+    acceptedByNeighborRule: stableFirstToken && (Number(lastSnapshot.tileCount) || 0) >= 3
+      && lastTokens.length >= 3 && lastTokens.slice(0, 3).every(token => typeof token === "string" && token.length > 0),
     waitMs: Date.now() - startedAt };
 }
 
