@@ -464,6 +464,71 @@ assert.equal(policyRowPage.clicks.includes("download-button"), true);
         self.assertIn('ordered_baseline_shift_with_non_media_baseline_support', self.script)
         self.assertIn('event: "post_create_poll"', self.script)
 
+    def test_recovery_mode_reconstructs_baseline_and_updates_only_matching_attempt(self):
+        recovery_helpers = self.script.split("function readRecoveryEvidence", 1)[1].split(
+            "\n\nasync function recoverAttempt", 1
+        )[0]
+        recovery_helpers = "function readRecoveryEvidence" + recovery_helpers
+        node_test = r"""
+import assert from "node:assert/strict";
+import fs from "node:fs";
+import os from "node:os";
+import path from "node:path";
+""" + recovery_helpers + r"""
+const dir = fs.mkdtempSync(path.join(os.tmpdir(), "goglow-recovery-test-"));
+try {
+  const logPath = path.join(dir, "exec.log");
+  const ledgerPath = path.join(dir, "ledger.jsonl");
+  const attemptId = "attempt-6deba36d-1984-4467-a445-59a43df4a818";
+  const policyText = "Failed prominent people: This generation might violate our policies. You will be refunded.";
+  const events = [
+    { event: "baseline_media_inventory_summary", baseline_media_uuids: [
+      "4bcc1ce2-4018-43fc-9a8a-059fdc315750", "07e82f95-f37f-412a-83bd-018fe25b1278"
+    ] },
+    { event: "baseline_unresolved_tile_classification", tiles: [
+      { index: 0, classification: "known_policy_refusal_non_media_baseline", text: policyText },
+      { index: 1, classification: "stable_existing_baseline_tile", text: "old video" },
+      { index: 2, classification: "stable_existing_baseline_tile", text: "older video" },
+    ] },
+  ];
+  fs.writeFileSync(logPath, [
+    ...events.map(event => JSON.stringify(event)),
+    "Pre-Create baseline UUID count: 3. Create timestamp: 2026-10-26T23:27:22Z",
+    JSON.stringify({ event: "generation_ledger_recorded", attempt_id: attemptId, status: "submitted_unidentified" }),
+  ].join("\n") + "\n");
+  const evidence = readRecoveryEvidence(logPath, attemptId);
+  assert.equal(evidence.createClickedAt, "2026-10-26T23:27:22Z");
+  assert.deepEqual(evidence.beforeKeys, [
+    "failed-policy:" + policyText.toLowerCase(),
+    "media:4bcc1ce2-4018-43fc-9a8a-059fdc315750",
+    "media:07e82f95-f37f-412a-83bd-018fe25b1278",
+  ]);
+  const other = { attempt_id: "attempt-11111111-1111-4111-8111-111111111111", result: { status: "succeeded" } };
+  const target = { attempt_id: attemptId, result: { status: "submitted_unidentified" }, media: { verification_state: "unverified" } };
+  fs.writeFileSync(ledgerPath, [JSON.stringify(other), JSON.stringify(target)].join("\n") + "\n");
+  updateGenerationLedgerAttempt(ledgerPath, attemptId, record => ({ ...record, result: { status: "succeeded" } }));
+  const records = fs.readFileSync(ledgerPath, "utf8").trim().split("\n").map(JSON.parse);
+  assert.deepEqual(records[0], other, "unrelated ledger attempts must remain unchanged");
+  assert.equal(records[1].result.status, "succeeded");
+  assert.throws(() => readRecoveryEvidence(logPath, "attempt-22222222-2222-4222-8222-222222222222"), /does not contain generation_ledger_recorded/);
+} finally {
+  fs.rmSync(dir, { recursive: true, force: true });
+}
+"""
+        result = subprocess.run(
+            ["node", "--input-type=module", "-e", node_test],
+            capture_output=True, text=True, check=False, timeout=5,
+            cwd=Path(__file__).parents[1],
+        )
+        self.assertEqual(result.returncode, 0, msg=result.stdout + result.stderr)
+        self.assertIn('--recover-attempt', self.script)
+        self.assertIn('async function recoverAttempt(args, browser)', self.script)
+        recovery_body = self.script.split("async function recoverAttempt(args, browser)", 1)[1].split(
+            "\n\nasync function main", 1
+        )[0]
+        self.assertNotIn("finalButton.click", recovery_body)
+        self.assertIn("create_clicks_by_recovery: 0", recovery_body)
+
     def test_wait_tracks_new_tile_by_stable_identity_and_never_retries(self):
         self.assertIn('collectAllGeneratedItems(page, selectors.generated_video_items, {\n      uuidCache, topLimit: 4, selectors, skipUuidResolution: true,', self.script)
         self.assertIn('candidateItems.length === 1', self.script)
