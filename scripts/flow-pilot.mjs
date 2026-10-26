@@ -2763,23 +2763,28 @@ async function uploadSceneReferencesUnsafe(page, selectors, referenceImages, ref
       }
       const retryDeadline = Date.now() + 3500;
       while (Date.now() < retryDeadline) {
-        const latest = await resolveVisibleIngredientsPicker(page, selectors, filename, filenameStem).catch(() => null);
-        if (!latest || latest.visibleMatches !== 1 || await latest.matching.count().catch(() => 0) !== 1) {
-          await page.waitForTimeout(120);
-          continue;
+        const tileCountNow = await reopened.matching.count().catch(() => 0);
+        const latestTile = tileCountNow === 1 ? reopened.matching.first() : null;
+        const latestSelected = latestTile ? await latestTile.getAttribute("aria-selected", { timeout: 150 }).catch(() => null) : null;
+        const scopedAddCandidates = reopened.container.locator(selectors.ingredient_add_to_prompt);
+        const scopedAddCount = await scopedAddCandidates.count().catch(() => 0);
+        let latestAdd = null;
+        let latestAddCount = 0;
+        for (let i = 0; i < scopedAddCount; i += 1) {
+          const candidate = scopedAddCandidates.nth(i);
+          if (await candidate.isVisible({ timeout: 100 }).catch(() => false)) {
+            latestAddCount += 1;
+            latestAdd = candidate;
+          }
         }
-        const latestTile = latest.matching.first();
-        const latestSelected = await latestTile.getAttribute("aria-selected", { timeout: 150 }).catch(() => null);
-        const latestAddCount = await countVisibleMatches(page, selectors.ingredient_add_to_prompt);
-        const latestAdd = latestAddCount === 1 ? page.locator(selectors.ingredient_add_to_prompt).filter({ visible: true }).first() : null;
-        const latestPreview = latestAdd ? await inspectAddToPromptContext(latestAdd) : null;
+        const latestPreview = latestAddCount === 1 && latestAdd ? await inspectAddToPromptContext(latestAdd) : null;
         const latestLabels = (latestPreview?.preview_labels || []).map(label => String(label).trim().toLowerCase());
         const labelMatchesRetry = latestLabels.includes(targetFilename);
         const uuidMatchesRetry = Boolean(latestPreview?.uuids?.includes(expectedPreviewUuid));
-        if (latestAddCount === 1 && (latestSelected === "true" || labelMatchesRetry)
+        if (latestTile && latestAddCount === 1 && (latestSelected === "true" || labelMatchesRetry)
           && (uuidMatchesRetry || labelMatchesRetry)) {
-          pickerContainer = latest.container;
-          matchingAssets = latest.matching;
+          pickerContainer = reopened.container;
+          matchingAssets = reopened.matching;
           activeAsset = latestTile;
           selectedAssetAriaSelected = latestSelected;
           addToPromptVisibleCount = latestAddCount;
