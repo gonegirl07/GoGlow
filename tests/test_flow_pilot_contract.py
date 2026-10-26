@@ -733,7 +733,8 @@ class FlowPilotContractTests(unittest.TestCase):
         self.assertNotIn("(attempt ${attempt}/5)", resolver)
         self.assertIn("const alreadyOnGrid = currentPageUrl === gridUrl", resolver)
         self.assertIn("const expectedToken = alreadyOnGrid && currentTokens[index]", resolver)
-        self.assertIn('if (!source || /\\/image\\//i.test(source)) return "";', resolver)
+        self.assertIn('element.querySelector("video")?.getAttribute("src")', resolver)
+        self.assertIn('element.querySelector("video source")?.getAttribute("src")', resolver)
 
     def test_first_row_wait_rejects_image_placeholder_until_thumbnail_is_ready(self):
         preflight = self.script.split('const waitForFirstRowThumbnailTokens = async (reason, maxWaitMs = 15000)', 1)[1].split(
@@ -821,7 +822,7 @@ class FlowPilotContractTests(unittest.TestCase):
     def test_pre_create_recheck_is_read_only_and_uses_bounded_neighbor_fallback(self):
         self.assertIn('event: "pre_create_first_tile_identity_recheck"', self.script)
         self.assertIn("const expectedFirstToken = args._waitInitialThumbnailTokens?.[0];", self.script)
-        self.assertIn("if (currentFirstToken !== expectedFirstToken && !sameFirstTileAfterThumbnailRotation && !sameFirstRowMediaIdentity)", self.script)
+        self.assertIn("if (!sameFirstThreeThumbnailTokens && !sameFirstTileAfterThumbnailRotation && !sameFirstRowMediaIdentity)", self.script)
         self.assertIn("read_only_dom_check: true", self.script)
         self.assertIn("const currentMediaKeys = Array.isArray(preCreateSnapshot.mediaKeys)", self.script)
         self.assertIn("firstThreeMediaKeysMatch(baselineMediaKeys, currentMediaKeys)", self.script)
