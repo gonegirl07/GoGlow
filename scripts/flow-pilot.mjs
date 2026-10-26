@@ -1657,7 +1657,7 @@ function assetUuidFromUrl(value) {
 
 function buildVerifiedThumbnailBaselineTokens(domTokens, items, domTexts) {
   const tokens = [...(domTokens || [])];
-  const normalize = value => String(value || "").replace(/\\s+/g, " ").trim();
+  const normalize = value => String(value || "").replace(/\s+/g, " ").trim();
   const baselineTexts = (items || []).slice(0, 3).map(item => normalize(item?.text));
   const visibleTexts = (domTexts || []).map(normalize);
   const countText = (values, target) => values.filter(value => value && value === target).length;
@@ -3245,9 +3245,9 @@ async function prepare(args, browser, rl) {
       // this snapshot is meant to capture. Keep UUID resolution fail-closed.
       for (let thumbnailRetry = 1; thumbnailRetry <= 2
         && initialScan.items.length >= 3
-        && initialScan.items.some(item => !item.thumbnailSrc || !thumbnailIdentityToken(item.thumbnailSrc) || /\\/image\\//i.test(item.thumbnailSrc)); thumbnailRetry += 1) {
+        && initialScan.items.some(item => !item.thumbnailSrc || !thumbnailIdentityToken(item.thumbnailSrc) || /\/image\//i.test(item.thumbnailSrc)); thumbnailRetry += 1) {
         const missingIndexes = initialScan.items
-          .map((item, index) => !item.thumbnailSrc || !thumbnailIdentityToken(item.thumbnailSrc) || /\\/image\\//i.test(item.thumbnailSrc) ? index : null)
+          .map((item, index) => !item.thumbnailSrc || !thumbnailIdentityToken(item.thumbnailSrc) || /\/image\//i.test(item.thumbnailSrc) ? index : null)
           .filter(index => index !== null);
         const initialUuids = initialScan.items.map(item => item.mediaUuid);
         const completeUniqueUuidBaseline = initialUuids.every(Boolean) && new Set(initialUuids).size === initialUuids.length;
@@ -3301,7 +3301,7 @@ async function prepare(args, browser, rl) {
             for (const missingIndex of missingIndexes) {
               const refreshed = refreshedScan.items[missingIndex];
               if (refreshed?.thumbnailSrc && thumbnailIdentityToken(refreshed.thumbnailSrc)
-                && !/\\/image\\//i.test(refreshed.thumbnailSrc)) {
+                && !/\/image\//i.test(refreshed.thumbnailSrc)) {
                 initialScan.items[missingIndex].thumbnailSrc = refreshed.thumbnailSrc;
               } else if (initialScan.items[missingIndex]?.mediaUuid
                 && refreshed
@@ -3411,7 +3411,7 @@ async function prepare(args, browser, rl) {
       }
       args._waitInitialBalance = initialBalance;
       args._waitInitialItemKeys = initialItems;
-      args._waitInitialItemTexts = initialScan.items.slice(0, 3).map(item => String(item.text || "").replace(/\\s+/g, " ").trim());
+      args._waitInitialItemTexts = initialScan.items.slice(0, 3).map(item => String(item.text || "").replace(/\s+/g, " ").trim());
       args._waitInitialDomTileCount = await chosen.page.locator(selectors.generated_video_items).count();
       // Capture the baseline with the exact same DOM identity precedence used by
       // the pre-Create check. Do not substitute media UUIDs here: Flow may expose
@@ -3419,7 +3419,7 @@ async function prepare(args, browser, rl) {
       // in the visible grid, making a cross-domain comparison impossible.
       const domThumbnailBaseline = await chosen.page.locator(selectors.generated_video_items).evaluateAll(elements => ({
         tileCount: elements.length,
-        texts: elements.slice(0, 3).map(element => String(element.innerText || element.textContent || "").replace(/\\s+/g, " ").trim()),
+        texts: elements.slice(0, 3).map(element => String(element.innerText || element.textContent || "").replace(/\s+/g, " ").trim()),
         tokens: elements.slice(0, 3).map(element => {
           const dataValues = [
             element.getAttribute("data-media-id"),
@@ -3642,7 +3642,7 @@ async function prepare(args, browser, rl) {
               const routeUuid = String(href).match(/\/(?:edit|video)\/([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})(?:[/?#]|$)/i);
               if (routeUuid) return `media:${routeUuid[1].toLowerCase()}`;
             }
-            const normalize = value => String(value || "").replace(/\\s+/g, " ").trim();
+            const normalize = value => String(value || "").replace(/\s+/g, " ").trim();
             const currentText = normalize(element.innerText || element.textContent || "");
             const texts = elements.slice(0, 3).map(node => normalize(node.innerText || node.textContent || ""));
             const baselineText = normalize(baseline?.texts?.[tileIndex]);
