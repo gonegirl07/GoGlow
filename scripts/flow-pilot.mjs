@@ -1690,7 +1690,7 @@ function applyVerifiedRowUuidFallback(initialItems, refreshedItems, baselineText
   const verifiedIndexes = new Set();
   if (!Array.isArray(initialItems) || !Array.isArray(refreshedItems)
     || initialItems.length < 3 || initialItems.length !== refreshedItems.length) return verifiedIndexes;
-  const normalize = value => String(value || "").replace(/\\s+/g, " ").trim();
+  const normalize = value => String(value || "").replace(/\s+/g, " ").trim();
   const initialLabels = (baselineTexts || []).map(normalize);
   const refreshedLabels = (refreshedTexts || []).map(normalize);
   const counts = values => {
