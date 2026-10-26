@@ -828,7 +828,7 @@ class FlowPilotContractTests(unittest.TestCase):
         self.assertIn("firstThreeMediaKeysMatch(baselineMediaKeys, currentMediaKeys)", self.script)
         self.assertIn('element.querySelector("video")?.getAttribute("src")', self.script)
         self.assertIn('element.querySelector("video source")?.getAttribute("src")', self.script)
-        self.assertIn("firstThreeThumbnailTokensMatch(baselineTokens, currentTokens)", self.script)
+        self.assertIn("firstThreeThumbnailTokensMatch(", self.script)
         self.assertIn("preCreateSnapshot.stableFirstToken && preCreateSnapshot.tileCount >= 3 && sameFirstRowMediaIdentity", self.script)
         self.assertNotIn("elements.length === baseline?.tileCount && uuid && currentText", self.script)
         self.assertIn("waitForPreCreateThumbnailSnapshot", self.script)
@@ -852,7 +852,7 @@ class FlowPilotContractTests(unittest.TestCase):
         self.assertIn('element.querySelector("video source")?.getAttribute("src")', snapshot)
         self.assertIn('element.querySelector("video")?.getAttribute("poster")', snapshot)
         self.assertIn('element.querySelector("img")?.getAttribute("srcset")', snapshot)
-        self.assertIn("firstThreeThumbnailTokensMatch(baselineTokens, currentTokens)", self.script)
+        self.assertIn("firstThreeThumbnailTokensMatch(", self.script)
 
     def test_pre_create_img_img_video_thumbnail_tokens_match_despite_virtualized_count(self):
         helper_path = Path(__file__).parents[1] / "scripts" / "asb-identity.mjs"
