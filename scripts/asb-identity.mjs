@@ -14,7 +14,7 @@ export function normalizeAsbIdentityToken(value) {
  */
 export function firstThreeThumbnailTokensMatch(baselineTokens, currentTokens, baselineImageTokens = []) {
   const validThumbnail = value => typeof value === "string"
-    && /^(?:media:[0-9a-f-]{36}|asb:.+|\\/(?:asb|image)\\/.+|https?:\\/\\/.*)$/i.test(value);
+    && /^(?:media:[0-9a-f-]{36}|asb:.+|\/(?:asb|image)\/.+|https?:\/\/.*)$/i.test(value);
   const imageUuid = value => typeof value === "string"
     ? value.match(/^image:([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})$/i)?.[1]?.toLowerCase() || null
     : null;
