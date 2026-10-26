@@ -4295,6 +4295,7 @@ async function prepare(args, browser, rl) {
         : `Pre-Create first tile token matches baseline; preserving ${args._waitInitialItemKeys.length} baseline UUIDs.`);
     }
     args._waitCreateClickedAt = new Date().toISOString();
+    if (args.waitForResult) args._waitAttemptId = "attempt-" + randomUUID();
     console.log(`Pre-Create baseline UUID count: ${args._waitInitialItemKeys?.length ?? 0}. Create timestamp: ${args._waitCreateClickedAt}`);
     try {
       await finalButton.click({ timeout: 2500 });
@@ -4314,6 +4315,9 @@ async function prepare(args, browser, rl) {
     }
     appendEvent(args.log, { event: "create_click_returned", scene_id: scene.scene_id, model: scene.model,
       resolution: scene.resolution, status: "click_returned_unconfirmed",
+      create_clicked_at: args._waitCreateClickedAt || null,
+      attempt_id: args._waitAttemptId || null,
+      baseline_keys_first_three: (args._waitInitialItemKeys || []).slice(0, 3),
       note: "The UI click returned; this is not proof that Flow accepted a generation." });
     console.log(`Create click returned once; submission is NOT confirmed until a new media UUID or credit decrease is observed. Receipt: ${path.resolve(args.log)}`);
     if (args.waitForResult) {
@@ -4327,7 +4331,6 @@ async function prepare(args, browser, rl) {
       let afterBalance = null;
       let submissionEvidence = false;
       let attemptNumber = 1;
-      args._waitAttemptId = "attempt-" + randomUUID();
       try {
         attemptNumber = nextLedgerAttemptNumber(args.ledgerOutput, scene.scene_id);
         const result = await waitForGenerationAndDownload(chosen.page, selectors, {
