@@ -3508,7 +3508,7 @@ async function prepare(args, browser, rl) {
             const tokens = [];
             for (const source of sources) {
               for (const match of source.matchAll(/\/asb\/([^/?#\s,]+)/ig)) {
-                const token = \`asb:\${match[1].split("=", 1)[0]}\`;
+                const token = "asb:" + match[1].split("=", 1)[0];
                 if (!tokens.includes(token)) tokens.push(token);
               }
             }
