@@ -3458,7 +3458,7 @@ async function prepare(args, browser, rl) {
           }
           const token = segments[assetIndex + 1];
           // /image/<uuid> is an image-resource ID, never the generated video's ID.
-          if (segments[assetIndex] === "image") return pathname;
+          if (segments[assetIndex] === "image") return null;
           if (/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(token)) {
             return `media:${token.toLowerCase()}`;
           }
