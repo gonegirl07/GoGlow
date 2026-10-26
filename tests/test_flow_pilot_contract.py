@@ -1223,6 +1223,14 @@ assert.equal(mismatch[0].mediaUuid, undefined);
         self.assertIn("applyVerifiedRowUuidFallback", self.script)
         self.assertIn("original.mediaUuid = uuid", self.script)
 
+    def test_explicit_variant_index_can_run_only_remaining_variant(self):
+        self.assertIn('else if (arg === "--variant-index") args.variantIndex = Number(argv[++i]);', self.script)
+        self.assertIn('args.variantIndex !== null && args.variantIndex > variantCount', self.script)
+        self.assertIn('if (args.variantIndex !== null) {', self.script)
+        self.assertIn('args._variantIndex = args.variantIndex;', self.script)
+        self.assertIn('Preparing selected variant ${args.variantIndex}/${variantCount} only.', self.script)
+        self.assertIn('args._variantIndex = args.variantIndex || 1;', self.script)
+
     def test_null_asb_null_thumbnail_pattern_uses_verified_video_uuids_and_not_image_uuid(self):
         helper = "function buildVerifiedThumbnailBaselineTokens" + self.script.split(
             "function buildVerifiedThumbnailBaselineTokens", 1
