@@ -1328,5 +1328,20 @@ assert.equal(
         self.assertIn("args._waitInitialThumbnailImageTokens = domThumbnailBaseline.imageTokens || [];", self.script)
 
 
+    def test_explicit_prominent_people_refusal_is_stable_non_media_baseline(self):
+        # A known provider refusal has no video UUID, but its exact unique text can
+        # identify the existing non-media tile. Other unresolved cards still fail closed.
+        self.assertIn("function isKnownPolicyRefusalTile(item)", self.script)
+        self.assertIn("if (!item || item.mediaUuid) return false;", self.script)
+        self.assertIn("&& /prominent people/i.test(text)", self.script)
+        self.assertIn("&& /might violate our policies/i.test(text)", self.script)
+        self.assertIn("&& /you will be refunded/i.test(text)", self.script)
+        self.assertIn('classification: item.mediaUuid && initialItems[index] ? "stable_existing_baseline_tile"', self.script)
+        self.assertIn('"known_policy_refusal_non_media_baseline"', self.script)
+        self.assertIn('baselineKey.startsWith("failed-policy:") && isPolicyRefusal && sameUniqueText', self.script)
+        self.assertIn("unresolvedBaselineIndexes.length > 0", self.script)
+        self.assertIn('"unknown_identity_fail_closed"', self.script)
+
+
 if __name__ == "__main__":
     unittest.main()
