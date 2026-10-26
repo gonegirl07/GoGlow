@@ -2731,8 +2731,76 @@ async function uploadSceneReferencesUnsafe(page, selectors, referenceImages, ref
       ready: referenceSelectionReady,
       readiness_signal: "unique_visible_add_button_plus_exact_preview_filename_or_uuid",
     }));
+    if (!referenceSelectionReady && expectedPreviewUuid) {
+      // One bounded picker-level recovery for the observed transient state where
+      // clicks leave aria-selected=false and the preview/Add action never appears.
+      // Do not attach anything until a fresh picker and the exact pinned identity
+      // produce a matching preview signal.
+      const pickerRetryStartedAt = Date.now();
+      console.warn(JSON.stringify({ event: "ingredients_picker_selection_reopen_retry", filename,
+        reason: "selection_not_verified_within_initial_budget", pinned_uuid: expectedPreviewUuid,
+        initial_elapsed_ms: Date.now() - selectionWaitStartedAt }));
+      await resetIngredientsPicker(page, selectors);
+      await openIngredientsPicker(page, selectors, filename);
+      const reopened = await resolveVisibleIngredientsPicker(page, selectors, filename, filenameStem);
+      const reopenedCount = await reopened.matching.count().catch(() => 0);
+      if (reopened.visibleMatches !== 1 || reopenedCount !== 1) {
+        throw new Error(`Bounded picker retry requires exactly one visible matching tile for ${filename}; visible_matches=${reopened.visibleMatches}, matches=${reopenedCount}. Stopping before Add/prompt fill/Create.`);
+      }
+      pickerContainer = reopened.container;
+      matchingAssets = reopened.matching;
+      activeAsset = reopened.matching.first();
+      const retryBox = await activeAsset.boundingBox({ timeout: 300 }).catch(() => null);
+      if (!retryBox) throw new Error(`Bounded picker retry could not locate the target tile for ${filename}; stopping before Add/prompt fill/Create.`);
+      await activeAsset.scrollIntoViewIfNeeded({ timeout: 400 }).catch(() => {});
+      const retryAncestor = activeAsset.locator('xpath=ancestor-or-self::*[@role="option" or @role="button" or self::button or @tabindex][1]').first();
+      const retryAncestorCount = await retryAncestor.count().catch(() => 0);
+      if (retryAncestorCount === 1 && await retryAncestor.isVisible({ timeout: 200 }).catch(() => false)) {
+        const retryAncestorBox = await retryAncestor.boundingBox({ timeout: 200 }).catch(() => null);
+        if (retryAncestorBox) await retryAncestor.click({ position: { x: Math.floor(retryAncestorBox.width / 2), y: Math.floor(retryAncestorBox.height / 2) }, timeout: 600 }).catch(() => {});
+      } else {
+        await activeAsset.click({ position: { x: Math.max(2, Math.floor(retryBox.width / 2)), y: Math.max(2, Math.floor(retryBox.height / 2)) }, timeout: 600 }).catch(() => {});
+      }
+      const retryDeadline = Date.now() + 3500;
+      while (Date.now() < retryDeadline) {
+        const latest = await resolveVisibleIngredientsPicker(page, selectors, filename, filenameStem).catch(() => null);
+        if (!latest || latest.visibleMatches !== 1 || await latest.matching.count().catch(() => 0) !== 1) {
+          await page.waitForTimeout(120);
+          continue;
+        }
+        const latestTile = latest.matching.first();
+        const latestSelected = await latestTile.getAttribute("aria-selected", { timeout: 150 }).catch(() => null);
+        const latestAddCount = await countVisibleMatches(page, selectors.ingredient_add_to_prompt);
+        const latestAdd = latestAddCount === 1 ? page.locator(selectors.ingredient_add_to_prompt).filter({ visible: true }).first() : null;
+        const latestPreview = latestAdd ? await inspectAddToPromptContext(latestAdd) : null;
+        const latestLabels = (latestPreview?.preview_labels || []).map(label => String(label).trim().toLowerCase());
+        const labelMatchesRetry = latestLabels.includes(targetFilename);
+        const uuidMatchesRetry = Boolean(latestPreview?.uuids?.includes(expectedPreviewUuid));
+        if (latestAddCount === 1 && (latestSelected === "true" || labelMatchesRetry)
+          && (uuidMatchesRetry || labelMatchesRetry)) {
+          pickerContainer = latest.container;
+          matchingAssets = latest.matching;
+          activeAsset = latestTile;
+          selectedAssetAriaSelected = latestSelected;
+          addToPromptVisibleCount = latestAddCount;
+          previewContext = latestPreview;
+          previewIdentitySignal = uuidMatchesRetry ? "uuid" : "exact_preview_filename";
+          referenceSelectionReady = true;
+          console.log(JSON.stringify({ event: "ingredients_picker_selection_reopen_retry_result", filename,
+            ready: true, selected_asset_aria_selected: latestSelected, add_to_prompt_visible_count: latestAddCount,
+            preview_identity_signal: previewIdentitySignal, elapsed_ms: Date.now() - pickerRetryStartedAt }));
+          break;
+        }
+        await page.waitForTimeout(120);
+      }
+      if (!referenceSelectionReady) {
+        console.warn(JSON.stringify({ event: "ingredients_picker_selection_reopen_retry_result", filename,
+          ready: false, elapsed_ms: Date.now() - pickerRetryStartedAt,
+          reason: "exact preview identity not verified; no Add to prompt click attempted" }));
+      }
+    }
     if (!referenceSelectionReady) {
-      throw new Error(`Reference selection did not verify the target preview for ${filename}; configured wait budget=${selectionWaitTimeoutMs}ms, actual elapsed=${Date.now() - selectionWaitStartedAt}ms, aria-selected=${JSON.stringify(selectedAssetAriaSelected)}, visible Add to prompt buttons=${addToPromptVisibleCount}, preview labels=${JSON.stringify(previewContext?.preview_labels || [])}, preview UUIDs=${JSON.stringify(previewContext?.uuids || [])}, selection_retried=${selectionRetried}. Stopping before Add/prompt fill/Create.`);
+      throw new Error(`Reference selection did not verify the target preview for ${filename}; configured wait budget=${selectionWaitTimeoutMs}ms, actual elapsed=${Date.now() - selectionWaitStartedAt}ms, aria-selected=${JSON.stringify(selectedAssetAriaSelected)}, visible Add to prompt buttons=${addToPromptVisibleCount}, preview labels=${JSON.stringify(previewContext?.preview_labels || [])}, preview UUIDs=${JSON.stringify(previewContext?.uuids || [])}, selection_retried=${selectionRetried}, picker_reopen_retried=${Boolean(expectedPreviewUuid)}. Stopping before Add/prompt fill/Create.`);
     }
     // Re-resolve the selected tile and action inside the current overlay. A reuse
     // recheck may have closed/reopened the picker, detaching pickerResolution.container.
