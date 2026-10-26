@@ -916,7 +916,8 @@ assert.deepEqual(findNewCompletedMediaItems([
         result = subprocess.run(["node", "--input-type=module", "-e", node_test],
                                 capture_output=True, text=True, check=False, timeout=5)
         self.assertEqual(result.returncode, 0, msg=result.stdout + result.stderr)
-        self.assertIn("skipUuidResolution: true", self.script)
+        self.assertIn("skipUuidResolution: thumbnailRetry === 1", self.script)
+        self.assertIn('phase: thumbnailRetry === 1 && completeUniqueUuidBaseline ? "thumbnail_only_recapture" : "full_row_dom_inventory"', self.script)
         self.assertIn("topLimit: 3", self.script)
         self.assertIn("FLOW_SUBMITTED_UNIDENTIFIED:", self.script)
         self.assertIn('resultStatus === "submitted_unidentified" ? "submitted_unidentified"', self.script)
@@ -1092,6 +1093,37 @@ assert.equal(thumbnailIdentityToken('https://flow.google.com/asb/ANqvLObmDmk_6XQ
         self.assertIn("items: topLimited ? (topItems || []).slice(0, topLimit) : Array.from(all.values())", self.script)
         self.assertIn("const retryTileCount = await retryTiles.count()", self.script)
         self.assertIn("continue;", self.script)
+
+    def test_null_asb_null_thumbnail_pattern_uses_verified_video_uuids_and_not_image_uuid(self):
+        helper = "function buildVerifiedThumbnailBaselineTokens" + self.script.split(
+            "function buildVerifiedThumbnailBaselineTokens", 1
+        )[1].split("\\n\\nfunction thumbnailIdentityToken", 1)[0]
+        node_test = helper + r"""
+const assert = await import('node:assert/strict');
+const items = [
+  { mediaUuid: '21770a37-08bc-493a-9b9c-5fdd8736f30e', text: 'Mai seated breathing' },
+  { mediaUuid: '3926cb48-421c-48de-b8e5-5ec30aa5c8f8', text: 'Mai standing' },
+  { mediaUuid: 'f5c80cba-1342-46bb-aaa4-eeb7fbd466b0', text: 'Mai kneeling' },
+];
+const tokens = buildVerifiedThumbnailBaselineTokens(
+  [null, 'asb:ANqvLOa3xUpF', null],
+  items,
+  ['Mai seated breathing', 'Mai standing', 'Mai kneeling'],
+);
+assert.deepEqual(tokens, items.map(item => 'media:' + item.mediaUuid));
+const ambiguous = buildVerifiedThumbnailBaselineTokens(
+  [null, 'asb:ANqvLOa3xUpF', null],
+  items,
+  ['Mai seated breathing', 'Mai standing', 'different row'],
+);
+assert.equal(ambiguous[2], null, 'must not reuse UUID when same-position row fingerprint differs');
+"""
+        result = subprocess.run(["node", "--input-type=module", "-e", node_test],
+                                capture_output=True, text=True, check=False, timeout=5)
+        self.assertEqual(result.returncode, 0, msg=result.stdout + result.stderr)
+        self.assertIn('if (segments[assetIndex] === "image") return pathname;', self.script)
+        self.assertIn("skipUuidResolution: thumbnailRetry === 1", self.script)
+        self.assertIn('phase: thumbnailRetry === 1 && completeUniqueUuidBaseline ? "thumbnail_only_recapture" : "full_row_dom_inventory"', self.script)
 
     def test_persistent_incomplete_recapture_fails_before_create(self):
         self.assertIn("First-row baseline requires loaded DOM thumbnail identities for all three tiles", self.script)
