@@ -1077,12 +1077,17 @@ assert.equal(thumbnailIdentityToken('https://flow.google.com/asb/ANqvLObmDmk_6XQ
         self.assertIn("item.mediaUuid && refreshed.mediaUuid) return item.mediaUuid === refreshed.mediaUuid", self.script)
         self.assertIn("refreshed?.mediaUuid === initialScan.items[missingIndex].mediaUuid", self.script)
         self.assertIn("initialScan.items[missingIndex].thumbnailSrc = `media:${initialScan.items[missingIndex].mediaUuid}`", self.script)
+        self.assertIn("refreshedTextCounts.get(refreshedTexts[missingIndex]) === 1", self.script)
+        self.assertIn("primarySources.filter(value => !/\\/image\\//i.test(value)).map(uuidFrom).find(Boolean)", self.script)
         self.assertIn("if (!sameVisibleRow)", self.script)
 
     def test_two_item_recapture_retries_full_row_before_fail_closed(self):
         self.assertIn("thumbnailRetry <= 2", self.script)
         self.assertIn('action: thumbnailRetry < 2 ? "retry_full_row_inventory" : "fail_closed_after_retries"', self.script)
-        self.assertIn("skipUuidResolution: completeUniqueUuidBaseline && thumbnailRetry === 1", self.script)
+        self.assertIn("skipUuidResolution: true", self.script)
+        self.assertIn("retry_strategy: thumbnailRetry === 1 && completeUniqueUuidBaseline ? \"thumbnail_only_snapshot\" : \"full_row_dom_inventory\"", self.script)
+        self.assertIn("const topLimited = Number.isInteger(topLimit) && topLimit > 0", self.script)
+        self.assertIn("items: topLimited ? (topItems || []).slice(0, topLimit) : Array.from(all.values())", self.script)
         self.assertIn("const retryTileCount = await retryTiles.count()", self.script)
         self.assertIn("continue;", self.script)
 
