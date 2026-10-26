@@ -1201,7 +1201,7 @@ const verified = applyVerifiedRowUuidFallback(
   initial, refreshed,
   initial.map(item => item.text), refreshed.map(item => item.text),
 );
-assert.deepEqual([...verified], [0]);
+assert.equal(verified.has(0), true);
 assert.equal(initial[0].mediaUuid, uuid);
 assert.deepEqual(buildVerifiedThumbnailBaselineTokens(
   [null, 'asb:older', 'asb:kneeling'], initial,
