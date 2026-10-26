@@ -1324,6 +1324,54 @@ assert.deepEqual(verified, [
         self.assertIn("skipUuidResolution: thumbnailRetry === 1", self.script)
         self.assertIn('phase: thumbnailRetry === 1 && completeUniqueUuidBaseline ? "thumbnail_only_recapture" : "full_row_dom_inventory"', self.script)
 
+    def test_live_baseline_adopts_resolved_media_uuids_when_refusal_has_no_thumbnail_token(self):
+        helper = "function verifiedResolvedMediaWithRefusalFallback" + self.script.split(
+            "function verifiedResolvedMediaWithRefusalFallback", 1
+        )[1].split("\\n\\nfunction buildVerifiedThumbnailBaselineTokens", 1)[0]
+        refusal_helper = "function isKnownPolicyRefusalTile" + self.script.split(
+            "function isKnownPolicyRefusalTile", 1
+        )[1].split("\\n\\nfunction failedPolicyBaselineKey", 1)[0]
+        node_test = helper + "\\n\\n" + refusal_helper + r"""
+const assert = await import('node:assert/strict');
+const refusal = {
+  text: 'Failed: This generation might violate our policies for prominent people. You will be refunded.',
+  mediaUuid: null,
+  key: 'failed-policy:failed: this generation might violate our policies for prominent people. you will be refunded.',
+};
+const stale = { mediaUuid: '2d815367-1111-4111-8111-111111111111', key: 'media:2d815367-1111-4111-8111-111111111111', text: 'Mai standing' };
+const a = { mediaUuid: '07e82f95-f37f-412a-83bd-018fe25b1278', key: 'media:07e82f95-f37f-412a-83bd-018fe25b1278', text: 'Mai standing' };
+const b = { mediaUuid: '4bcc1ce2-4018-43fc-9a8a-059fdc315750', key: 'media:4bcc1ce2-4018-43fc-9a8a-059fdc315750', text: 'Mai kneeling' };
+const tokens = ['failed-policy:' + refusal.text.toLowerCase(), null, null];
+const initial = [refusal, stale, a];
+const refreshed = [refusal, a, b];
+assert.deepEqual([...verifiedResolvedMediaWithRefusalFallback(initial, refreshed)], [1, 2]);
+assert.deepEqual(refreshed.filter(item => item.mediaUuid).map(item => item.mediaUuid), [
+  '07e82f95-f37f-412a-83bd-018fe25b1278',
+  '4bcc1ce2-4018-43fc-9a8a-059fdc315750',
+]);
+// Unknown non-media tiles, changed refusal text, missing UUIDs, and duplicate UUIDs fail closed.
+assert.equal(verifiedResolvedMediaWithRefusalFallback(
+  [refusal, stale, a], [refusal, { text: 'unknown tile' }, b],
+), null);
+assert.equal(verifiedResolvedMediaWithRefusalFallback(
+  [refusal, stale, a], [{ ...refusal, text: 'different refusal' }, a, b],
+), null);
+assert.equal(verifiedResolvedMediaWithRefusalFallback(
+  [refusal, stale, a], [refusal, a, { ...b, mediaUuid: null, key: 'asb:opaque' }],
+), null);
+assert.equal(verifiedResolvedMediaWithRefusalFallback(
+  [refusal, stale, a], [refusal, a, { ...b, mediaUuid: a.mediaUuid, key: a.key }],
+), null);
+assert.deepEqual(tokens, [
+  'failed-policy:' + refusal.text.toLowerCase(), null, null,
+]);
+"""
+        result = subprocess.run(["node", "--input-type=module", "-e", node_test],
+                                capture_output=True, text=True, check=False, timeout=5)
+        self.assertEqual(result.returncode, 0, msg=result.stdout + result.stderr)
+        self.assertIn("verifiedResolvedMediaWithRefusalFallback(initialScan.items, refreshedScan.items)", self.script)
+        self.assertIn('event: "baseline_refusal_resolved_uuid_fallback"', self.script)
+
     def test_first_row_identity_accepts_refusal_and_reordered_verified_media_but_fails_closed(self):
         identity_helper = "function verifiedFirstRowIdentityIndexes" + self.script.split(
             "function verifiedFirstRowIdentityIndexes", 1
