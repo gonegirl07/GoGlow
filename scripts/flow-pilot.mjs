@@ -3375,6 +3375,7 @@ async function prepare(args, browser, rl) {
       }
       args._waitInitialBalance = initialBalance;
       args._waitInitialItemKeys = initialItems;
+      args._waitInitialItemTexts = initialScan.items.slice(0, 3).map(item => String(item.text || "").replace(/\\s+/g, " ").trim());
       args._waitInitialDomTileCount = await chosen.page.locator(selectors.generated_video_items).count();
       // Capture the baseline with the exact same DOM identity precedence used by
       // the pre-Create check. Do not substitute media UUIDs here: Flow may expose
@@ -3382,6 +3383,7 @@ async function prepare(args, browser, rl) {
       // in the visible grid, making a cross-domain comparison impossible.
       const domThumbnailBaseline = await chosen.page.locator(selectors.generated_video_items).evaluateAll(elements => ({
         tileCount: elements.length,
+        texts: elements.slice(0, 3).map(element => String(element.innerText || element.textContent || "").replace(/\\s+/g, " ").trim()),
         tokens: elements.slice(0, 3).map(element => {
           const dataValues = [
             element.getAttribute("data-media-id"),
@@ -3425,7 +3427,24 @@ async function prepare(args, browser, rl) {
           return segments[assetIndex] === "asb" ? `asb:${token}` : pathname;
         }),
       })).catch(() => ({ tileCount: 0, tokens: [] }));
-      args._waitInitialThumbnailTokens = domThumbnailBaseline.tokens;
+      const baselineTokensWithUuidFallback = [...domThumbnailBaseline.tokens];
+      const normalizeRowText = value => String(value || "").replace(/\\s+/g, " ").trim();
+      const baselineRowTexts = initialScan.items.slice(0, 3).map(item => normalizeRowText(item.text));
+      const visibleRowTexts = (domThumbnailBaseline.texts || []).map(normalizeRowText);
+      const countText = (values, target) => values.filter(value => value && value === target).length;
+      for (let tileIndex = 0; tileIndex < 3; tileIndex += 1) {
+        if (baselineTokensWithUuidFallback[tileIndex]) continue;
+        const item = initialScan.items[tileIndex];
+        const text = baselineRowTexts[tileIndex];
+        const uuid = item?.mediaUuid;
+        const uniqueUuid = Boolean(uuid && baselineUuids.filter(value => value === uuid).length === 1);
+        const samePositionText = Boolean(text && text === visibleRowTexts[tileIndex]
+          && countText(baselineRowTexts, text) === 1 && countText(visibleRowTexts, text) === 1);
+        // UUID fallback is allowed only when the UUID belongs to this exact inventory
+        // index and the same-index visible tile has a unique, identical text fingerprint.
+        if (uniqueUuid && samePositionText) baselineTokensWithUuidFallback[tileIndex] = `media:${uuid}`;
+      }
+      args._waitInitialThumbnailTokens = baselineTokensWithUuidFallback;
       if (domThumbnailBaseline.tileCount < 3 || args._waitInitialThumbnailTokens.length < 3
         || args._waitInitialThumbnailTokens.slice(0, 3).some(token => !token)) {
         throw new Error(`First-row baseline requires loaded DOM thumbnail identities for all three tiles; observed tile count=${domThumbnailBaseline.tileCount}, tokens=${JSON.stringify(args._waitInitialThumbnailTokens)}.`);
@@ -3573,9 +3592,9 @@ async function prepare(args, browser, rl) {
       const expectedFirstToken = args._waitInitialThumbnailTokens?.[0];
       if (!expectedFirstToken) throw new Error("Pre-Create baseline has no first-tile thumbnail token; refusing to click Create.");
       const preCreateSnapshot = await waitForPreCreateThumbnailSnapshot(async () => {
-        return chosen.page.locator(selectors.generated_video_items).evaluateAll(elements => ({
+        return chosen.page.locator(selectors.generated_video_items).evaluateAll((elements, baseline) => ({
           tileCount: elements.length,
-          tokens: elements.slice(0, 3).map(element => {
+          tokens: elements.slice(0, 3).map((element, tileIndex) => {
             // Prefer the tile's own media/edit URL or data ID; thumbnail src is
             // only a fallback because Flow can rotate /image/<uuid> to /asb/<token>.
             const dataValues = [
@@ -3600,7 +3619,18 @@ async function prepare(args, browser, rl) {
               if (routeUuid) return `media:${routeUuid[1].toLowerCase()}`;
             }
             const source = element.querySelector("img")?.getAttribute("src") || "";
-            if (!source) return null;
+            if (!source) {
+              const normalize = value => String(value || "").replace(/\\s+/g, " ").trim();
+              const currentText = normalize(element.innerText || element.textContent || "");
+              const texts = elements.slice(0, 3).map(node => normalize(node.innerText || node.textContent || ""));
+              const baselineText = normalize(baseline?.texts?.[tileIndex]);
+              const baselineKey = String(baseline?.keys?.[tileIndex] || "");
+              const uuid = baselineKey.match(/^media:([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})$/i)?.[1];
+              if (elements.length === baseline?.tileCount && uuid && currentText && currentText === baselineText
+                && texts.filter(value => value === currentText).length === 1
+                && baseline.texts.filter(value => normalize(value) === currentText).length === 1) return `media:${uuid.toLowerCase()}`;
+              return null;
+            }
             const imageUuid = source.match(/\/image\/([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})(?:[/?#]|$)/i)
               || source.match(/\/asb\/([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})(?:[/?#]|$)/i);
             if (imageUuid) return `media:${imageUuid[1].toLowerCase()}`;
@@ -3609,7 +3639,8 @@ async function prepare(args, browser, rl) {
             try { return new URL(source, location.href).pathname; }
             catch { return source.split(/[?#]/, 1)[0] || null; }
           }),
-        })).catch(() => ({ tileCount: 0, tokens: [] }));
+        }), { tileCount: args._waitInitialDomTileCount,
+          texts: args._waitInitialItemTexts || [], keys: args._waitInitialItemKeys || [] }).catch(() => ({ tileCount: 0, tokens: [] }));
       }, ms => chosen.page.waitForTimeout(ms), 10000);
       const currentTokens = preCreateSnapshot.tokens;
       const currentFirstToken = currentTokens[0] || null;
