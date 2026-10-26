@@ -855,11 +855,10 @@ class FlowPilotContractTests(unittest.TestCase):
         self.assertIn("firstThreeThumbnailTokensMatch(baselineTokens, currentTokens)", self.script)
 
     def test_pre_create_img_img_video_thumbnail_tokens_match_despite_virtualized_count(self):
-        helper = "function firstThreeThumbnailTokensMatch" + self.script.split(
-            "function firstThreeThumbnailTokensMatch", 1
-        )[1].split("\n\nfunction firstThreeMediaKeysMatch", 1)[0]
-        node_test = helper + r"""
-const assert = await import('node:assert/strict');
+        helper_path = Path(__file__).parents[1] / "scripts" / "asb-identity.mjs"
+        node_test = f"""
+import assert from "node:assert/strict";
+import {{ firstThreeThumbnailTokensMatch }} from {helper_path.as_uri()!r};
 const baseline = ['asb:ANqvLOamTU8', 'asb:ANqvLOalS5Vz', 'asb:ANqvLOa10OIBbsk_ndWcBa6F'];
 const current = ['asb:ANqvLOamTU8', 'asb:ANqvLOalS5Vz', 'asb:ANqvLOa10OIBbsk_ndWcBa6F'];
 const baselineDomCount = 42;
