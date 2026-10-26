@@ -930,16 +930,23 @@ function openedMediaUuidMatches(candidateMediaUuid, openedUrl, baselineKeys = []
   return !new Set(baselineKeys || []).has(`media:${openedUuid}`);
 }
 
-function orderedBaselineShiftIsVerified(first, second, third, beforeKeys) {
-  const baseline = new Set(beforeKeys || []);
-  return Boolean(first && second && third
-    && beforeKeys?.[0] && beforeKeys?.[1]
-    && second.key === beforeKeys[0] && third.key === beforeKeys[1]
-    && second.mediaUuid && third.mediaUuid
-    && first.key && !baseline.has(first.key)
-    && !first.mediaUuid && !first.progress
-    && !(/\bfailed\b/i.test(`${first.state || ""} ${first.text || ""}`)
-      || isGenerationFailureText(`${first.state || ""} ${first.text || ""}`)));
+function orderedBaselineShiftIsVerified(first, shiftedItems, beforeKeys) {
+  const baselineKeys = beforeKeys || [];
+  if (!first || !Array.isArray(shiftedItems) || baselineKeys.length < 3) return false;
+  const firstKey = failedPolicyBaselineKey(first) || first.key || "";
+  const firstState = `${first.state || ""} ${first.text || ""}`;
+  if (!firstKey || new Set(baselineKeys).has(firstKey) || first.mediaUuid || first.progress
+    || /\bfailed\b/i.test(firstState) || isGenerationFailureText(firstState)) return false;
+  // Match the three pre-Create first-row identities in order after the candidate.
+  // A known policy-refusal tile has no media UUID, so its normalized text identity
+  // must be reconstructed from its live tile text rather than its empty DOM key.
+  return baselineKeys.slice(0, 3).every((baselineKey, index) => {
+    const item = shiftedItems[index];
+    if (!item) return false;
+    const actualKey = failedPolicyBaselineKey(item) || item.key || "";
+    if (baselineKey.startsWith("failed-policy:")) return actualKey === baselineKey;
+    return actualKey === baselineKey && Boolean(item.mediaUuid);
+  });
 }
 
 function readMp4VideoResolution(filename) {
@@ -1032,17 +1039,29 @@ async function waitForGenerationAndDownload(page, selectors, { beforeKeys, befor
       throw new Error(`FLOW_GENERATION_FAILED: new Flow tile at position ${newlyFailedTileWithoutIdentity.index} reports failure without a stable media identity: ${newlyFailedTileWithoutIdentity.text}`);
     }
     const scan = await collectAllGeneratedItems(page, selectors.generated_video_items, {
-      uuidCache, topLimit: 3, selectors, skipUuidResolution: true,
-    }).catch(() => ({ items: [], topItems: [], reachedBottom: false, topLimited: false }));
+      uuidCache, topLimit: 4, selectors, skipUuidResolution: true,
+    }).catch(error => {
+      console.warn(JSON.stringify({ event: "post_create_poll", poll_at: new Date().toISOString(),
+        outcome: "inventory_scan_error", reason: String(error?.message || error).slice(0, 240) }));
+      return { items: [], topItems: [], reachedBottom: false, topLimited: false };
+    });
     if (!scan.topLimited || scan.duplicateVisibleKeyDetected) {
-      console.warn("Post-Create media inventory snapshot is not ready; retrying within the bounded wait deadline.");
+      console.warn(JSON.stringify({ event: "post_create_poll", poll_at: new Date().toISOString(),
+        outcome: "inventory_not_ready", top_limited: Boolean(scan.topLimited),
+        duplicate_visible_key_detected: Boolean(scan.duplicateVisibleKeyDetected),
+        visible_item_count: (scan.items || scan.topItems || []).length,
+        reason: !scan.topLimited ? "top_row_snapshot_not_complete" : "duplicate_visible_identity" }));
       await page.waitForTimeout(500);
       continue;
     }
     // Do not open a generating tile to resolve its UUID: its thumbnail/token can
     // rotate while rendering. Wait until Flow exposes a media UUID in DOM/network
     // metadata, then identify the new result strictly by set difference vs baseline.
-    const topItemsNow = scan.items || scan.topItems || [];
+    const topItemsNow = (scan.items || scan.topItems || []).map(item => ({
+      ...item,
+      // Reconstruct the exact baseline key for old explicit policy-refusal cards.
+      key: failedPolicyBaselineKey(item) || item.key || "",
+    }));
     const baselineKeys = new Set(beforeKeys || []);
     const baselineKeyCounts = new Map();
     for (const key of beforeKeys || []) baselineKeyCounts.set(key, (baselineKeyCounts.get(key) || 0) + 1);
@@ -1072,18 +1091,36 @@ async function waitForGenerationAndDownload(page, selectors, { beforeKeys, befor
     // /image/<uuid> and no video UUID until its editor is opened. Infer insertion
     // only when the next two visible tiles match the first two pre-Create UUIDs
     // in order; position alone is never sufficient.
-    if (candidateItems.length === 0 && topItemsNow.length >= 3) {
-      const [first, second, third] = topItemsNow;
-      const firstKey = beforeKeys?.[0] || null;
-      const secondKey = beforeKeys?.[1] || null;
-      const shiftedBaselineConfirmed = orderedBaselineShiftIsVerified(first, second, third, beforeKeys);
+    if (candidateItems.length === 0 && topItemsNow.length >= 4) {
+      const [first, ...shiftedItems] = topItemsNow;
+      const shiftedBaselineConfirmed = orderedBaselineShiftIsVerified(first, shiftedItems, beforeKeys);
       if (shiftedBaselineConfirmed) {
         candidateItems = [{ ...first, inferredNewTile: true }];
         console.log(JSON.stringify({ event: "post_create_new_first_tile_inferred",
-          method: "ordered_baseline_shift", first_tile_key: first.key,
-          confirmed_baseline_keys: [second.key, third.key] }));
+          method: "ordered_baseline_shift_with_non_media_baseline_support",
+          first_tile_key: first.key || null,
+          confirmed_baseline_keys: shiftedItems.slice(0, 3).map(item => item.key || null) }));
       }
     }
+    const pollCandidates = candidateItems.map(item => ({
+      index: item.index, key: item.key || null, media_uuid: item.mediaUuid || null,
+      inferred_new_tile: Boolean(item.inferredNewTile),
+    }));
+    const pollRejectReasons = [];
+    if (newUuidItems.length === 0 && candidateItems.length === 0) {
+      pollRejectReasons.push(topItemsNow.length < 4 ? "insufficient_top_row_for_three_identity_shift_check"
+        : "no_new_uuid_or_verified_ordered_baseline_shift");
+    }
+    if (candidateItems.length > 1) pollRejectReasons.push("multiple_new_candidates_ambiguous");
+    console.log(JSON.stringify({ event: "post_create_poll", poll_at: new Date().toISOString(),
+      outcome: candidateItems.length === 1 ? "candidate_found" : candidateItems.length > 1 ? "ambiguous_candidates" : "no_candidate",
+      baseline_keys_first_three: (beforeKeys || []).slice(0, 3),
+      top_row: topItemsNow.slice(0, 4).map(item => ({
+        index: item.index, key: item.key || null, media_uuid: item.mediaUuid || null,
+        state: String(item.state || "").slice(0, 100), text: String(item.text || "").replace(/\s+/g, " ").slice(0, 120),
+        progress: Boolean(item.progress),
+      })),
+      candidates: pollCandidates, reject_reasons: pollRejectReasons }));
     const failedTile = newItems.find(item =>
       /\bfailed\b/i.test(`${item.state} ${item.text}`)
       || isGenerationFailureText(`${item.state} ${item.text}`));
