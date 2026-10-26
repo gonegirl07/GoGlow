@@ -493,6 +493,11 @@ try {
   ];
   fs.writeFileSync(logPath, [
     ...events.map(event => JSON.stringify(event)),
+    JSON.stringify({ baseline_first_three_media_keys: [
+      "failed-policy:" + policyText.toLowerCase(),
+      "media:4bcc1ce2-4018-43fc-9a8a-059fdc315750",
+      "media:07e82f95-f37f-412a-83bd-018fe25b1278",
+    ] }, null, 2),
     "Pre-Create baseline UUID count: 3. Create timestamp: 2026-10-26T23:27:22Z",
     JSON.stringify({ event: "generation_ledger_recorded", attempt_id: attemptId, status: "submitted_unidentified" }),
   ].join("\n") + "\n");
