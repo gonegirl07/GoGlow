@@ -1290,6 +1290,7 @@ const tokens = buildVerifiedThumbnailBaselineTokens(
   [null, 'asb:ANqvLOa3xUpF', null],
   items,
   ['Mai seated breathing', 'Mai standing', 'Mai kneeling'],
+  new Set([0, 1, 2]), // independently resolved unique video UUIDs outrank the ASB thumbnail token
 );
 assert.deepEqual(tokens, [
   'media:' + items[0].mediaUuid,
