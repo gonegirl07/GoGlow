@@ -140,7 +140,7 @@ class FlowPilotContractTests(unittest.TestCase):
 
     def test_post_create_identity_helpers_and_resolution_parser_behave_fail_closed(self):
         helper = self.script.split("function findNewCompletedMediaItems(items, beforeKeys)", 1)[1].split(
-            "\n\nfunction readMp4VideoResolution", 1
+            "\n\nasync function waitForGenerationAndDownload", 1
         )[0]
         helper = "function findNewCompletedMediaItems(items, beforeKeys)" + helper
         node_test = r"""
