@@ -3804,6 +3804,15 @@ async function prepare(args, browser, rl) {
               && texts.filter(value => value === currentText).length === 1
               && Array.isArray(baseline?.texts)
               && baseline.texts.filter(value => normalize(value) === currentText).length === 1) return `media:${uuid.toLowerCase()}`;
+            const isPolicyRefusal = /prominent people/i.test(currentText)
+              && /might violate our policies/i.test(currentText)
+              && /you will be refunded/i.test(currentText)
+              && /\bfailed\b/i.test(currentText);
+            if (baselineKey.startsWith("failed-policy:") && isPolicyRefusal
+              && currentText === baselineText
+              && texts.filter(value => value === currentText).length === 1
+              && Array.isArray(baseline?.texts)
+              && baseline.texts.filter(value => normalize(value) === currentText).length === 1) return baselineKey;
             // Match baseline's img/video reader: playback may replace an img
             // with a video element while the composer is open.
             const sources = [
