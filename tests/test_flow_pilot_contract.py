@@ -310,7 +310,21 @@ const failedPolicyBaselineKey = item => {
 };
 const rawProviderMessage = value => String(value || "").trim() || null;
 const findNewCompletedMediaItems = (items, keys) => (items || []).filter(item => item.mediaUuid && item.key && !new Set(keys || []).has(item.key) && !item.progress && !/generating|processing|queued|pending/i.test(String(item.state || item.text || "")));
-const orderedBaselineShiftIsVerified = () => false;
+const orderedBaselineShiftIsVerified = (first, shiftedItems, beforeKeys) => {
+  const baselineKeys = beforeKeys || [];
+  if (!first || !Array.isArray(shiftedItems) || baselineKeys.length < 3) return false;
+  const firstKey = failedPolicyBaselineKey(first) || first.key || "";
+  const firstState = String(first.state || "") + " " + String(first.text || "");
+  if (!firstKey || new Set(baselineKeys).has(firstKey) || first.mediaUuid || first.progress
+    || /\\bfailed\\b/i.test(firstState) || isGenerationFailureText(firstState)) return false;
+  return baselineKeys.slice(0, 3).every((baselineKey, index) => {
+    const item = shiftedItems[index];
+    if (!item) return false;
+    const actualKey = failedPolicyBaselineKey(item) || item.key || "";
+    if (baselineKey.startsWith("failed-policy:")) return actualKey === baselineKey;
+    return actualKey === baselineKey && Boolean(item.mediaUuid);
+  });
+};
 const openedMediaUuidMatches = (candidateUuid, openedUrl, keys) => {
   const match = String(openedUrl).match(/\/(?:edit|video)\/([0-9a-f-]{36})(?:[/?#]|$)/i);
   return Boolean(match && candidateUuid && match[1].toLowerCase() === candidateUuid.toLowerCase() && !(keys || []).includes("media:" + match[1].toLowerCase()));
