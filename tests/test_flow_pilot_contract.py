@@ -139,20 +139,27 @@ class FlowPilotContractTests(unittest.TestCase):
         self.assertIn('["credit_balance", "generated_video_items", "download_media_button", "download_360p_original_button", "account_panel_open", "account_panel_close"]', self.script)
 
     def test_post_create_identity_helpers_and_resolution_parser_behave_fail_closed(self):
-        helper = self.script.split("function findNewCompletedMediaItems(items, beforeKeys)", 1)[1].split(
-            "\n\nasync function waitForGenerationAndDownload", 1
+        helper = self.script.split("function openedMediaUuidMatches", 1)[1].split(
+            "\n\nfunction readMp4VideoResolution", 1
         )[0]
-        helper = "function findNewCompletedMediaItems(items, beforeKeys)" + helper
+        helper = "function openedMediaUuidMatches" + helper
         node_test = r"""
 import assert from "node:assert/strict";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-const isGenerationFailureText = value => /generation failed|policy refusal/i.test(String(value || ""));
+const isGenerationFailureText = value => /generation failed|policy refusal|prominent people|might violate our policies|you will be refunded/i.test(String(value || ""));
+const failedPolicyBaselineKey = item => {
+  const text = String(item?.text || "").replace(/\s+/g, " ").trim().toLowerCase();
+  return !item?.mediaUuid && /\bfailed\b/i.test(String(item?.state || "") + " " + text)
+    && /prominent people/i.test(text) && /might violate our policies/i.test(text)
+    && /you will be refunded/i.test(text) ? "failed-policy:" + text : null;
+};
 """ + helper + r"""
 const baseline = [
   "media:11111111-1111-4111-8111-111111111111",
   "media:22222222-2222-4222-8222-222222222222",
+  "media:33333333-3333-4333-8333-333333333333",
 ];
 const old = { key: baseline[0], mediaUuid: baseline[0].slice(6), text: "old video" };
 const generating = { key: "media:33333333-3333-4333-8333-333333333333", mediaUuid: "33333333-3333-4333-8333-333333333333", text: "generating", progress: 40 };
@@ -162,13 +169,20 @@ assert.equal(openedMediaUuidMatches(fresh.mediaUuid, "https://flow.google.com/pr
 assert.equal(openedMediaUuidMatches(fresh.mediaUuid, "https://flow.google.com/project/aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa/edit/" + old.mediaUuid, baseline), false, "stale editor UUID must not match the new candidate");
 assert.equal(openedMediaUuidMatches(fresh.mediaUuid, "https://flow.google.com/project/aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa/edit/" + baseline[1].slice(6), baseline), false, "baseline UUID must fail closed");
 assert.equal(openedMediaUuidMatches(fresh.mediaUuid, "https://flow.google.com/project/aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa", baseline), false, "non-detail route must fail closed");
-const first = { key: "media:55555555-5555-4555-8555-555555555555", mediaUuid: null, text: "new tile" };
+const first = { key: "thumbnail:new", mediaUuid: null, text: "new tile" };
 const second = { key: baseline[0], mediaUuid: baseline[0].slice(6) };
 const third = { key: baseline[1], mediaUuid: baseline[1].slice(6) };
-assert.equal(orderedBaselineShiftIsVerified(first, second, third, baseline), true);
-assert.equal(orderedBaselineShiftIsVerified(first, third, second, baseline), false, "neighbor order change must fail closed");
-assert.equal(orderedBaselineShiftIsVerified({ ...first, mediaUuid: "55555555-5555-4555-8555-555555555555" }, second, third, baseline), false);
-assert.equal(orderedBaselineShiftIsVerified({ ...first, text: "generation failed" }, second, third, baseline), false);
+const fourth = { key: baseline[2], mediaUuid: baseline[2].slice(6) };
+assert.equal(orderedBaselineShiftIsVerified(first, [second, third, fourth], baseline), true);
+assert.equal(orderedBaselineShiftIsVerified(first, [third, second, fourth], baseline), false, "neighbor order change must fail closed");
+assert.equal(orderedBaselineShiftIsVerified({ ...first, mediaUuid: "55555555-5555-4555-8555-555555555555" }, [second, third, fourth], baseline), false);
+assert.equal(orderedBaselineShiftIsVerified({ ...first, text: "generation failed" }, [second, third, fourth], baseline), false);
+const policyText = "Failed prominent people: This video might violate our policies. You will be refunded.";
+const policyKey = "failed-policy:" + policyText.toLowerCase();
+const policyBaseline = [policyKey, baseline[0], baseline[1]];
+const shiftedFailure = { key: "", mediaUuid: null, text: policyText, state: "Failed" };
+assert.equal(failedPolicyBaselineKey(shiftedFailure), policyKey);
+assert.equal(orderedBaselineShiftIsVerified(first, [shiftedFailure, second, third], policyBaseline), true, "must match non-UUID failed-policy baseline tile followed by two UUID-backed neighbors");
 const dir = fs.mkdtempSync(path.join(os.tmpdir(), "goglow-mp4-test-"));
 try {
   const file = path.join(dir, "fixture.mp4");
@@ -915,7 +929,7 @@ assert.equal(policyRowPage.clicks.includes("download-button"), true);
         wait_fn = self.script.split("async function waitForGenerationAndDownload", 1)[1].split(
             "function createConfirmationReader()", 1
         )[0]
-        self.assertIn("const topItemsNow = scan.items || scan.topItems || [];", wait_fn)
+        self.assertIn("const topItemsNow = (scan.items || scan.topItems || []).map(item => ({", wait_fn)
         self.assertIn("findNewCompletedMediaItems(topItemsNow, beforeKeys)", wait_fn)
         self.assertIn("mediaUuid: mediaUuid ? mediaUuid.toLowerCase() : null", self.script)
         self.assertIn("!item.key || !item.mediaUuid", self.script)
@@ -1873,7 +1887,7 @@ assert.equal(
         self.assertIn('classification: item.mediaUuid && initialItems[index] ? "stable_existing_baseline_tile"', self.script)
         self.assertIn('"known_policy_refusal_non_media_baseline"', self.script)
         self.assertIn('baselineKey.startsWith("failed-policy:") && isPolicyRefusal && sameUniqueText', self.script)
-        self.assertEqual(self.script.count('baselineKey.startsWith("failed-policy:")'), 2)
+        self.assertEqual(self.script.count('baselineKey.startsWith("failed-policy:")'), 3)
         self.assertIn("unresolvedBaselineIndexes.length > 0", self.script)
         self.assertIn('"unknown_identity_fail_closed"', self.script)
 
