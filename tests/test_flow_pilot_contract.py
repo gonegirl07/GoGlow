@@ -1121,7 +1121,7 @@ assert.equal(ambiguous[2], null, 'must not reuse UUID when same-position row fin
         result = subprocess.run(["node", "--input-type=module", "-e", node_test],
                                 capture_output=True, text=True, check=False, timeout=5)
         self.assertEqual(result.returncode, 0, msg=result.stdout + result.stderr)
-        self.assertIn('if (segments[assetIndex] === "image") return pathname;', self.script)
+        self.assertIn('if (segments[assetIndex] === "image") return null;', self.script)
         self.assertIn("skipUuidResolution: thumbnailRetry === 1", self.script)
         self.assertIn('phase: thumbnailRetry === 1 && completeUniqueUuidBaseline ? "thumbnail_only_recapture" : "full_row_dom_inventory"', self.script)
 
