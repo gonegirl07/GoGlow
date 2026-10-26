@@ -3502,7 +3502,8 @@ async function prepare(args, browser, rl) {
           // text, not same-position thumbnail tokens.
           const verifiedRowIndexes = verifiedFirstRowIdentityIndexes(initialScan.items, refreshedScan.items);
           let effectiveVerifiedRowIndexes = verifiedRowIndexes;
-          let sameVisibleRow = effectiveVerifiedRowIndexes !== null;
+          const sameVisibleRow = verifiedRowIndexes !== null;
+          let rowVerifiedForBaseline = sameVisibleRow;
           // A known policy-refusal tile has no media UUID by design. If the earlier
           // scan contains a stale thumbnail-derived UUID, adopt the independently
           // re-resolved full-row inventory only when it contains the same unique
@@ -3511,7 +3512,7 @@ async function prepare(args, browser, rl) {
             const refusalFallbackIndexes = verifiedResolvedMediaWithRefusalFallback(initialScan.items, refreshedScan.items);
             if (refusalFallbackIndexes !== null) {
               effectiveVerifiedRowIndexes = refusalFallbackIndexes;
-              sameVisibleRow = true;
+              rowVerifiedForBaseline = true;
               initialScan = { ...refreshedScan, items: refreshedScan.items.map(item => ({ ...item })) };
               console.warn(JSON.stringify({
                 event: "baseline_refusal_resolved_uuid_fallback",
@@ -3520,7 +3521,7 @@ async function prepare(args, browser, rl) {
               }));
             }
           }
-          if (sameVisibleRow) {
+          if (rowVerifiedForBaseline) {
             if (thumbnailRetry === 2) {
               // UUID equality across independent full inventories verifies each media
               // tile even if its DOM position changes. Only mark UUIDs that are unique
@@ -3552,10 +3553,10 @@ async function prepare(args, browser, rl) {
             elapsed_ms: Date.now() - retryInventoryStartedAt,
             item_count: refreshedScan.items.length,
             uuid_count: refreshedScan.items.filter(item => item.mediaUuid).length,
-            row_identity_verified: sameVisibleRow,
+            row_identity_verified: rowVerifiedForBaseline,
             refreshed_indexes: sameVisibleRow ? missingIndexes.filter(index => initialScan.items[index]?.thumbnailSrc && thumbnailIdentityToken(initialScan.items[index].thumbnailSrc)) : [],
           }));
-          if (!sameVisibleRow) {
+          if (!rowVerifiedForBaseline) {
             console.warn(JSON.stringify({ event: "thumbnail_recapture_row_identity_unverified", retry: thumbnailRetry,
               max_retries: 2, observed_items: refreshedScan.items.length,
               action: thumbnailRetry < 2 ? "retry_full_row_inventory" : "fail_closed_after_retries" }));
