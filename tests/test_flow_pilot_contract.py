@@ -196,6 +196,73 @@ try {
         self.assertIn('verification_evidence: verificationEvidence || null', self.script)
         self.assertIn('resolution_match_status:', self.script)
 
+    def test_generation_ledger_records_verified_media_and_download_failure_behavior(self):
+        ledger_fn = self.script.split("function makeGenerationLedgerRecord(", 1)[1].split(
+            "\n\nfunction findNewCompletedMediaItems", 1
+        )[0]
+        ledger_fn = "function makeGenerationLedgerRecord(" + ledger_fn
+        node_test = r"""
+import assert from "node:assert/strict";
+import fs from "node:fs";
+import os from "node:os";
+import path from "node:path";
+import { createHash, randomUUID } from "node:crypto";
+const rawProviderMessage = value => String(value || "").trim() || null;
+""" + ledger_fn + r"""
+const dir = fs.mkdtempSync(path.join(os.tmpdir(), "goglow-ledger-test-"));
+try {
+  const face = path.join(dir, "face.jpg");
+  const ref = path.join(dir, "pose.png");
+  fs.writeFileSync(face, Buffer.from("face-reference"));
+  fs.writeFileSync(ref, Buffer.from("pose-reference"));
+  const scene = {
+    scene_id: "scene-ledger-test", job_id: "job-ledger-test",
+    model: "Omni 1.1 Flash", resolution: "360p", duration: "8s",
+    reference_images: [face, ref], face_reference_ids: [face],
+  };
+  const record = makeGenerationLedgerRecord({
+    scene, projectId: "project-test", prompt: "test prompt", estimatedCost: 6,
+    beforeBalance: 841, afterBalance: 835, resultStatus: "download_failed",
+    mediaUri: "https://flow.google.com/project/aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa/edit/44444444-4444-4444-8444-444444444444",
+    downloadedFile: null, downloadError: "download timed out", timeoutError: null,
+    actualResolution: "360x640", downloadQualityLabel: "Original size",
+    verifiedMediaUuid: "44444444-4444-4444-8444-444444444444",
+    verificationState: "verified_new_media_uuid",
+    verificationEvidence: "new_media_uuid_set_difference_and_matching_detail_route",
+    attemptNumber: 1, attemptId: "attempt-test",
+  });
+  assert.equal(record.result.status, "download_failed");
+  assert.equal(record.credits.actual_amount, 6);
+  assert.equal(record.credits.before_balance, 841);
+  assert.equal(record.credits.after_balance, 835);
+  assert.equal(record.media.verification_state, "verified_new_media_uuid");
+  assert.equal(record.media.verified_media_uuid, "44444444-4444-4444-8444-444444444444");
+  assert.equal(record.media.verification_evidence, "new_media_uuid_set_difference_and_matching_detail_route");
+  assert.equal(record.media.resolution_match_status, "match");
+  assert.equal(record.media.integrity_status, "not_checked");
+  assert.match(record.notes, /Download failed: download timed out/);
+  const mismatch = makeGenerationLedgerRecord({
+    scene, projectId: "project-test", prompt: "test prompt", estimatedCost: 6,
+    beforeBalance: 841, afterBalance: 835, resultStatus: "succeeded",
+    mediaUri: "https://flow.google.com/video/44444444-4444-4444-8444-444444444444",
+    downloadedFile: null, downloadError: null, timeoutError: null,
+    actualResolution: "720x1280", downloadQualityLabel: "Original size",
+    verifiedMediaUuid: "44444444-4444-4444-8444-444444444444",
+    verificationState: "verified_new_media_uuid",
+    verificationEvidence: "new_media_uuid_set_difference_and_matching_detail_route",
+  });
+  assert.equal(mismatch.media.resolution_match_status, "mismatch");
+} finally {
+  fs.rmSync(dir, { recursive: true, force: true });
+}
+"""
+        result = subprocess.run(
+            ["node", "--input-type=module", "-e", node_test],
+            capture_output=True, text=True, check=False, timeout=5,
+            cwd=Path(__file__).parents[1],
+        )
+        self.assertEqual(result.returncode, 0, msg=result.stdout + result.stderr)
+
     def test_wait_tracks_new_tile_by_stable_identity_and_never_retries(self):
         self.assertIn('collectAllGeneratedItems(page, selectors.generated_video_items, {\n      uuidCache, topLimit: 3, selectors, skipUuidResolution: true,', self.script)
         self.assertIn('candidateItems.length === 1', self.script)
