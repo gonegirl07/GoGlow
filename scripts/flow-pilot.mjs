@@ -1684,8 +1684,20 @@ async function chooseModel(page, selectors, model) {
 
 function assetUuidFromUrl(value) {
   const source = String(value || "");
-  const match = source.match(/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/i);
-  return match?.[0]?.toLowerCase() || null;
+  const uuidPattern = "[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}";
+  // Prefer the UUID attached to an actual media route. Flow URLs can include
+  // /project/<project UUID>/edit/<media UUID>; returning the first UUID would
+  // incorrectly identify the project itself as the generated asset.
+  const routeMatch = source.match(new RegExp("\\/(?:video|edit)\\/(" + uuidPattern + ")(?:[/?#]|$)", "i"));
+  if (routeMatch) return routeMatch[1].toLowerCase();
+
+  const matches = Array.from(source.matchAll(new RegExp(uuidPattern, "ig")));
+  if (!matches.length) return null;
+  // If this is a project URL, exclude the UUID belonging to /project/<id>.
+  const projectMatch = source.match(new RegExp("\\/project\\/(" + uuidPattern + ")(?:[/?#]|$)", "i"));
+  const projectUuid = projectMatch?.[1]?.toLowerCase() || null;
+  const assetMatch = matches.find(match => match[0].toLowerCase() !== projectUuid);
+  return assetMatch?.[0]?.toLowerCase() || null;
 }
 
 function applyVerifiedRowUuidFallback(initialItems, refreshedItems, baselineTexts, refreshedTexts) {
