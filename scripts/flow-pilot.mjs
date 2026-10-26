@@ -1772,6 +1772,8 @@ function thumbnailIdentityToken(value) {
     try { return new URL(source, "https://flow.google.com").pathname; }
     catch { return source.split(/[?#]/, 1)[0]; }
   }
+  const videoRouteUuid = source.match(/\/video\/([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})(?:[/?#]|$)/i)?.[1];
+  if (videoRouteUuid) return `media:${videoRouteUuid.toLowerCase()}`;
   const mediaUuid = assetUuidFromUrl(source);
   if (mediaUuid) return `media:${mediaUuid}`;
   const asbToken = source.match(/\/asb\/([^/?#]+)/i);
