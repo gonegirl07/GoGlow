@@ -451,7 +451,7 @@ assert.equal(policyRowPage.clicks.includes("download-button"), true);
         self.assertIn('event: "post_create_poll"', self.script)
 
     def test_wait_tracks_new_tile_by_stable_identity_and_never_retries(self):
-        self.assertIn('collectAllGeneratedItems(page, selectors.generated_video_items, {\n      uuidCache, topLimit: 3, selectors, skipUuidResolution: true,', self.script)
+        self.assertIn('collectAllGeneratedItems(page, selectors.generated_video_items, {\n      uuidCache, topLimit: 4, selectors, skipUuidResolution: true,', self.script)
         self.assertIn('candidateItems.length === 1', self.script)
         self.assertIn('refusing to guess which clip to download', self.script)
         self.assertIn('status: "unknown_do_not_retry"', self.script)
@@ -527,7 +527,7 @@ assert.equal(policyRowPage.clicks.includes("download-button"), true);
         self.assertIn("Refusing to overwrite an existing scene/attempt download", self.script)
 
     def test_virtualized_flow_grid_uses_new_stable_keys_not_tile_count(self):
-        self.assertIn("const topItemsNow = scan.items || scan.topItems || [];", self.script)
+        self.assertIn("const topItemsNow = (scan.items || scan.topItems || []).map(item => ({", self.script)
         self.assertIn("const newItems = findNewCompletedMediaItems(topItemsNow, beforeKeys);", self.script)
         self.assertIn("Normalize media URLs to their stable UUID", self.script)
         self.assertIn("tileText.slice(0, 220)", self.script)
