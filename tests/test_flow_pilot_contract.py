@@ -1328,6 +1328,18 @@ assert.equal(
         self.assertIn("args._waitInitialThumbnailImageTokens = domThumbnailBaseline.imageTokens || [];", self.script)
 
 
+    def test_dom_thumbnail_baseline_handles_refusal_verified_uuid_and_video_route(self):
+        # The first row may contain a refused card without a thumbnail, a verified
+        # video whose DOM thumbnail is empty, and a /video/<uuid> preview.
+        self.assertIn('return "failed-policy:" + tileText.toLowerCase();', self.script)
+        self.assertIn('if (!uuid && isKnownPolicyRefusalTile(item) && text', self.script)
+        self.assertIn('tokens[index] = failedPolicyBaselineKey(item);', self.script)
+        self.assertIn('verifiedUuidThumbnailIndexes.add(index);', self.script)
+        self.assertIn('candidateSegments.findIndex(part => part === "image" || part === "asb" || part === "video")', self.script)
+        self.assertIn('segments.findIndex(part => part === "image" || part === "asb" || part === "video")', self.script)
+        self.assertIn('if (segments[assetIndex] === "image") return null;', self.script)
+        self.assertIn('&& baselineTextCounts.get(text) === 1 && refreshedTextCounts.get(text) === 1', self.script)
+
     def test_explicit_prominent_people_refusal_is_stable_non_media_baseline(self):
         # A known provider refusal has no video UUID, but its exact unique text can
         # identify the existing non-media tile. Other unresolved cards still fail closed.
