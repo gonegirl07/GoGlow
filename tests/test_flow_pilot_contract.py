@@ -1129,7 +1129,11 @@ const verified = buildVerifiedThumbnailBaselineTokens(
   ['text may differ while the thumbnail is lazy', 'Mai standing', 'Mai kneeling'],
   new Set([0, 1, 2]),
 );
-assert.deepEqual(verified, items.map(item => 'media:' + item.mediaUuid));
+assert.deepEqual(verified, [
+  'media:' + items[0].mediaUuid,
+  'asb:ANqvLOa3xUpF',
+  'asb:ANqvLOaNiC06',
+]);
 """
         result = subprocess.run(["node", "--input-type=module", "-e", node_test],
                                 capture_output=True, text=True, check=False, timeout=5)
