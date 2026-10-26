@@ -1332,6 +1332,7 @@ assert.equal(
         # A known provider refusal has no video UUID, but its exact unique text can
         # identify the existing non-media tile. Other unresolved cards still fail closed.
         self.assertIn("function isKnownPolicyRefusalTile(item)", self.script)
+        self.assertIn("if (!knownPolicyRefusal && (!item.key || !item.mediaUuid)) unkeyedItemsDetected = true;", self.script)
         self.assertIn("if (!item || item.mediaUuid) return false;", self.script)
         self.assertIn("&& /prominent people/i.test(text)", self.script)
         self.assertIn("&& /might violate our policies/i.test(text)", self.script)
