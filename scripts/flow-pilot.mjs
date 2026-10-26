@@ -1125,6 +1125,7 @@ async function waitForGenerationAndDownload(page, selectors, { beforeKeys, befor
             media_uuid: openedUuid, url: openedUrl, method: "edit_route_after_ordered_baseline_shift" }));
         } else {
           const candidateUuid = candidate.mediaUuid || String(candidate.key || "").match(/^media:([0-9a-f-]{36})$/i)?.[1] || null;
+          await page.waitForURL(url => /\/(?:edit|video)\/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}(?:[/?#]|$)/i.test(new URL(url).pathname), { timeout: 8000 }).catch(() => {});
           const openedUrl = page.url();
           if (!openedMediaUuidMatches(candidateUuid, openedUrl, beforeKeys)) {
             throw new Error(`FLOW_SUBMITTED_UNIDENTIFIED: Opened detail route did not match the newly detected candidate media UUID (candidate=${candidateUuid || "missing"}, url=${openedUrl}). Refusing to download any media from this route; do not retry automatically.`);
