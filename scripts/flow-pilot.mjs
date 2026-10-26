@@ -915,7 +915,7 @@ function findNewCompletedMediaItems(items, beforeKeys) {
   const baseline = new Set(beforeKeys || []);
   return (items || []).filter(item => {
     if (!item?.mediaUuid || !item.key || baseline.has(item.key)) return false;
-    const state = \`\${item.state || ""} \${item.text || ""}\`;
+    const state = `\${item.state || ""} \${item.text || ""}`;
     if (item.progress || /\b(?:generating|generation in progress|processing|in progress|queued|pending)\b/i.test(state)) return false;
     return true;
   });
@@ -927,7 +927,7 @@ function openedMediaUuidMatches(candidateMediaUuid, openedUrl, baselineKeys = []
   try { pathname = new URL(openedUrl).pathname; } catch { return false; }
   const openedUuid = pathname.match(route)?.[1]?.toLowerCase() || null;
   if (!openedUuid || !candidateMediaUuid || openedUuid !== String(candidateMediaUuid).toLowerCase()) return false;
-  return !new Set(baselineKeys || []).has(\`media:\${openedUuid}\`);
+  return !new Set(baselineKeys || []).has(`media:\${openedUuid}`);
 }
 
 function orderedBaselineShiftIsVerified(first, second, third, beforeKeys) {
@@ -938,8 +938,8 @@ function orderedBaselineShiftIsVerified(first, second, third, beforeKeys) {
     && second.mediaUuid && third.mediaUuid
     && first.key && !baseline.has(first.key)
     && !first.mediaUuid && !first.progress
-    && !(/\bfailed\b/i.test(\`\${first.state || ""} \${first.text || ""}\`)
-      || isGenerationFailureText(\`\${first.state || ""} \${first.text || ""}\`)));
+    && !(/\bfailed\b/i.test(`\${first.state || ""} \${first.text || ""}`)
+      || isGenerationFailureText(`\${first.state || ""} \${first.text || ""}`)));
 }
 
 function readMp4VideoResolution(filename) {
@@ -1126,7 +1126,7 @@ async function waitForGenerationAndDownload(page, selectors, { beforeKeys, befor
           const candidateUuid = candidate.mediaUuid || String(candidate.key || "").match(/^media:([0-9a-f-]{36})$/i)?.[1] || null;
           const openedUrl = page.url();
           if (!openedMediaUuidMatches(candidateUuid, openedUrl, beforeKeys)) {
-            throw new Error(\`FLOW_SUBMITTED_UNIDENTIFIED: Opened detail route did not match the newly detected candidate media UUID (candidate=\${candidateUuid || "missing"}, url=\${openedUrl}). Refusing to download any media from this route; do not retry automatically.\`);
+            throw new Error(`FLOW_SUBMITTED_UNIDENTIFIED: Opened detail route did not match the newly detected candidate media UUID (candidate=\${candidateUuid || "missing"}, url=\${openedUrl}). Refusing to download any media from this route; do not retry automatically.`);
           }
           console.log(JSON.stringify({ event: "post_create_opened_media_uuid_verified",
             candidate_media_uuid: candidateUuid.toLowerCase(), url: openedUrl,
@@ -4369,10 +4369,10 @@ async function prepare(args, browser, rl) {
         process.exitCode = 2;
       }
       if (resultStatus === "succeeded") {
-        console.log(\`Generation result verified. Media URI: \${mediaUri}\`);
-        if (downloadedFile) console.log(\`Downloaded clip: \${downloadedFile}\`);
+        console.log(`Generation result verified. Media URI: \${mediaUri}`);
+        if (downloadedFile) console.log(`Downloaded clip: \${downloadedFile}`);
       } else if (resultStatus === "download_failed") {
-        console.error(\`New video UUID verified, but download failed; ledger status is download_failed: \${downloadError}\`);
+        console.error(`New video UUID verified, but download failed; ledger status is download_failed: \${downloadError}`);
         process.exitCode = 2;
         args._stopVariants = true;
         return;
