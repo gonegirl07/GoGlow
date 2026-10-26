@@ -1655,6 +1655,26 @@ function assetUuidFromUrl(value) {
   return match?.[0]?.toLowerCase() || null;
 }
 
+function buildVerifiedThumbnailBaselineTokens(domTokens, items, domTexts) {
+  const tokens = [...(domTokens || [])];
+  const normalize = value => String(value || "").replace(/\\s+/g, " ").trim();
+  const baselineTexts = (items || []).slice(0, 3).map(item => normalize(item?.text));
+  const visibleTexts = (domTexts || []).map(normalize);
+  const countText = (values, target) => values.filter(value => value && value === target).length;
+  for (let index = 0; index < 3; index += 1) {
+    const item = items?.[index];
+    const uuid = item?.mediaUuid;
+    const uniqueUuid = Boolean(uuid && items.filter(candidate => candidate?.mediaUuid === uuid).length === 1);
+    const text = baselineTexts[index];
+    const samePositionText = Boolean(text && text === visibleTexts[index]
+      && countText(baselineTexts, text) === 1 && countText(visibleTexts, text) === 1);
+    // A resolved video UUID is authoritative only when it belongs to this exact
+    // inventory position and its text fingerprint uniquely matches the live DOM row.
+    if (uniqueUuid && samePositionText) tokens[index] = `media:${uuid.toLowerCase()}`;
+  }
+  return tokens;
+}
+
 function thumbnailIdentityToken(value) {
   const mediaUuidHint = arguments.length > 1 ? arguments[1] : null;
   const source = String(value || "");
@@ -3225,9 +3245,9 @@ async function prepare(args, browser, rl) {
       // this snapshot is meant to capture. Keep UUID resolution fail-closed.
       for (let thumbnailRetry = 1; thumbnailRetry <= 2
         && initialScan.items.length >= 3
-        && initialScan.items.some(item => !item.thumbnailSrc || !thumbnailIdentityToken(item.thumbnailSrc)); thumbnailRetry += 1) {
+        && initialScan.items.some(item => !item.thumbnailSrc || !thumbnailIdentityToken(item.thumbnailSrc) || /\\/image\\//i.test(item.thumbnailSrc)); thumbnailRetry += 1) {
         const missingIndexes = initialScan.items
-          .map((item, index) => !item.thumbnailSrc || !thumbnailIdentityToken(item.thumbnailSrc) ? index : null)
+          .map((item, index) => !item.thumbnailSrc || !thumbnailIdentityToken(item.thumbnailSrc) || /\\/image\\//i.test(item.thumbnailSrc) ? index : null)
           .filter(index => index !== null);
         const initialUuids = initialScan.items.map(item => item.mediaUuid);
         const completeUniqueUuidBaseline = initialUuids.every(Boolean) && new Set(initialUuids).size === initialUuids.length;
@@ -3255,10 +3275,10 @@ async function prepare(args, browser, rl) {
         const retryInventoryStartedAt = Date.now();
         const refreshedScan = await collectAllGeneratedItems(chosen.page, selectors.generated_video_items, {
           uuidCache: baselineUuidCache, topLimit: 3, selectors,
-          // Both retries take a fresh full first-row DOM snapshot. UUIDs are resolved
-          // only by the initial inventory; re-opening tiles here can rotate tokens,
-          // change the grid route, and incur repeated navigation timeouts.
-          skipUuidResolution: true,
+          // Retry 1 is a fast DOM-only recapture. Retry 2 repeats per-tile UUID
+          // re-identification, as the initial inventory does, so each row can be
+          // verified by its generated-video UUID even when /image/ placeholders persist.
+          skipUuidResolution: thumbnailRetry === 1,
         });
         if (completeUniqueUuidBaseline) {
           const normalizeTileText = value => String(value || "").replace(/\s+/g, " ").trim();
@@ -3280,7 +3300,8 @@ async function prepare(args, browser, rl) {
           if (sameVisibleRow) {
             for (const missingIndex of missingIndexes) {
               const refreshed = refreshedScan.items[missingIndex];
-              if (refreshed?.thumbnailSrc && thumbnailIdentityToken(refreshed.thumbnailSrc)) {
+              if (refreshed?.thumbnailSrc && thumbnailIdentityToken(refreshed.thumbnailSrc)
+                && !/\\/image\\//i.test(refreshed.thumbnailSrc)) {
                 initialScan.items[missingIndex].thumbnailSrc = refreshed.thumbnailSrc;
               } else if (initialScan.items[missingIndex]?.mediaUuid
                 && refreshed
@@ -3300,7 +3321,7 @@ async function prepare(args, browser, rl) {
           }
           console.log(JSON.stringify({
             event: "wait_preflight_phase_timing",
-            phase: "thumbnail_only_recapture",
+            phase: thumbnailRetry === 1 && completeUniqueUuidBaseline ? "thumbnail_only_recapture" : "full_row_dom_inventory",
             retry: thumbnailRetry,
             elapsed_ms: Date.now() - retryInventoryStartedAt,
             item_count: refreshedScan.items.length,
@@ -3436,32 +3457,17 @@ async function prepare(args, browser, rl) {
             catch { return source.split(/[?#]/, 1)[0] || null; }
           }
           const token = segments[assetIndex + 1];
+          // /image/<uuid> is an image-resource ID, never the generated video's ID.
+          if (segments[assetIndex] === "image") return pathname;
           if (/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(token)) {
             return `media:${token.toLowerCase()}`;
           }
           return segments[assetIndex] === "asb" ? `asb:${token}` : pathname;
         }),
       })).catch(() => ({ tileCount: 0, tokens: [] }));
-      const baselineTokensWithUuidFallback = [...domThumbnailBaseline.tokens];
-      const normalizeRowText = value => String(value || "").replace(/\\s+/g, " ").trim();
-      const baselineRowTexts = initialScan.items.slice(0, 3).map(item => normalizeRowText(item.text));
-      const visibleRowTexts = (domThumbnailBaseline.texts || []).map(normalizeRowText);
-      const countText = (values, target) => values.filter(value => value && value === target).length;
-      for (let tileIndex = 0; tileIndex < 3; tileIndex += 1) {
-        const item = initialScan.items[tileIndex];
-        const text = baselineRowTexts[tileIndex];
-        const uuid = item?.mediaUuid;
-        const uniqueUuid = Boolean(uuid && baselineUuids.filter(value => value === uuid).length === 1);
-        const samePositionText = Boolean(text && text === visibleRowTexts[tileIndex]
-          && countText(baselineRowTexts, text) === 1 && countText(visibleRowTexts, text) === 1);
-        // UUID fallback is allowed only when the UUID belongs to this exact inventory
-        // index and the same-index visible tile has a unique, identical text fingerprint.
-        if (uniqueUuid && samePositionText) {
-          // Prefer the media UUID over a signed thumbnail token when both can be
-          // tied to the same unique row text at the same position.
-          baselineTokensWithUuidFallback[tileIndex] = `media:${uuid}`;
-        }
-      }
+      const baselineTokensWithUuidFallback = buildVerifiedThumbnailBaselineTokens(
+        domThumbnailBaseline.tokens, initialScan.items, domThumbnailBaseline.texts,
+      );
       args._waitInitialThumbnailTokens = baselineTokensWithUuidFallback;
       if (domThumbnailBaseline.tileCount < 3 || args._waitInitialThumbnailTokens.length < 3
         || args._waitInitialThumbnailTokens.slice(0, 3).some(token => !token)) {
