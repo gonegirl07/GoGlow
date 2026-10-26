@@ -3493,12 +3493,34 @@ async function prepare(args, browser, rl) {
           // verified by its generated-video UUID even when /image/ placeholders persist.
           skipUuidResolution: thumbnailRetry === 1,
         });
-        const refreshedDomAsbTokens = await chosen.page.locator(selectors.generated_video_items).evaluateAll(elements =>
+        const refreshedDomAsbTokenCandidates = await chosen.page.locator(selectors.generated_video_items).evaluateAll(elements =>
           elements.slice(0, 3).map(element => {
-            const source = element.querySelector("img")?.getAttribute("src") || "";
-            const match = source.match(/\/asb\/([^/?#]+)/i);
-            return match ? `asb:${match[1].split("=", 1)[0]}` : null;
+            // Flow may keep the first <img> on an /image/ placeholder while a
+            // sibling/later image or video source already carries the live /asb/ token.
+            const nodes = [element, ...Array.from(element.querySelectorAll("*"))];
+            const sources = [];
+            for (const node of nodes) {
+              for (const attr of ["src", "srcset", "poster", "data-src", "href"]) {
+                const value = node.getAttribute?.(attr);
+                if (value) sources.push(String(value));
+              }
+            }
+            const tokens = [];
+            for (const source of sources) {
+              for (const match of source.matchAll(/\/asb\/([^/?#\s,]+)/ig)) {
+                const token = \`asb:\${match[1].split("=", 1)[0]}\`;
+                if (!tokens.includes(token)) tokens.push(token);
+              }
+            }
+            return tokens;
           })).catch(() => []);
+        const refreshedDomAsbTokens = refreshedDomAsbTokenCandidates.map(tokens => tokens[0] || null);
+        console.log(JSON.stringify({
+          event: "refreshed_dom_asb_thumbnail_tokens",
+          retry: thumbnailRetry,
+          // Retain exact normalized tokens in logs to diagnose UUID-to-ASB mapping.
+          captured_tokens_by_index: refreshedDomAsbTokenCandidates.map(tokens => tokens.map(token => token.slice(0, 100))),
+        }));
         if (initialScan.items.length >= 3 && refreshedScan.items.length >= 3) {
           const normalizeTileText = value => String(value || "").replace(/\s+/g, " ").trim();
           const baselineTexts = initialScan.items.map(item => normalizeTileText(item.text));
