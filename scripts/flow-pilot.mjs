@@ -3500,8 +3500,9 @@ async function prepare(args, browser, rl) {
           // Flow may reorder cards or swap /image/ and /video/ URL forms between
           // captures. Verify the unique resolved-media UUID set and exact refusal
           // text, not same-position thumbnail tokens.
-          let verifiedRowIndexes = verifiedFirstRowIdentityIndexes(initialScan.items, refreshedScan.items);
-          let sameVisibleRow = verifiedRowIndexes !== null;
+          const verifiedRowIndexes = verifiedFirstRowIdentityIndexes(initialScan.items, refreshedScan.items);
+          let effectiveVerifiedRowIndexes = verifiedRowIndexes;
+          let sameVisibleRow = effectiveVerifiedRowIndexes !== null;
           // A known policy-refusal tile has no media UUID by design. If the earlier
           // scan contains a stale thumbnail-derived UUID, adopt the independently
           // re-resolved full-row inventory only when it contains the same unique
@@ -3509,7 +3510,7 @@ async function prepare(args, browser, rl) {
           if (!sameVisibleRow && thumbnailRetry === 2) {
             const refusalFallbackIndexes = verifiedResolvedMediaWithRefusalFallback(initialScan.items, refreshedScan.items);
             if (refusalFallbackIndexes !== null) {
-              verifiedRowIndexes = refusalFallbackIndexes;
+              effectiveVerifiedRowIndexes = refusalFallbackIndexes;
               sameVisibleRow = true;
               initialScan = { ...refreshedScan, items: refreshedScan.items.map(item => ({ ...item })) };
               console.warn(JSON.stringify({
@@ -3524,7 +3525,7 @@ async function prepare(args, browser, rl) {
               // UUID equality across independent full inventories verifies each media
               // tile even if its DOM position changes. Only mark UUIDs that are unique
               // and present in both inventories; refusal remains a text-keyed non-media tile.
-              for (const index of verifiedRowIndexes) verifiedUuidThumbnailIndexes.add(index);
+              for (const index of effectiveVerifiedRowIndexes) verifiedUuidThumbnailIndexes.add(index);
               // The independently resolved scan is now the authoritative baseline
               // order. This prevents a prior tile's thumbnail token from being
               // paired with a different tile after Flow reorders the gallery.
