@@ -823,6 +823,10 @@ class FlowPilotContractTests(unittest.TestCase):
         self.assertIn("const expectedFirstToken = args._waitInitialThumbnailTokens?.[0];", self.script)
         self.assertIn("if (currentFirstToken !== expectedFirstToken && !sameFirstTileAfterThumbnailRotation && !sameFirstRowMediaIdentity)", self.script)
         self.assertIn("read_only_dom_check: true", self.script)
+        self.assertIn("const currentMediaKeys = Array.isArray(preCreateSnapshot.mediaKeys)", self.script)
+        self.assertIn("firstThreeMediaKeysMatch(baselineMediaKeys, currentMediaKeys)", self.script)
+        self.assertIn("preCreateSnapshot.stableFirstToken && preCreateSnapshot.tileCount >= 3 && sameFirstRowMediaIdentity", self.script)
+        self.assertNotIn("elements.length === baseline?.tileCount && uuid && currentText", self.script)
         self.assertIn("waitForPreCreateThumbnailSnapshot", self.script)
         self.assertIn('a[href*="/edit/"], a[href*="/video/"]', self.script)
         self.assertIn('thumbnailIdentityToken(item.thumbnailSrc) : null', self.script)
@@ -834,6 +838,39 @@ class FlowPilotContractTests(unittest.TestCase):
         self.assertNotIn("thirdNeighborStillLoading", self.script)
         self.assertIn("}, ms => chosen.page.waitForTimeout(ms), 10000);", self.script)
         self.assertNotIn("const currentScan = await collectAllGeneratedItems(chosen.page, selectors.generated_video_items", self.script)
+
+    def test_pre_create_uuid_identity_accepts_lazy_thumbnail_but_rejects_mismatch(self):
+        helper = "function firstThreeMediaKeysMatch" + self.script.split(
+            "function firstThreeMediaKeysMatch", 1
+        )[1].split("\n\nfunction firstTileMatchesByStableNeighbors", 1)[0]
+        node_test = helper + r"""
+const assert = await import('node:assert/strict');
+const baseline = [
+  'media:21770a37-08bc-493a-9b9c-5fdd8736f30e',
+  'media:3926cb48-0000-4000-8000-000000000002',
+  'media:f5c80cba-0000-4000-8000-000000000003',
+];
+const current = [
+  'media:21770a37-08bc-493a-9b9c-5fdd8736f30e',
+  'media:3926cb48-0000-4000-8000-000000000002',
+  'media:f5c80cba-0000-4000-8000-000000000003',
+];
+// Thumbnail tokens may be [asb, asb, null]; accept only with matching UUIDs.
+const visibleThumbnailTokens = ['asb:first', 'asb:second', null];
+assert.equal(visibleThumbnailTokens[0], 'asb:first');
+assert.equal(visibleThumbnailTokens[2], null);
+assert.equal(firstThreeMediaKeysMatch(baseline, current), true);
+assert.equal(firstThreeMediaKeysMatch(baseline, [
+  baseline[0], baseline[1], 'media:aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa'
+]), false, 'mismatched third UUID must reject');
+assert.equal(firstThreeMediaKeysMatch(baseline, [baseline[0], baseline[1], null]), false,
+  'missing third UUID must reject');
+assert.equal(firstThreeMediaKeysMatch(baseline, [baseline[0], baseline[0], baseline[2]]), false,
+  'duplicate UUID must reject');
+"""
+        result = subprocess.run(["node", "--input-type=module", "-e", node_test],
+                                capture_output=True, text=True, check=False)
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
 
     def test_neighbor_fallback_rejects_null_third_thumbnail_token(self):
         helper = "function firstTileMatchesByStableNeighbors" + self.script.split(

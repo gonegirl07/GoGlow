@@ -2956,6 +2956,17 @@ async function readCreditCost(page) {
   return match ? Number(match[1]) : null;
 }
 
+function firstThreeMediaKeysMatch(baselineKeys, currentKeys) {
+  const isVideoKey = value => typeof value === "string"
+    && /^media:[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(value);
+  return Array.isArray(baselineKeys) && Array.isArray(currentKeys)
+    && baselineKeys.length >= 3 && currentKeys.length >= 3
+    && baselineKeys.slice(0, 3).every((key, index) => isVideoKey(key)
+      && isVideoKey(currentKeys[index])
+      && key.toLowerCase() === currentKeys[index].toLowerCase())
+    && new Set(currentKeys.slice(0, 3).map(key => key.toLowerCase())).size === 3;
+}
+
 function firstTileMatchesByStableNeighbors({ expectedToken, currentToken, baselineTokens, currentTokens, baselineTileCount, currentTileCount }) {
   // The baseline is a thumbnail identity, not necessarily a media UUID. Flow can
   // expose the same tile as an "asb:" URL at capture and a "media:" UUID elsewhere.
@@ -3641,6 +3652,38 @@ async function prepare(args, browser, rl) {
       const preCreateSnapshot = await waitForPreCreateThumbnailSnapshot(async () => {
         return chosen.page.locator(selectors.generated_video_items).evaluateAll((elements, baseline) => ({
           tileCount: elements.length,
+          mediaKeys: elements.slice(0, 3).map((element, tileIndex) => {
+            const uuidPattern = /[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/i;
+            const dataValues = [
+              element.getAttribute("data-media-id"), element.getAttribute("data-asset-id"),
+              element.getAttribute("data-uuid"), element.getAttribute("data-id"),
+              ...Array.from(element.querySelectorAll("[data-media-id], [data-asset-id], [data-uuid], [data-id]"))
+                .flatMap(node => ["data-media-id", "data-asset-id", "data-uuid", "data-id"].map(name => node.getAttribute(name))),
+            ].filter(Boolean).map(String);
+            for (const value of dataValues) {
+              const match = value.match(uuidPattern);
+              if (match) return `media:${match[0].toLowerCase()}`;
+            }
+            const hrefs = Array.from(element.querySelectorAll('a[href*="/edit/"], a[href*="/video/"]'))
+              .map(anchor => anchor.getAttribute("href")).filter(Boolean);
+            const ownHref = element.getAttribute("href");
+            if (ownHref && /\/(?:edit|video)\//i.test(ownHref)) hrefs.unshift(ownHref);
+            for (const href of hrefs) {
+              const match = String(href).match(/\/(?:edit|video)\/([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})(?:[/?#]|$)/i);
+              if (match) return `media:${match[1].toLowerCase()}`;
+            }
+            const normalize = value => String(value || "").replace(/\s+/g, " ").trim();
+            const currentText = normalize(element.innerText || element.textContent || "");
+            const texts = elements.slice(0, 3).map(node => normalize(node.innerText || node.textContent || ""));
+            const baselineText = normalize(baseline?.texts?.[tileIndex]);
+            const baselineKey = String(baseline?.keys?.[tileIndex] || "");
+            const uuid = baselineKey.match(/^media:([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})$/i)?.[1];
+            if (uuid && currentText && currentText === baselineText
+              && texts.filter(value => value === currentText).length === 1
+              && Array.isArray(baseline?.texts)
+              && baseline.texts.filter(value => normalize(value) === currentText).length === 1) return `media:${uuid.toLowerCase()}`;
+            return null;
+          }),
           tokens: elements.slice(0, 3).map((element, tileIndex) => {
             // Prefer the tile's own media/edit URL or data ID; thumbnail src is
             // only a fallback because Flow can rotate /image/<uuid> to /asb/<token>.
@@ -3671,8 +3714,11 @@ async function prepare(args, browser, rl) {
             const baselineText = normalize(baseline?.texts?.[tileIndex]);
             const baselineKey = String(baseline?.keys?.[tileIndex] || "");
             const uuid = baselineKey.match(/^media:([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})$/i)?.[1];
-            if (elements.length === baseline?.tileCount && uuid && currentText && currentText === baselineText
+            // DOM scope may differ from the inventory sweep. Match by unique
+            // same-position text, not total DOM count.
+            if (uuid && currentText && currentText === baselineText
               && texts.filter(value => value === currentText).length === 1
+              && Array.isArray(baseline?.texts)
               && baseline.texts.filter(value => normalize(value) === currentText).length === 1) return `media:${uuid.toLowerCase()}`;
             const source = element.querySelector("img")?.getAttribute("src") || "";
             if (!source) return null;
@@ -3685,7 +3731,8 @@ async function prepare(args, browser, rl) {
             catch { return source.split(/[?#]/, 1)[0] || null; }
           }),
         }), { tileCount: args._waitInitialDomTileCount,
-          texts: args._waitInitialItemTexts || [], keys: args._waitInitialItemKeys || [] }).catch(() => ({ tileCount: 0, tokens: [] }));
+          texts: args._waitInitialItemTexts || [], keys: args._waitInitialItemKeys || [] })
+          .catch(() => ({ tileCount: 0, mediaKeys: [], tokens: [] }));
       }, ms => chosen.page.waitForTimeout(ms), 10000);
       const currentTokens = preCreateSnapshot.tokens;
       const currentFirstToken = currentTokens[0] || null;
@@ -3699,9 +3746,12 @@ async function prepare(args, browser, rl) {
       // already ran during wait-selector preflight, before attachment. At this stage
       // use only the read-only thumbnail/neighbor snapshot and preserve composer state.
       const baselineMediaKeys = args._waitInitialItemKeys || [];
-      const currentMediaKeys = [];
-      const sameFirstRowMediaIdentity = false;
-      const stableCurrentGrid = preCreateSnapshot.fullyStable || preCreateSnapshot.acceptedByNeighborRule;
+      const currentMediaKeys = Array.isArray(preCreateSnapshot.mediaKeys) ? preCreateSnapshot.mediaKeys : [];
+      const sameFirstRowMediaIdentity = firstThreeMediaKeysMatch(baselineMediaKeys, currentMediaKeys);
+      // UUID-confirmed row identity can override a different virtualized DOM count
+      // and a lazy third thumbnail, but never an absent/mismatched UUID.
+      const stableCurrentGrid = preCreateSnapshot.fullyStable || preCreateSnapshot.acceptedByNeighborRule
+        || (preCreateSnapshot.stableFirstToken && preCreateSnapshot.tileCount >= 3 && sameFirstRowMediaIdentity);
       console.log(JSON.stringify({
         event: "pre_create_first_tile_identity_recheck",
         expected_first_thumbnail_token: expectedFirstToken,
