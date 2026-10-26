@@ -4496,7 +4496,7 @@ async function prepare(args, browser, rl) {
 
 function readRecoveryEvidence(logPath, attemptId) {
   const absolute = path.resolve(logPath);
-  if (!fs.existsSync(absolute)) throw new Error(\`Recovery log not found: \${absolute}\`);
+  if (!fs.existsSync(absolute)) throw new Error(`Recovery log not found: ${absolute}`);
   const logText = fs.readFileSync(absolute, "utf8");
   const lines = logText.split(/\r?\n/);
   let ledgerEventIndex = -1;
@@ -4508,7 +4508,7 @@ function readRecoveryEvidence(logPath, attemptId) {
       if (event.event === "create_click_returned" && event.attempt_id === attemptId) structuredCreate = event;
     } catch {}
   }
-  if (ledgerEventIndex < 0) throw new Error(\`Recovery log does not contain generation_ledger_recorded for \${attemptId}; refusing to infer which Create belongs to this ledger attempt.\`);
+  if (ledgerEventIndex < 0) throw new Error(`Recovery log does not contain generation_ledger_recorded for ${attemptId}; refusing to infer which Create belongs to this ledger attempt.`);
   let createClickedAt = structuredCreate?.create_clicked_at || null;
   let createLineIndex = ledgerEventIndex;
   if (!createClickedAt) {
