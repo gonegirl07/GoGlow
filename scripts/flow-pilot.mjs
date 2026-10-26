@@ -23,7 +23,7 @@ if (!Number.isInteger(ASSET_READY_TIMEOUT_MS) || ASSET_READY_TIMEOUT_MS < 15000 
 function argsOf(argv) {
   const args = { inspect: false, execute: false, dryRun: false, clearAfterDryRun: true, tab: null, scene: null, selectors: null,
     accountLabel: null, expectedEmail: null, expectedProject: null, log: "flow-pilot.jsonl", screenshot: null,
-    waitForResult: false, waitTimeoutMs: 600000, downloadDir: "local/flow-downloads", ledgerOutput: "local/flow-generation-ledger.jsonl", ledgerProjectId: null };
+    waitForResult: false, waitTimeoutMs: 600000, downloadDir: "local/flow-downloads", ledgerOutput: "local/flow-generation-ledger.jsonl", ledgerProjectId: null, variantIndex: null };
   for (let i = 0; i < argv.length; i += 1) {
     const arg = argv[i];
     if (arg === "--inspect") args.inspect = true;
@@ -31,6 +31,7 @@ function argsOf(argv) {
     else if (arg === "--dry-run") args.dryRun = true;
     else if (arg === "--keep-prompt-after-dry-run") args.clearAfterDryRun = false;
     else if (arg === "--tab") args.tab = Number(argv[++i]);
+    else if (arg === "--variant-index") args.variantIndex = Number(argv[++i]);
     else if (arg === "--scene") args.scene = argv[++i];
     else if (arg === "--selectors") args.selectors = argv[++i];
     else if (arg === "--account-label") args.accountLabel = argv[++i];
@@ -52,6 +53,7 @@ function argsOf(argv) {
   if (!Number.isInteger(args.waitTimeoutMs) || args.waitTimeoutMs < 30000 || args.waitTimeoutMs > 1800000) throw new Error("--wait-timeout-ms must be an integer from 30000 to 1800000.");
   if (args.waitForResult && (!args.downloadDir || !args.ledgerOutput)) throw new Error("--wait requires non-empty --download-dir and --ledger-output paths.");
   if (args.tab !== null && (!Number.isInteger(args.tab) || args.tab < 0)) throw new Error("--tab must be a zero-based non-negative index.");
+  if (args.variantIndex !== null && (!Number.isInteger(args.variantIndex) || args.variantIndex < 1 || args.variantIndex > 3)) throw new Error("--variant-index must be an integer from 1 to 3.");
   return args;
 }
 
@@ -66,7 +68,7 @@ Dry-run (validates account, project, settings and prompt; stops before Create):
     --selectors local/flow-selectors.json --account-label "my Flow account" \\\
     --expected-email "you@example.com" --expected-project "project-uuid"
 
-Actual one-scene submission (requires a separate second confirmation; --wait is required):
+Actual one-scene submission (requires a separate second confirmation; --wait is required; --variant-index selects one variant from a multi-variant job):
   node scripts/flow-pilot.mjs --execute --wait --wait-timeout-ms 600000 --tab 4 \\
     --scene path/to/scene.json --selectors local/flow-selectors.json \\
     --account-label "my Flow account" --expected-email "you@example.com" \\
@@ -4154,18 +4156,28 @@ async function main() {
       if (!Number.isInteger(variantCount) || variantCount < 1 || variantCount > 3) throw new Error("variants must be an integer from 1 to 3.");
     }
     args._variantCount = variantCount;
+    if (args.variantIndex !== null && args.variantIndex > variantCount) {
+      throw new Error(`--variant-index ${args.variantIndex} exceeds this job's variant count (${variantCount}).`);
+    }
     if (args.execute && variantCount > 1 && !args.waitForResult) {
       throw new Error("Executing variants requires --wait so every submitted clip can be verified, downloaded, and recorded in the generation ledger.");
     }
     if (args.execute && variantCount > 1) {
-      for (let index = 1; index <= variantCount; index += 1) {
-        args._variantIndex = index;
-        console.log(`\\nPreparing variant ${index}/${variantCount} for the same job and prompt.`);
+      if (args.variantIndex !== null) {
+        // Explicit single-variant execution avoids resubmitting variants already completed.
+        args._variantIndex = args.variantIndex;
+        console.log(`\\nPreparing selected variant ${args.variantIndex}/${variantCount} only.`);
         await prepare(args, browser, rl);
-        if (args._stopVariants) break;
+      } else {
+        for (let index = 1; index <= variantCount; index += 1) {
+          args._variantIndex = index;
+          console.log(`\\nPreparing variant ${index}/${variantCount} for the same job and prompt.`);
+          await prepare(args, browser, rl);
+          if (args._stopVariants) break;
+        }
       }
     } else {
-      args._variantIndex = 1;
+      args._variantIndex = args.variantIndex || 1;
       await prepare(args, browser, rl);
     }
   }
