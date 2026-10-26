@@ -358,7 +358,7 @@ async function collectAllGeneratedItems(page, selector, { targetKey = null, maxS
             for (const source of sources) {
               if (/\/image\//i.test(source)) continue;
               const asbMatch = String(source).match(/\/asb\/([^/?#]+)/i);
-              if (asbMatch?.[1]) return normalizeAsbIdentityToken(`asb:${asbMatch[1]}`);
+              if (asbMatch?.[1]) return `asb:${asbMatch[1].split("=", 1)[0]}`;
               try {
                 const pathname = new URL(source, location.href).pathname;
                 if (pathname) return pathname;
@@ -431,7 +431,7 @@ async function collectAllGeneratedItems(page, selector, { targetKey = null, maxS
               const source = element.querySelector("img")?.getAttribute("src") || "";
               const asb = source.match(/\/asb\/([^/?#]+)/i);
               let token;
-              if (asb) token = normalizeAsbIdentityToken(`asb:${asb[1]}`);
+              if (asb) token = `asb:${asb[1].split("=", 1)[0]}`;
               else { try { token = new URL(source, location.href).pathname; } catch { token = source.split(/[?#]/, 1)[0]; } }
               return token === expected;
             }), expectedToken).catch(() => -1);
@@ -3196,7 +3196,7 @@ async function prepare(args, browser, rl) {
             const asbIndex = source.toLowerCase().indexOf("/asb/");
             if (asbIndex >= 0) {
               const token = source.slice(asbIndex + 5).split(/[/?#]/, 1)[0];
-              if (token) return normalizeAsbIdentityToken(`asb:${token}`);
+              if (token) return `asb:${token.split("=", 1)[0]}`;
             }
             try {
               const url = new URL(source, location.href);
@@ -3549,7 +3549,7 @@ async function prepare(args, browser, rl) {
           if (/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(token)) {
             return `media:${token.toLowerCase()}`;
           }
-          return segments[assetIndex] === "asb" ? normalizeAsbIdentityToken(`asb:${token}`) : pathname;
+          return segments[assetIndex] === "asb" ? `asb:${token.split("=", 1)[0]}` : pathname;
         }),
       })).catch(() => ({ tileCount: 0, tokens: [] }));
       const baselineTokensWithUuidFallback = buildVerifiedThumbnailBaselineTokens(
@@ -3791,7 +3791,7 @@ async function prepare(args, browser, rl) {
                 || source.match(/\/asb\/([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})(?:[/?#]|$)/i);
               if (imageUuid) return `media:${imageUuid[1].toLowerCase()}`;
               const asb = source.match(/\/asb\/([^/?#]+)/i);
-              if (asb) return normalizeAsbIdentityToken(`asb:${asb[1]}`);
+              if (asb) return `asb:${asb[1].split("=", 1)[0]}`;
               try {
                 const pathname = new URL(source, location.href).pathname;
                 if (pathname && pathname !== "/") return pathname;
