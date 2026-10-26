@@ -3341,7 +3341,7 @@ async function prepare(args, browser, rl) {
           // verified by its generated-video UUID even when /image/ placeholders persist.
           skipUuidResolution: thumbnailRetry === 1,
         });
-        if (completeUniqueUuidBaseline) {
+        if (initialScan.items.length >= 3 && refreshedScan.items.length >= 3) {
           const normalizeTileText = value => String(value || "").replace(/\s+/g, " ").trim();
           const baselineTexts = initialScan.items.map(item => normalizeTileText(item.text));
           const refreshedTexts = refreshedScan.items.map(item => normalizeTileText(item.text));
