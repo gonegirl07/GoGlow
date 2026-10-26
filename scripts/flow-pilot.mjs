@@ -2969,7 +2969,7 @@ async function readCreditCost(page) {
 
 function firstThreeThumbnailTokensMatch(baselineTokens, currentTokens) {
   const validThumbnail = value => typeof value === "string"
-    && /^(?:asb:.+|\\/(?:asb|image)\\/.+|https?:\\/\\/.+)$/i.test(value);
+    && /^(?:asb:.+|\/(?:asb|image)\/.+|https?:\/\/.+)$/i.test(value);
   return Array.isArray(baselineTokens) && Array.isArray(currentTokens)
     && baselineTokens.length >= 3 && currentTokens.length >= 3
     && baselineTokens.slice(0, 3).every((token, index) => validThumbnail(token)
