@@ -1609,6 +1609,33 @@ assert.equal(
         self.assertIn("verifiedAsbAliasesByIndex.get(index)", self.script)
         self.assertIn("A UUID may only become verified on retry 2", self.script)
 
+    def test_preverified_asb_alias_accepts_normalized_token_with_media_uuid_placeholder(self):
+        helper = "function thumbnailIdentityToken(value)" + self.script.split(
+            "function thumbnailIdentityToken(value)", 1
+        )[1].split("\\n\\nfunction mediaUuidFromLocatorValues", 1)[0]
+        node_test = helper + r"""
+const assert = await import('node:assert/strict');
+const { normalizeAsbIdentityToken } = await import('./scripts/asb-identity.mjs');
+const assetUuidFromUrl = () => null;
+const expected = 'asb:ANqvLOYk_pqHH4wW49MeXwk2';
+const candidates = [expected, "media:07e82f95-f37f-412a-83bd-018fe25b1278", null];
+const aliases = candidates.map(candidate => {
+  if (!candidate) return null;
+  const token = thumbnailIdentityToken(candidate);
+  return token?.startsWith('asb:') ? token : null;
+});
+assert.deepEqual(aliases, [expected, null, null]);
+assert.equal(thumbnailIdentityToken('asb:ANqvLOYk_pqHH4wW49MeXwk2=mm,18,15'), expected);
+assert.equal(thumbnailIdentityToken('media:07E82F95-F37F-412A-83BD-018FE25B1278'),
+  'media:07e82f95-f37f-412a-83bd-018fe25b1278');
+"""
+        result = subprocess.run(
+            ["node", "--input-type=module", "-e", node_test],
+            capture_output=True, text=True, check=False, timeout=5,
+            cwd=Path(__file__).parents[1],
+        )
+        self.assertEqual(result.returncode, 0, msg=result.stdout + result.stderr)
+        self.assertIn('if (/^asb:/i.test(source)) return normalizeAsbIdentityToken(source);', self.script)
 
 if __name__ == "__main__":
     unittest.main()
