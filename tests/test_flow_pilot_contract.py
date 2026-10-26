@@ -1598,6 +1598,10 @@ assert.equal(
         self.assertIn("args._waitInitialVerifiedThumbnailAliases", self.script)
         self.assertIn("args._waitInitialVerifiedThumbnailAliases || []", self.script)
         self.assertIn("domThumbnailBaseline.tokens?.[index]", self.script)
+        self.assertIn("const verifiedAsbAliasesByIndex = new Map()", self.script)
+        self.assertIn("const refreshedDomAsbTokens = await chosen.page.locator", self.script)
+        self.assertIn("verifiedAsbAliasesByIndex.set(index, observedAsb)", self.script)
+        self.assertIn("verifiedAsbAliasesByIndex.get(index)", self.script)
         self.assertIn("A UUID may only become verified on retry 2", self.script)
 
 
