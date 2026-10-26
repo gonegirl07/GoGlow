@@ -4493,57 +4493,51 @@ async function prepare(args, browser, rl) {
 
 function readRecoveryEvidence(logPath, attemptId) {
   const absolute = path.resolve(logPath);
-  if (!fs.existsSync(absolute)) throw new Error(`Recovery log not found: ${absolute}`);
-  const lines = fs.readFileSync(absolute, "utf8").split(/\r?\n/);
+  if (!fs.existsSync(absolute)) throw new Error(\`Recovery log not found: \${absolute}\`);
+  const logText = fs.readFileSync(absolute, "utf8");
+  const lines = logText.split(/\r?\n/);
   let ledgerEventIndex = -1;
+  let structuredCreate = null;
   for (let i = 0; i < lines.length; i += 1) {
     try {
       const event = JSON.parse(lines[i]);
       if (event.event === "generation_ledger_recorded" && event.attempt_id === attemptId) ledgerEventIndex = i;
+      if (event.event === "create_click_returned" && event.attempt_id === attemptId) structuredCreate = event;
     } catch {}
   }
-  if (ledgerEventIndex < 0) throw new Error(`Recovery log does not contain generation_ledger_recorded for ${attemptId}; refusing to infer which Create belongs to this ledger attempt.`);
-  let createClickedAt = null;
-  let createLineIndex = -1;
-  for (let i = 0; i < ledgerEventIndex; i += 1) {
-    const match = lines[i].match(/Create timestamp:\s*(\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?Z)/);
-    if (match) { createClickedAt = match[1]; createLineIndex = i; }
+  if (ledgerEventIndex < 0) throw new Error(\`Recovery log does not contain generation_ledger_recorded for \${attemptId}; refusing to infer which Create belongs to this ledger attempt.\`);
+  let createClickedAt = structuredCreate?.create_clicked_at || null;
+  let createLineIndex = ledgerEventIndex;
+  if (!createClickedAt) {
+    for (let i = 0; i < ledgerEventIndex; i += 1) {
+      const match = lines[i].match(/Create timestamp:\s*(\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?Z)/);
+      if (match) { createClickedAt = match[1]; createLineIndex = i; }
+    }
   }
   if (!createClickedAt) throw new Error("Recovery log is missing the recorded Create timestamp; refusing recovery.");
-  let baselineSummary = null, baselineClassification = null;
-  for (let i = 0; i < createLineIndex; i += 1) {
-    try {
-      const event = JSON.parse(lines[i]);
-      if (event.event === "baseline_media_inventory_summary") baselineSummary = event;
-      if (event.event === "baseline_unresolved_tile_classification") baselineClassification = event;
-    } catch {}
-  }
-  if (!baselineSummary || !Array.isArray(baselineSummary.baseline_media_uuids) || !baselineClassification
-    || !Array.isArray(baselineClassification.tiles)) {
-    throw new Error("Recovery log lacks complete ordered baseline UUIDs plus non-media tile classification; refusing recovery.");
-  }
-  const uuids = baselineSummary.baseline_media_uuids.map(value => String(value).toLowerCase());
-  let uuidIndex = 0;
-  const beforeKeys = baselineClassification.tiles.slice(0, 3).map(tile => {
-    if (tile.classification === "known_policy_refusal_non_media_baseline") {
-      const text = String(tile.text || "").replace(/\s+/g, " ").trim().toLowerCase();
-      if (!/prominent people/.test(text) || !/might violate our policies/.test(text) || !/you will be refunded/.test(text)) {
-        throw new Error("Recovery baseline policy tile text is not a complete recognized refusal identity; refusing recovery.");
-      }
-      return "failed-policy:" + text;
+  let beforeKeys = Array.isArray(structuredCreate?.baseline_keys_first_three)
+    ? structuredCreate.baseline_keys_first_three : null;
+  if (!beforeKeys) {
+    const prefix = logText.slice(0, logText.indexOf(lines[createLineIndex]));
+    const match = prefix.match(/"baseline_first_three_media_keys"\s*:\s*(\[[\s\S]*?\])/);
+    if (match) {
+      try { beforeKeys = JSON.parse(match[1]); } catch {}
     }
-    if (tile.classification !== "stable_existing_baseline_tile" || !uuids[uuidIndex]) {
-      throw new Error("Recovery baseline first row contains an unsupported or unresolved tile identity; refusing recovery.");
-    }
-    return "media:" + uuids[uuidIndex++];
-  });
-  if (beforeKeys.length !== 3 || new Set(beforeKeys).size !== 3) {
-    throw new Error("Recovery requires three unique ordered first-row baseline identities.");
+  }
+  if (!Array.isArray(beforeKeys) || beforeKeys.length < 3) {
+    throw new Error("Recovery log lacks the exact ordered baseline_first_three_media_keys; refusing recovery.");
+  }
+  beforeKeys = beforeKeys.slice(0, 3);
+  const stableKey = key => typeof key === "string" && (
+    /^media:[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(key)
+    || /^failed-policy:.{20,}$/i.test(key)
+  );
+  if (!beforeKeys.every(stableKey) || new Set(beforeKeys).size !== 3) {
+    throw new Error("Recovery baseline must contain three unique stable media/policy identities.");
   }
   return { createClickedAt, beforeKeys,
     initialFailedTileTexts: beforeKeys.filter(key => key.startsWith("failed-policy:")).map(key => key.slice("failed-policy:".length)) };
 }
-
 function updateGenerationLedgerAttempt(pathname, attemptId, update) {
   const absolute = path.resolve(pathname);
   if (!fs.existsSync(absolute)) throw new Error(`Generation ledger not found: ${absolute}`);
