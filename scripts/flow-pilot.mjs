@@ -1709,12 +1709,11 @@ function buildVerifiedThumbnailBaselineTokens(domTokens, items, domTexts, verifi
     }
     // A resolved UUID can fill an empty/image placeholder when this row is
     // text-matched uniquely or the UUID was independently re-verified.
-    if (uniqueUuid && (!tokens[index] || /\\/image\\//i.test(String(tokens[index])))
+    if (uniqueUuid && (!tokens[index] || /\/image\//i.test(String(tokens[index])))
       && (samePositionText || verifiedUuidIndexes.has(index))) tokens[index] = `media:${uuid.toLowerCase()}`;
   }
   return tokens;
 }
-
 
 function thumbnailIdentityToken(value) {
   const mediaUuidHint = arguments.length > 1 ? arguments[1] : null;
@@ -3552,8 +3551,8 @@ async function prepare(args, browser, rl) {
             element.querySelector("img")?.getAttribute("srcset")?.split(",")[0]?.trim().split(/\s+/)[0],
           ].filter(Boolean);
           if (!sources.length) {
-            const tileText = String(element.innerText || element.textContent || "").replace(/\\s+/g, " ").trim();
-            if (/\\bfailed\\b/i.test(tileText)
+            const tileText = String(element.innerText || element.textContent || "").replace(/\s+/g, " ").trim();
+            if (/\bfailed\b/i.test(tileText)
               && /prominent people/i.test(tileText)
               && /might violate our policies/i.test(tileText)
               && /you will be refunded/i.test(tileText)) {
@@ -3561,7 +3560,7 @@ async function prepare(args, browser, rl) {
             }
             return null;
           }
-          let source = sources[0];          let source = sources[0];
+          let source = sources[0];
           let pathname = "";
           let segments = [];
           let assetIndex = -1;
