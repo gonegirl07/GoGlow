@@ -917,6 +917,7 @@ assert.deepEqual(findNewCompletedMediaItems([
                                 capture_output=True, text=True, check=False, timeout=5)
         self.assertEqual(result.returncode, 0, msg=result.stdout + result.stderr)
         self.assertIn("skipUuidResolution: thumbnailRetry === 1", self.script)
+        self.assertIn("uuidCache: thumbnailRetry === 1 ? baselineUuidCache : new Map()", self.script)
         self.assertIn('phase: thumbnailRetry === 1 && completeUniqueUuidBaseline ? "thumbnail_only_recapture" : "full_row_dom_inventory"', self.script)
         self.assertIn("topLimit: 3", self.script)
         self.assertIn("FLOW_SUBMITTED_UNIDENTIFIED:", self.script)
