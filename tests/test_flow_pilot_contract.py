@@ -139,10 +139,10 @@ class FlowPilotContractTests(unittest.TestCase):
         self.assertIn('["credit_balance", "generated_video_items", "download_media_button", "download_360p_original_button", "account_panel_open", "account_panel_close"]', self.script)
 
     def test_post_create_identity_helpers_and_resolution_parser_behave_fail_closed(self):
-        helper = self.script.split("function openedMediaUuidMatches", 1)[1].split(
+        helper = self.script.split("function findNewCompletedMediaItems(items, beforeKeys)", 1)[1].split(
             "\n\nfunction readMp4VideoResolution", 1
         )[0]
-        helper = "function openedMediaUuidMatches" + helper
+        helper = "function findNewCompletedMediaItems(items, beforeKeys)" + helper
         node_test = r"""
 import assert from "node:assert/strict";
 import fs from "node:fs";
