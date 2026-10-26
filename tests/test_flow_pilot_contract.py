@@ -1075,7 +1075,7 @@ assert.equal(thumbnailIdentityToken('https://flow.google.com/asb/ANqvLObmDmk_6XQ
     def test_missing_third_thumbnail_uses_uuid_only_after_same_position_row_verification(self):
         self.assertIn("const sameVisibleRow = refreshedScan.items.length === initialScan.items.length", self.script)
         self.assertIn("item.mediaUuid && refreshed.mediaUuid) return item.mediaUuid === refreshed.mediaUuid", self.script)
-        self.assertIn("refreshed?.mediaUuid === initialScan.items[missingIndex].mediaUuid", self.script)
+        self.assertIn("refreshed.mediaUuid === initialScan.items[missingIndex].mediaUuid", self.script)
         self.assertIn("initialScan.items[missingIndex].thumbnailSrc = `media:${initialScan.items[missingIndex].mediaUuid}`", self.script)
         self.assertIn("refreshedTextCounts.get(refreshedTexts[missingIndex]) === 1", self.script)
         self.assertIn("primarySources.filter(value => !/\\/image\\//i.test(value)).map(uuidFrom).find(Boolean)", self.script)
