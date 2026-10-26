@@ -3756,9 +3756,19 @@ async function prepare(args, browser, rl) {
       // may expose that same ASB token but no media UUID after composer interaction.
       // Only these verified UUID-to-thumbnail aliases can bridge media:UUID to asb:token.
       args._waitInitialVerifiedThumbnailAliases = initialScan.items.slice(0, 3).map((item, index) => {
-        if (!item?.mediaUuid || !verifiedUuidThumbnailIndexes.has(index) || !item.thumbnailSrc) return null;
-        const token = thumbnailIdentityToken(item.thumbnailSrc);
-        return token?.startsWith("asb:") ? token : null;
+        if (!item?.mediaUuid || !verifiedUuidThumbnailIndexes.has(index)) return null;
+        // Prefer the tile's own captured thumbnail URL, but also consult the final
+        // first-row DOM snapshot. A UUID may only become verified on retry 2, while
+        // its ASB URL is present in the DOM snapshot rather than item.thumbnailSrc.
+        // This alias is safe only because the same row index was independently
+        // verified against the refreshed unique media-UUID inventory.
+        const candidates = [item.thumbnailSrc, domThumbnailBaseline.tokens?.[index]];
+        for (const candidate of candidates) {
+          if (!candidate) continue;
+          const token = thumbnailIdentityToken(candidate);
+          if (token?.startsWith("asb:")) return token;
+        }
+        return null;
       });
       if (domThumbnailBaseline.tileCount < 3 || args._waitInitialThumbnailTokens.length < 3
         || args._waitInitialThumbnailTokens.slice(0, 3).some(token => !token)) {
