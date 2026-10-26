@@ -1794,6 +1794,28 @@ function verifiedFirstRowIdentityIndexes(initialItems, refreshedItems) {
   return new Set(initialMedia.map(item => item.index));
 }
 
+
+function verifiedResolvedMediaWithRefusalFallback(initialItems, refreshedItems) {
+  if (!Array.isArray(initialItems) || !Array.isArray(refreshedItems)
+    || initialItems.length !== 3 || refreshedItems.length !== 3) return null;
+  const normalize = value => String(value || "").replace(/\\s+/g, " ").trim();
+  const refusals = items => items.filter(item => isKnownPolicyRefusalTile(item));
+  const initialRefusals = refusals(initialItems);
+  const refreshedRefusals = refusals(refreshedItems);
+  if (initialRefusals.length !== 1 || refreshedRefusals.length !== 1
+    || normalize(initialRefusals[0].text) !== normalize(refreshedRefusals[0].text)) return null;
+  const media = refreshedItems.map((item, index) => ({ item, index }))
+    .filter(({ item }) => !isKnownPolicyRefusalTile(item));
+  if (media.length !== 2 || media.some(({ item }) => !item?.mediaUuid
+    || item.key !== `media:${String(item.mediaUuid).toLowerCase()}`)) return null;
+  const uuids = media.map(({ item }) => String(item.mediaUuid).toLowerCase());
+  if (new Set(uuids).size !== 2) return null;
+  // The full-row retry's per-tile resolver supplied both media UUIDs. A stale
+  // thumbnail/network UUID in the earlier snapshot must not override this fresh
+  // resolved row; the known refusal is keyed by its exact stable text.
+  return new Set(media.map(({ index }) => index));
+}
+
 function buildVerifiedThumbnailBaselineTokens(domTokens, items, domTexts, verifiedUuidIndexes = new Set()) {
   const tokens = [...(domTokens || [])];
   const normalize = value => String(value || "").replace(/\s+/g, " ").trim();
@@ -3478,8 +3500,25 @@ async function prepare(args, browser, rl) {
           // Flow may reorder cards or swap /image/ and /video/ URL forms between
           // captures. Verify the unique resolved-media UUID set and exact refusal
           // text, not same-position thumbnail tokens.
-          const verifiedRowIndexes = verifiedFirstRowIdentityIndexes(initialScan.items, refreshedScan.items);
-          const sameVisibleRow = verifiedRowIndexes !== null;
+          let verifiedRowIndexes = verifiedFirstRowIdentityIndexes(initialScan.items, refreshedScan.items);
+          let sameVisibleRow = verifiedRowIndexes !== null;
+          // A known policy-refusal tile has no media UUID by design. If the earlier
+          // scan contains a stale thumbnail-derived UUID, adopt the independently
+          // re-resolved full-row inventory only when it contains the same unique
+          // refusal text plus exactly two unique media:<UUID> items.
+          if (!sameVisibleRow && thumbnailRetry === 2) {
+            const refusalFallbackIndexes = verifiedResolvedMediaWithRefusalFallback(initialScan.items, refreshedScan.items);
+            if (refusalFallbackIndexes !== null) {
+              verifiedRowIndexes = refusalFallbackIndexes;
+              sameVisibleRow = true;
+              initialScan = { ...refreshedScan, items: refreshedScan.items.map(item => ({ ...item })) };
+              console.warn(JSON.stringify({
+                event: "baseline_refusal_resolved_uuid_fallback",
+                policy: "same_unique_refusal_text_and_two_fresh_unique_media_uuids",
+                media_uuids: initialScan.items.filter(item => item.mediaUuid).map(item => item.mediaUuid),
+              }));
+            }
+          }
           if (sameVisibleRow) {
             if (thumbnailRetry === 2) {
               // UUID equality across independent full inventories verifies each media
