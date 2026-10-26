@@ -3342,9 +3342,14 @@ async function prepare(args, browser, rl) {
     const baselineUuidCache = new Map();
     try {
       const balanceReadStartedAt = Date.now();
-      const initialBalance = args.waitForResult ? await readCreditBalance(chosen.page, selectors) : null;
-      console.log(JSON.stringify({ event: "wait_preflight_phase_timing", phase: "read_initial_balance", elapsed_ms: Date.now() - balanceReadStartedAt, success: !args.waitForResult || initialBalance !== null }));
-      if (args.waitForResult && initialBalance === null) throw new Error("Could not read an integer credit balance.");
+      // Dry-run is a pre-Create safety check too: actually read the live balance
+      // instead of reporting a short-circuited "success" when --wait is absent.
+      const requiresInitialBalance = args.waitForResult || args.dryRun;
+      const initialBalance = requiresInitialBalance ? await readCreditBalance(chosen.page, selectors) : null;
+      console.log(JSON.stringify({ event: "wait_preflight_phase_timing", phase: "read_initial_balance", elapsed_ms: Date.now() - balanceReadStartedAt, required: requiresInitialBalance, success: !requiresInitialBalance || (Number.isSafeInteger(initialBalance) && initialBalance >= 0), balance_read: Number.isSafeInteger(initialBalance) && initialBalance >= 0 }));
+      if (requiresInitialBalance && (!Number.isSafeInteger(initialBalance) || initialBalance < 0)) {
+        throw new Error("Could not read a valid non-negative integer credit balance; refusing to continue pre-Create.");
+      }
       if (typeof selectors.generated_video_items !== "string" || !selectors.generated_video_items.trim()) throw new Error("Dry-run baseline scan requires a configured generated_video_items selector.");
       const videosTabStartedAt = Date.now();
       const videosTabState = await activateVideosTab(chosen.page, selectors);
