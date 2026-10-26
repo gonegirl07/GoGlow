@@ -1807,18 +1807,23 @@ function buildVerifiedThumbnailBaselineTokens(domTokens, items, domTexts, verifi
     const text = baselineTexts[index];
     const samePositionText = Boolean(text && text === visibleTexts[index]
       && countText(baselineTexts, text) === 1 && countText(visibleTexts, text) === 1);
-    // An explicit provider refusal has no media UUID; preserve it as a stable
-    // non-media identity only when the exact normalized text is unique in both views.
     if (!uuid && isKnownPolicyRefusalTile(item) && text
-      && countText(baselineTexts, text) === 1
-      && countText(visibleTexts, text) === 1 && text === visibleTexts[index]) {
+      && countText(baselineTexts, text) === 1 && countText(visibleTexts, text) === 1) {
+      // The refusal was independently confirmed as the same unique non-media
+      // tile across full-row inventories; do not require it to remain at index 0.
       tokens[index] = failedPolicyBaselineKey(item);
       continue;
     }
-    // A resolved UUID can fill an empty/image placeholder when this row is
-    // text-matched uniquely or the UUID was independently re-verified.
-    if (uniqueUuid && (!tokens[index] || /\/image\//i.test(String(tokens[index])))
-      && (samePositionText || verifiedUuidIndexes.has(index))) tokens[index] = `media:${uuid.toLowerCase()}`;
+    // Independently verified media UUIDs outrank /image/ and /video/ thumbnail
+    // route IDs, which can refer to posters or appear in a different row position.
+    if (uniqueUuid && verifiedUuidIndexes.has(index)) {
+      tokens[index] = `media:${uuid.toLowerCase()}`;
+      continue;
+    }
+    // Unverified UUIDs may only fill a missing/image placeholder when the row's
+    // unique text fingerprint is unchanged at the same position.
+    if (uniqueUuid && (!tokens[index] || /\\/image\\//i.test(String(tokens[index])))
+      && samePositionText) tokens[index] = `media:${uuid.toLowerCase()}`;
   }
   return tokens;
 }
@@ -3481,6 +3486,23 @@ async function prepare(args, browser, rl) {
               // tile even if its DOM position changes. Only mark UUIDs that are unique
               // and present in both inventories; refusal remains a text-keyed non-media tile.
               for (const index of verifiedRowIndexes) verifiedUuidThumbnailIndexes.add(index);
+              // The independently resolved scan is now the authoritative baseline
+              // order. This prevents a prior tile's thumbnail token from being
+              // paired with a different tile after Flow reorders the gallery.
+              initialScan = {
+                ...refreshedScan,
+                items: refreshedScan.items.map(item => ({ ...item })),
+              };
+              verifiedUuidThumbnailIndexes.clear();
+              for (let index = 0; index < initialScan.items.length; index += 1) {
+                const item = initialScan.items[index];
+                if (item.mediaUuid) {
+                  verifiedUuidThumbnailIndexes.add(index);
+                  if (!item.thumbnailSrc || /\\/image\\//i.test(item.thumbnailSrc)) {
+                    item.thumbnailSrc = `media:${item.mediaUuid.toLowerCase()}`;
+                  }
+                }
+              }
             }
             for (const missingIndex of missingIndexes) {
               const refreshed = refreshedScan.items[missingIndex];
