@@ -263,6 +263,140 @@ try {
         )
         self.assertEqual(result.returncode, 0, msg=result.stdout + result.stderr)
 
+    def test_wait_for_generation_mocked_page_rejects_old_detail_and_ledgers_download_failure(self):
+        wait_fn = self.script.split("async function waitForGenerationAndDownload", 1)[1].split(
+            "\n\nfunction createConfirmationReader", 1
+        )[0]
+        wait_fn = "async function waitForGenerationAndDownload" + wait_fn
+        ledger_fn = self.script.split("function makeGenerationLedgerRecord(", 1)[1].split(
+            "\n\nfunction findNewCompletedMediaItems", 1
+        )[0]
+        ledger_fn = "function makeGenerationLedgerRecord(" + ledger_fn
+        node_test = r"""
+import assert from "node:assert/strict";
+import fs from "node:fs";
+import os from "node:os";
+import path from "node:path";
+import { createHash, randomUUID } from "node:crypto";
+const baselineUuid = "11111111-1111-4111-8111-111111111111";
+const freshUuid = "44444444-4444-4444-8444-444444444444";
+const oldUuid = "22222222-2222-4222-8222-222222222222";
+const baselineKeys = ["media:" + baselineUuid, "media:" + oldUuid];
+const freshItem = { key: "media:" + freshUuid, mediaUuid: freshUuid, text: "completed", state: "completed", index: 0 };
+const isGenerationFailureText = () => false;
+const rawProviderMessage = value => String(value || "").trim() || null;
+const findNewCompletedMediaItems = (items, keys) => (items || []).filter(item => item.mediaUuid && item.key && !new Set(keys || []).has(item.key) && !item.progress && !/generating|processing|queued|pending/i.test(String(item.state || item.text || "")));
+const orderedBaselineShiftIsVerified = () => false;
+const openedMediaUuidMatches = (candidateUuid, openedUrl, keys) => {
+  const match = String(openedUrl).match(/\/(?:edit|video)\/([0-9a-f-]{36})(?:[/?#]|$)/i);
+  return Boolean(match && candidateUuid && match[1].toLowerCase() === candidateUuid.toLowerCase() && !(keys || []).includes("media:" + match[1].toLowerCase()));
+};
+let currentPage;
+let getDownloadMenuCalls = 0;
+const activateVideosTab = async () => "selected";
+const collectAllGeneratedItems = async (_page, _selector, options = {}) => options.targetKey
+  ? { targetIndex: 0 }
+  : { items: [freshItem, { key: baselineKeys[0], mediaUuid: baselineUuid, index: 1 }, { key: baselineKeys[1], mediaUuid: oldUuid, index: 2 }], topItems: [], topLimited: true, duplicateVisibleKeyDetected: false };
+const exactVisibleLocator = async (page, selector) => page.locator(selector);
+const readCreditBalance = async () => 841;
+function makePage(routeUuid, failDownload = false) {
+  const page = {
+    currentUrl: "https://flow.google.com/project/aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+    clicks: [],
+    url() { return this.currentUrl; },
+    async waitForURL() {},
+    async waitForTimeout() {},
+    async goBack() {},
+    async screenshot() {},
+    async waitForEvent() { return Promise.resolve({ suggestedFilename: () => "test.mp4", saveAs: async () => { throw new Error("simulated save failure"); } }); },
+    locator(selector) {
+      const locator = {
+        selector,
+        async evaluateAll() { return []; },
+        async innerText() { return ""; },
+        async waitFor() {},
+        async isVisible() { return true; },
+        async count() { return 1; },
+        async click() {
+          page.clicks.push(selector);
+          if (selector === "generated-video-items") page.currentUrl = "https://flow.google.com/project/aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa/edit/" + routeUuid;
+          if (selector === "download-button") getDownloadMenuCalls += 1;
+        },
+        nth() { return this; },
+        first() { return this; },
+        filter() { return this; },
+      };
+      return locator;
+    },
+    getByRole() {
+      return {
+        filter() { return this; },
+        first() { return this; },
+        async waitFor() {},
+        async count() { return 1; },
+        async isVisible() { return true; },
+        async innerText() { return "Original size"; },
+        async click() { if (failDownload) throw new Error("simulated download menu failure"); },
+      };
+    },
+  };
+  return page;
+}
+""" + wait_fn + "\n" + ledger_fn + r"""
+const selectors = { generated_video_items: "generated-video-items", download_media_button: "download-button" };
+const mismatchPage = makePage(oldUuid);
+await assert.rejects(
+  waitForGenerationAndDownload(mismatchPage, selectors, {
+    beforeKeys: baselineKeys, beforeBalance: 841, createClickedAt: new Date().toISOString(),
+    timeoutMs: 3000, downloadDir: os.tmpdir(), sceneId: "scene-test", attemptId: "attempt-mismatch",
+  }),
+  /Opened detail route did not match the newly detected candidate media UUID/,
+);
+assert.equal(mismatchPage.clicks.includes("download-button"), false, "must not open Download on an old/stale video detail page");
+assert.equal(getDownloadMenuCalls, 0, "old video must never reach download UI");
+
+const downloadFailurePage = makePage(freshUuid, true);
+const result = await waitForGenerationAndDownload(downloadFailurePage, selectors, {
+  beforeKeys: baselineKeys, beforeBalance: 841, createClickedAt: new Date().toISOString(),
+  timeoutMs: 3000, downloadDir: os.tmpdir(), sceneId: "scene-test", attemptId: "attempt-download-failure",
+});
+assert.equal(result.verifiedMediaUuid, freshUuid);
+assert.equal(result.verificationState, "verified_new_media_uuid");
+assert.match(result.downloadError, /simulated download menu failure/);
+const status = result.downloadError ? "download_failed" : "succeeded";
+const dir = fs.mkdtempSync(path.join(os.tmpdir(), "goglow-mocked-ledger-"));
+try {
+  const face = path.join(dir, "face.jpg");
+  const pose = path.join(dir, "pose.png");
+  fs.writeFileSync(face, Buffer.from("face"));
+  fs.writeFileSync(pose, Buffer.from("pose"));
+  const record = makeGenerationLedgerRecord({
+    scene: { scene_id: "scene-test", job_id: "job-test", model: "Omni 1.1 Flash", resolution: "360p", duration: "8s", reference_images: [face, pose], face_reference_ids: [face] },
+    projectId: "project-test", prompt: "test prompt", estimatedCost: 6,
+    beforeBalance: 841, afterBalance: 835, resultStatus: status,
+    mediaUri: result.mediaUri, downloadedFile: result.downloadedFile, downloadError: result.downloadError,
+    timeoutError: null, actualResolution: result.actualResolution, downloadQualityLabel: result.downloadQualityLabel,
+    verifiedMediaUuid: result.verifiedMediaUuid, verificationState: result.verificationState,
+    verificationEvidence: result.verificationEvidence, attemptNumber: 1, attemptId: "attempt-download-failure",
+  });
+  assert.equal(record.result.status, "download_failed", "ledger must not claim success if download fails");
+  assert.equal(record.media.verified_media_uuid, freshUuid);
+  assert.match(record.notes, /Download failed: simulated download menu failure/);
+} finally {
+  fs.rmSync(dir, { recursive: true, force: true });
+}
+assert.equal(downloadFailurePage.clicks.filter(selector => selector === "generated-video-items").length, 1, "one candidate click only; wait function has no Create action");
+assert.equal(downloadFailurePage.clicks.includes("download-button"), true);
+"""
+        result = subprocess.run(
+            ["node", "--input-type=module", "-e", node_test],
+            capture_output=True, text=True, check=False, timeout=8,
+            cwd=Path(__file__).parents[1],
+        )
+        self.assertEqual(result.returncode, 0, msg=result.stdout + result.stderr)
+        self.assertIn('resultStatus = downloadError ? "download_failed" : "succeeded";', self.script)
+        self.assertIn("await finalButton.click({ timeout: 2500 })", self.script)
+
     def test_wait_tracks_new_tile_by_stable_identity_and_never_retries(self):
         self.assertIn('collectAllGeneratedItems(page, selectors.generated_video_items, {\n      uuidCache, topLimit: 3, selectors, skipUuidResolution: true,', self.script)
         self.assertIn('candidateItems.length === 1', self.script)
