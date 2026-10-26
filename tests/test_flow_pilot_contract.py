@@ -1327,11 +1327,11 @@ assert.deepEqual(verified, [
     def test_live_baseline_adopts_resolved_media_uuids_when_refusal_has_no_thumbnail_token(self):
         helper = "function verifiedResolvedMediaWithRefusalFallback" + self.script.split(
             "function verifiedResolvedMediaWithRefusalFallback", 1
-        )[1].split("\\n\\nfunction buildVerifiedThumbnailBaselineTokens", 1)[0]
+        )[1].split("\n\nfunction buildVerifiedThumbnailBaselineTokens", 1)[0]
         refusal_helper = "function isKnownPolicyRefusalTile" + self.script.split(
             "function isKnownPolicyRefusalTile", 1
-        )[1].split("\\n\\nfunction failedPolicyBaselineKey", 1)[0]
-        node_test = helper + "\\n\\n" + refusal_helper + r"""
+        )[1].split("\n\nfunction failedPolicyBaselineKey", 1)[0]
+        node_test = helper + "\n\n" + refusal_helper + r"""
 const assert = await import('node:assert/strict');
 const refusal = {
   text: 'Failed: This generation might violate our policies for prominent people. You will be refunded.',
