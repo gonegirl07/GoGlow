@@ -1597,6 +1597,8 @@ assert.equal(
         self.assertEqual(result.returncode, 0, msg=result.stdout + result.stderr)
         self.assertIn("args._waitInitialVerifiedThumbnailAliases", self.script)
         self.assertIn("args._waitInitialVerifiedThumbnailAliases || []", self.script)
+        self.assertIn("domThumbnailBaseline.tokens?.[index]", self.script)
+        self.assertIn("A UUID may only become verified on retry 2", self.script)
 
 
 if __name__ == "__main__":
