@@ -919,6 +919,7 @@ assert.deepEqual(findNewCompletedMediaItems([
         self.assertIn("skipUuidResolution: thumbnailRetry === 1", self.script)
         self.assertIn("if (thumbnailRetry === 2) await waitForFirstRowThumbnailTokens", self.script)
         self.assertIn("verifiedUuidThumbnailIndexes.add(index)", self.script)
+        self.assertIn("thumbnailRetry === 2 && initialScan.items[missingIndex]?.mediaUuid", self.script)
         self.assertIn("verifiedUuidThumbnailIndexes.has(index)", self.script)
         self.assertIn("uuidCache: thumbnailRetry === 1 ? baselineUuidCache : new Map()", self.script)
         self.assertIn('phase: thumbnailRetry === 1 && completeUniqueUuidBaseline ? "thumbnail_only_recapture" : "full_row_dom_inventory"', self.script)
