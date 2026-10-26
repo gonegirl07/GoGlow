@@ -536,8 +536,8 @@ async function collectAllGeneratedItems(page, selector, { targetKey = null, maxS
       ].filter(Boolean).map(String);
       const primarySources = [
         ...explicitMediaSources,
-        ...hrefSources.filter(value => /\\/edit\\//i.test(value)),
-        ...hrefSources.filter(value => /\\/video\\//i.test(value)),
+        ...hrefSources.filter(value => /\/edit\//i.test(value)),
+        ...hrefSources.filter(value => /\/video\//i.test(value)),
         element.querySelector("video")?.getAttribute("src"),
         ...hrefSources,
       ].filter(Boolean).map(String);
@@ -3633,10 +3633,10 @@ async function prepare(args, browser, rl) {
           }
           const routeHrefs = Array.from(element.querySelectorAll('a[href*="/edit/"], a[href*="/video/"]'))
             .map(anchor => anchor.getAttribute("href")).filter(Boolean)
-            .sort((a, b) => Number(/\\/edit\\//i.test(b)) - Number(/\\/edit\\//i.test(a)));
+            .sort((a, b) => Number(/\/edit\//i.test(b)) - Number(/\/edit\//i.test(a)));
           const ownHref = element.getAttribute("href");
           if (ownHref && (ownHref.includes("/edit/") || ownHref.includes("/video/"))) {
-            if (/\\/edit\\//i.test(ownHref)) routeHrefs.unshift(ownHref);
+            if (/\/edit\//i.test(ownHref)) routeHrefs.unshift(ownHref);
             else routeHrefs.push(ownHref);
           }
           for (const href of routeHrefs) {
