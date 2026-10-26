@@ -994,7 +994,7 @@ assert.deepEqual(findNewCompletedMediaItems([
         self.assertIn("skipUuidResolution: thumbnailRetry === 1", self.script)
         self.assertIn("if (thumbnailRetry === 2) await waitForFirstRowThumbnailTokens", self.script)
         self.assertIn("verifiedUuidThumbnailIndexes.add(index)", self.script)
-        self.assertIn("thumbnailRetry === 2 && initialScan.items[missingIndex]?.mediaUuid", self.script)
+        self.assertIn("const verifiedRowIndexes = verifiedFirstRowIdentityIndexes(initialScan.items, refreshedScan.items);", self.script)
         self.assertIn("verifiedUuidThumbnailIndexes.has(index)", self.script)
         self.assertIn("uuidCache: thumbnailRetry === 1 ? baselineUuidCache : new Map()", self.script)
         self.assertIn('phase: thumbnailRetry === 1 && completeUniqueUuidBaseline ? "thumbnail_only_recapture" : "full_row_dom_inventory"', self.script)
@@ -1216,7 +1216,7 @@ assert.equal(initial[0].mediaUuid, uuid);
 assert.deepEqual(buildVerifiedThumbnailBaselineTokens(
   [null, 'asb:older', 'asb:kneeling'], initial,
   ['Mai standing variant one', 'Mai standing older', 'Mai kneeling'], verified,
-), ['media:' + uuid, 'asb:older', 'asb:kneeling']);
+), ['media:' + uuid, 'media:ae294080-b7e0-41d6-a825-30824b910dfc', 'media:e4ebbe7d-2c9f-484b-b165-31480077cea5']);
 
 // A text mismatch cannot inherit a UUID even when the refreshed UUID is unique.
 const mismatch = [{ text: 'different title' }, ...initial.slice(1).map(item => ({ ...item }))];
@@ -1242,7 +1242,7 @@ assert.equal(emptyTextVerified.has(0), true);
 assert.deepEqual(buildVerifiedThumbnailBaselineTokens(
   [null, 'asb:older', 'asb:kneeling'], emptyTextInitial,
   ['', 'Older standing', 'Kneeling'], emptyTextVerified,
-), ['media:' + uuid, 'asb:older', 'asb:kneeling']);
+), ['media:' + uuid, 'media:ae294080-b7e0-41d6-a825-30824b910dfc', 'media:e4ebbe7d-2c9f-484b-b165-31480077cea5']);
 assert.equal(thumbnailIdentityToken('https://flow.google.com/project/2c77da50-fb9e-4cc2-bf50-8ce67649c32e/video/' + uuid), 'media:' + uuid);
 assert.equal(thumbnailIdentityToken('https://flow.google.com/image/' + uuid), '/image/' + uuid);
 
@@ -1293,7 +1293,7 @@ const tokens = buildVerifiedThumbnailBaselineTokens(
 );
 assert.deepEqual(tokens, [
   'media:' + items[0].mediaUuid,
-  'asb:ANqvLOa3xUpF',
+  'media:' + items[1].mediaUuid,
   'media:' + items[2].mediaUuid,
 ]);
 const ambiguous = buildVerifiedThumbnailBaselineTokens(
@@ -1312,8 +1312,8 @@ const verified = buildVerifiedThumbnailBaselineTokens(
 );
 assert.deepEqual(verified, [
   'media:' + items[0].mediaUuid,
-  'asb:ANqvLOa3xUpF',
-  'asb:ANqvLOaNiC06',
+  'media:' + items[1].mediaUuid,
+  'media:' + items[2].mediaUuid,
 ]);
 """
         result = subprocess.run(["node", "--input-type=module", "-e", node_test],
