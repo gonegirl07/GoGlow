@@ -4482,6 +4482,151 @@ async function prepare(args, browser, rl) {
   }
 }
 
+
+function readRecoveryEvidence(logPath, attemptId) {
+  const absolute = path.resolve(logPath);
+  if (!fs.existsSync(absolute)) throw new Error(\`Recovery log not found: \${absolute}\`);
+  const lines = fs.readFileSync(absolute, "utf8").split(/\r?\n/);
+  let ledgerEventIndex = -1;
+  for (let i = 0; i < lines.length; i += 1) {
+    try {
+      const event = JSON.parse(lines[i]);
+      if (event.event === "generation_ledger_recorded" && event.attempt_id === attemptId) ledgerEventIndex = i;
+    } catch {}
+  }
+  if (ledgerEventIndex < 0) throw new Error(\`Recovery log does not contain generation_ledger_recorded for \${attemptId}; refusing to infer which Create belongs to this ledger attempt.\`);
+  let createClickedAt = null;
+  let createLineIndex = -1;
+  for (let i = 0; i < ledgerEventIndex; i += 1) {
+    const match = lines[i].match(/Create timestamp:\s*(\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?Z)/);
+    if (match) { createClickedAt = match[1]; createLineIndex = i; }
+  }
+  if (!createClickedAt) throw new Error("Recovery log is missing the recorded Create timestamp; refusing recovery.");
+  let baselineSummary = null, baselineClassification = null;
+  for (let i = 0; i < createLineIndex; i += 1) {
+    try {
+      const event = JSON.parse(lines[i]);
+      if (event.event === "baseline_media_inventory_summary") baselineSummary = event;
+      if (event.event === "baseline_unresolved_tile_classification") baselineClassification = event;
+    } catch {}
+  }
+  if (!baselineSummary || !Array.isArray(baselineSummary.baseline_media_uuids) || !baselineClassification
+    || !Array.isArray(baselineClassification.tiles)) {
+    throw new Error("Recovery log lacks complete ordered baseline UUIDs plus non-media tile classification; refusing recovery.");
+  }
+  const uuids = baselineSummary.baseline_media_uuids.map(value => String(value).toLowerCase());
+  let uuidIndex = 0;
+  const beforeKeys = baselineClassification.tiles.slice(0, 3).map(tile => {
+    if (tile.classification === "known_policy_refusal_non_media_baseline") {
+      const text = String(tile.text || "").replace(/\s+/g, " ").trim().toLowerCase();
+      if (!/prominent people/.test(text) || !/might violate our policies/.test(text) || !/you will be refunded/.test(text)) {
+        throw new Error("Recovery baseline policy tile text is not a complete recognized refusal identity; refusing recovery.");
+      }
+      return "failed-policy:" + text;
+    }
+    if (tile.classification !== "stable_existing_baseline_tile" || !uuids[uuidIndex]) {
+      throw new Error("Recovery baseline first row contains an unsupported or unresolved tile identity; refusing recovery.");
+    }
+    return "media:" + uuids[uuidIndex++];
+  });
+  if (beforeKeys.length !== 3 || new Set(beforeKeys).size !== 3) {
+    throw new Error("Recovery requires three unique ordered first-row baseline identities.");
+  }
+  return { createClickedAt, beforeKeys,
+    initialFailedTileTexts: beforeKeys.filter(key => key.startsWith("failed-policy:")).map(key => key.slice("failed-policy:".length)) };
+}
+
+function updateGenerationLedgerAttempt(pathname, attemptId, update) {
+  const absolute = path.resolve(pathname);
+  if (!fs.existsSync(absolute)) throw new Error(\`Generation ledger not found: \${absolute}\`);
+  const lines = fs.readFileSync(absolute, "utf8").split(/\r?\n/);
+  let matches = 0;
+  const updated = lines.map(line => {
+    if (!line.trim()) return line;
+    let record;
+    try { record = JSON.parse(line); } catch { return line; }
+    if (record.attempt_id !== attemptId) return line;
+    matches += 1;
+    return JSON.stringify(update(record));
+  });
+  if (matches !== 1) throw new Error(\`Expected exactly one ledger record for \${attemptId}; found \${matches}. No ledger changes written.\`);
+  const temp = absolute + ".recover-tmp";
+  fs.writeFileSync(temp, updated.join("\n"), "utf8");
+  fs.renameSync(temp, absolute);
+  return absolute;
+}
+
+async function recoverAttempt(args, browser) {
+  if (!args.scene || !args.selectors || args.tab === null || !args.expectedEmail || !args.expectedProject || !args.accountLabel) {
+    throw new Error("--recover-attempt requires --tab, --scene, --selectors, --account-label, --expected-email, and --expected-project.");
+  }
+  const ledgerPath = path.resolve(args.ledgerOutput);
+  if (!fs.existsSync(ledgerPath)) throw new Error(\`Generation ledger not found: \${ledgerPath}\`);
+  const records = fs.readFileSync(ledgerPath, "utf8").split(/\r?\n/).filter(Boolean).map(line => {
+    try { return JSON.parse(line); } catch { return null; }
+  }).filter(Boolean);
+  const matches = records.filter(record => record.attempt_id === args.recoverAttempt);
+  if (matches.length !== 1) throw new Error(\`Expected exactly one ledger attempt \${args.recoverAttempt}; found \${matches.length}.\`);
+  const record = matches[0];
+  if (record.result?.status !== "submitted_unidentified" || record.media?.verification_state !== "unverified"
+    || record.media?.verified_media_uuid || !(Number(record.credits?.actual_amount) > 0)) {
+    throw new Error("Recovery is limited to a charged submitted_unidentified attempt with no verified UUID; ledger state does not qualify.");
+  }
+  const { scene, selectors } = await loadInputs(args);
+  if (scene.scene_id !== record.scene_id) throw new Error(\`Scene mismatch: supplied \${scene.scene_id}, ledger \${record.scene_id}. Refusing recovery.\`);
+  const evidence = readRecoveryEvidence(args.log, args.recoverAttempt);
+  waitForSelectors(selectors, { ...args, waitForResult: true });
+  const chosen = await chooseFlowTab(browser, args);
+  if (chosen.projectId !== args.expectedProject || (record.project_id && record.project_id !== args.expectedProject)) {
+    throw new Error("Recovery project identity does not match the expected project and ledger.");
+  }
+  const account = await verifyAccount(chosen.page, selectors, args.expectedEmail);
+  console.log(JSON.stringify({ event: "recovery_preflight_passed", attempt_id: args.recoverAttempt,
+    project_id: chosen.projectId, account_email: account.observedEmail, create_clicked_at: evidence.createClickedAt,
+    baseline_keys: evidence.beforeKeys, mode: "no_create_recovery" }));
+  await activateVideosTab(chosen.page, selectors);
+  const result = await waitForGenerationAndDownload(chosen.page, selectors, {
+    beforeKeys: evidence.beforeKeys, beforeBalance: record.credits.before_balance,
+    createClickedAt: evidence.createClickedAt, uuidCache: new Map(), timeoutMs: args.waitTimeoutMs,
+    downloadDir: args.downloadDir, sceneId: record.scene_id, attemptId: args.recoverAttempt,
+    timeoutScreenshot: args.screenshot || \`\${args.log}.recover-timeout.png\`,
+    initialFailedTileTexts: evidence.initialFailedTileTexts,
+    onSubmissionEvidence: item => appendEvent(args.log, { event: "recovery_submission_evidence", attempt_id: args.recoverAttempt, evidence: item }),
+    variantIndex: record.variant_index || 1, variantCount: record.variant_count || 1,
+  });
+  const status = result.downloadError ? "download_failed" : "succeeded";
+  const updatedPath = updateGenerationLedgerAttempt(args.ledgerOutput, args.recoverAttempt, current => {
+    current.finished_on = new Date().toISOString();
+    current.result = { ...(current.result || {}), status };
+    current.media = { ...(current.media || {}),
+      uri: result.mediaUri || current.media?.uri || null,
+      verification_state: result.verificationState || "unverified",
+      verified_media_uuid: result.verifiedMediaUuid || null,
+      verification_evidence: result.verificationEvidence || null,
+      downloaded_file: result.downloadedFile || null,
+      download_quality_label: result.downloadQualityLabel || null,
+      actual_resolution: result.actualResolution || null,
+      resolution_match_status: (() => {
+        const requested = String(current.configuration?.resolution || "").match(/\b(\d{2,5})p\b/i);
+        const actual = String(result.actualResolution || "").match(/^(\d{2,5})x(\d{2,5})$/i);
+        if (!requested || !actual) return "unknown";
+        return Number(actual[1]) === Number(requested[1]) || Number(actual[2]) === Number(requested[1]) ? "match" : "mismatch";
+      })(),
+      sha256: result.downloadedFile && fs.existsSync(result.downloadedFile) ? createHash("sha256").update(fs.readFileSync(result.downloadedFile)).digest("hex") : null,
+      integrity_status: result.downloadedFile ? "verified" : "not_checked",
+    };
+    const note = result.downloadError ? \`Recovery verified UUID but download failed: \${result.downloadError}\` : \`Recovered media UUID \${result.verifiedMediaUuid} without a new Create click.\`;
+    current.notes = [current.notes, note].filter(Boolean).join(" ");
+    return current;
+  });
+  appendEvent(args.log, { event: "recovery_ledger_updated", attempt_id: args.recoverAttempt, status,
+    verified_media_uuid: result.verifiedMediaUuid, downloaded_file: result.downloadedFile || null, ledger_path: updatedPath });
+  console.log(JSON.stringify({ event: "recovery_complete", attempt_id: args.recoverAttempt, status,
+    verified_media_uuid: result.verifiedMediaUuid, downloaded_file: result.downloadedFile || null,
+    download_error: result.downloadError || null, credits_spent_by_recovery: 0, create_clicks_by_recovery: 0 }));
+  if (status !== "succeeded") process.exitCode = 2;
+}
+
 async function main() {
   const args = argsOf(process.argv.slice(2));
   if (args.help) return usage();
@@ -4494,6 +4639,11 @@ async function main() {
     return;
   }
   const browser = await chromium.connectOverCDP(CDP_ENDPOINT);
+  if (args.recoverAttempt) {
+    try { await recoverAttempt(args, browser); }
+    finally { await browser.close(); }
+    return;
+  }
   const rl = createConfirmationReader();
   try {
     let variantCount = 1;
