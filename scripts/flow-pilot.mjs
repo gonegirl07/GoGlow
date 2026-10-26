@@ -1782,6 +1782,19 @@ function thumbnailIdentityToken(value) {
   catch { return source.split(/[?#]/, 1)[0]; }
 }
 
+function mediaUuidFromLocatorValues(values) {
+  // /image/<uuid> identifies a thumbnail asset, not the generated video.
+  // Never let an image-only placeholder become the tile's media UUID; continue
+  // searching for a real video/edit route or stable media attribute instead.
+  for (const value of values || []) {
+    const source = String(value || "");
+    if (/\/image\//i.test(source)) continue;
+    const uuid = assetUuidFromUrl(source);
+    if (uuid) return uuid;
+  }
+  return null;
+}
+
 async function assetUuidFromLocator(locator, timeoutMs = 1200) {
   const lookupStartedAt = Date.now();
   const values = await locator.evaluate(element => {
@@ -1804,13 +1817,11 @@ async function assetUuidFromLocator(locator, timeoutMs = 1200) {
       timeout_ms: timeoutMs, outcome: "failed", error: String(error?.message || error).slice(0, 240) }));
     return [];
   });
-  for (const value of values) {
-    const uuid = assetUuidFromUrl(value);
-    if (uuid) {
-      console.log(JSON.stringify({ event: "asset_uuid_dom_lookup_timing", elapsed_ms: Date.now() - lookupStartedAt,
-        timeout_ms: timeoutMs, outcome: "resolved" }));
-      return uuid;
-    }
+  const uuid = mediaUuidFromLocatorValues(values);
+  if (uuid) {
+    console.log(JSON.stringify({ event: "asset_uuid_dom_lookup_timing", elapsed_ms: Date.now() - lookupStartedAt,
+      timeout_ms: timeoutMs, outcome: "resolved" }));
+    return uuid;
   }
   if (values.length) console.log(JSON.stringify({ event: "asset_uuid_dom_lookup_timing", elapsed_ms: Date.now() - lookupStartedAt,
     timeout_ms: timeoutMs, outcome: "no_uuid_in_dom" }));

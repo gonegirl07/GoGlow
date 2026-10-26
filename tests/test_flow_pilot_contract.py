@@ -1187,10 +1187,13 @@ assert.equal(thumbnailIdentityToken('https://flow.google.com/asb/ANqvLObmDmk_6XQ
         asset_uuid_helper = "function assetUuidFromUrl" + self.script.split(
             "function assetUuidFromUrl", 1
         )[1].split("\n\nfunction applyVerifiedRowUuidFallback", 1)[0]
+        media_uuid_helper = "function mediaUuidFromLocatorValues" + self.script.split(
+            "function mediaUuidFromLocatorValues", 1
+        )[1].split("\n\nasync function assetUuidFromLocator", 1)[0]
         thumbnail_helper = "function thumbnailIdentityToken" + self.script.split(
             "function thumbnailIdentityToken", 1
-        )[1].split("\n\nasync function assetUuidFromLocator", 1)[0]
-        node_test = asset_uuid_helper + "\n\n" + apply_helper + "\n\n" + baseline_helper + "\n\n" + thumbnail_helper + r"""
+        )[1].split("\n\nfunction mediaUuidFromLocatorValues", 1)[0]
+        node_test = asset_uuid_helper + "\n\n" + media_uuid_helper + "\n\n" + apply_helper + "\n\n" + baseline_helper + "\n\n" + thumbnail_helper + r"""
 const assert = await import('node:assert/strict');
 const uuid = '07e82f95-f37f-412a-83bd-018fe25b1278';
 const initial = [
@@ -1241,6 +1244,21 @@ assert.deepEqual(buildVerifiedThumbnailBaselineTokens(
 ), ['media:' + uuid, 'asb:older', 'asb:kneeling']);
 assert.equal(thumbnailIdentityToken('https://flow.google.com/project/2c77da50-fb9e-4cc2-bf50-8ce67649c32e/video/' + uuid), 'media:' + uuid);
 assert.equal(thumbnailIdentityToken('https://flow.google.com/image/' + uuid), '/image/' + uuid);
+
+// A thumbnail image UUID must never be accepted as the generated media UUID.
+const imageUuid = '2d815367-c579-4e48-845c-568acbe443e4';
+const videoUuid = '4bcc1ce2-4018-43fc-9a8a-059fdc315750';
+assert.equal(mediaUuidFromLocatorValues([
+  'https://flow.google.com/image/' + imageUuid,
+  'https://flow.google.com/project/2c77da50-fb9e-4cc2-bf50-8ce67649c32e/edit/' + videoUuid,
+]), videoUuid);
+assert.equal(mediaUuidFromLocatorValues([
+  'https://flow.google.com/image/' + imageUuid,
+]), null);
+assert.equal(mediaUuidFromLocatorValues([
+  'https://flow.google.com/video/' + uuid,
+  'https://flow.google.com/image/' + imageUuid,
+]), uuid);
 """
         result = subprocess.run(["node", "--input-type=module", "-e", node_test],
                                 capture_output=True, text=True, check=False, timeout=5)
