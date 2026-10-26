@@ -1125,11 +1125,14 @@ assert.deepEqual(findNewCompletedMediaItems([
         self.assertIn('reference_language_mode: scene.reference_language_mode || "identity_preserving"', self.script)
 
     def test_thumbnail_identity_keeps_image_uuid_separate_from_media_uuid(self):
+        helper_path = Path(__file__).parents[1] / "scripts" / "asb-identity.mjs"
         helper = self.script.split("function assetUuidFromUrl", 1)[1].split(
             "async function assetUuidFromLocator", 1
         )[0]
-        node_test = "function assetUuidFromUrl" + helper + r"""
-const assert = await import('node:assert/strict');
+        node_test = f"""
+import assert from "node:assert/strict";
+import {{ normalizeAsbIdentityToken }} from {helper_path.as_uri()!r};
+""" + "function assetUuidFromUrl" + helper + r"""
 const uuid = '4d8c7d18-d76a-479a-8164-8414f9ddaff7';
 assert.equal(assetUuidFromUrl('/image/' + uuid), uuid);
 assert.equal(thumbnailIdentityToken('/image/' + uuid), '/image/' + uuid);
