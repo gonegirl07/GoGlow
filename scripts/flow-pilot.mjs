@@ -1686,6 +1686,41 @@ function assetUuidFromUrl(value) {
   return match?.[0]?.toLowerCase() || null;
 }
 
+function applyVerifiedRowUuidFallback(initialItems, refreshedItems, baselineTexts, refreshedTexts) {
+  const verifiedIndexes = new Set();
+  if (!Array.isArray(initialItems) || !Array.isArray(refreshedItems)
+    || initialItems.length < 3 || initialItems.length !== refreshedItems.length) return verifiedIndexes;
+  const normalize = value => String(value || "").replace(/\\s+/g, " ").trim();
+  const initialLabels = (baselineTexts || []).map(normalize);
+  const refreshedLabels = (refreshedTexts || []).map(normalize);
+  const counts = values => {
+    const result = new Map();
+    for (const value of values) result.set(value, (result.get(value) || 0) + 1);
+    return result;
+  };
+  const initialCounts = counts(initialLabels);
+  const refreshedCounts = counts(refreshedLabels);
+  const refreshedUuids = refreshedItems.map(item => item?.mediaUuid);
+  for (let index = 0; index < initialItems.length; index += 1) {
+    const original = initialItems[index];
+    const refreshed = refreshedItems[index];
+    const uuid = refreshed?.mediaUuid;
+    const text = initialLabels[index];
+    if (!uuid || !text || text !== refreshedLabels[index]
+      || initialCounts.get(text) !== 1 || refreshedCounts.get(text) !== 1
+      || refreshedUuids.filter(value => value === uuid).length !== 1) continue;
+    // A fresh, unique video UUID may be assigned to a baseline tile that lacked
+    // UUID metadata only when its unique text fingerprint matches at the same
+    // position in both snapshots. Never replace a conflicting known UUID.
+    if (original?.mediaUuid && original.mediaUuid !== uuid) continue;
+    if (!original?.mediaUuid && initialItems.some((item, otherIndex) =>
+      otherIndex !== index && item?.mediaUuid === uuid)) continue;
+    original.mediaUuid = uuid;
+    verifiedIndexes.add(index);
+  }
+  return verifiedIndexes;
+}
+
 function buildVerifiedThumbnailBaselineTokens(domTokens, items, domTexts, verifiedUuidIndexes = new Set()) {
   const tokens = [...(domTokens || [])];
   const normalize = value => String(value || "").replace(/\s+/g, " ").trim();
@@ -3363,21 +3398,15 @@ async function prepare(args, browser, rl) {
               // The full inventory independently resolved all three video UUIDs.
               // Exact, unique UUID equality at all positions is stronger identity
               // proof than a lazy thumbnail that never loads.
-              const refreshedUuids = refreshedScan.items.map(item => item.mediaUuid);
               // Verify media rows independently so a neighboring refusal card
               // without a UUID does not invalidate an otherwise verified video row.
-              for (let index = 0; index < initialScan.items.length; index += 1) {
-                const original = initialScan.items[index];
-                const refreshed = refreshedScan.items[index];
-                const uuid = original?.mediaUuid;
-                const text = baselineTexts[index];
-                if (!uuid || !refreshed || refreshed.mediaUuid !== uuid
-                  || initialUuids.filter(value => value === uuid).length !== 1
-                  || refreshedUuids.filter(value => value === uuid).length !== 1
-                  || !text || text !== refreshedTexts[index]
-                  || baselineTextCounts.get(text) !== 1 || refreshedTextCounts.get(text) !== 1) continue;
-                verifiedUuidThumbnailIndexes.add(index);
-              }
+              // If the original snapshot lacked UUID metadata, inherit it only from
+              // the same-position row with an exact, unique text fingerprint and a
+              // unique independently resolved UUID in the refreshed inventory.
+              const verifiedIndexes = applyVerifiedRowUuidFallback(
+                initialScan.items, refreshedScan.items, baselineTexts, refreshedTexts,
+              );
+              for (const index of verifiedIndexes) verifiedUuidThumbnailIndexes.add(index);
             }
             for (const missingIndex of missingIndexes) {
               const refreshed = refreshedScan.items[missingIndex];
