@@ -3496,7 +3496,7 @@ async function prepare(args, browser, rl) {
         const refreshedDomAsbTokens = await chosen.page.locator(selectors.generated_video_items).evaluateAll(elements =>
           elements.slice(0, 3).map(element => {
             const source = element.querySelector("img")?.getAttribute("src") || "";
-            const match = source.match(/\\/asb\\/([^/?#]+)/i);
+            const match = source.match(/\/asb\/([^/?#]+)/i);
             return match ? `asb:${match[1].split("=", 1)[0]}` : null;
           })).catch(() => []);
         if (initialScan.items.length >= 3 && refreshedScan.items.length >= 3) {
