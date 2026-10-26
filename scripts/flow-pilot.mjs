@@ -522,11 +522,24 @@ async function collectAllGeneratedItems(page, selector, { targetKey = null, maxS
     let visible = await page.locator(selector).evaluateAll(elements => elements.map((element, index) => {
       // Normalize media URLs to their stable UUID so deleted/Failed tiles and URL-shape
       // changes cannot make the same video look like a newly-created item.
-      const primarySources = [
-        element.querySelector("video")?.getAttribute("src"),
+      // Prefer explicit media IDs and the editor's /edit/<media UUID> route
+      // over a video src: Flow can expose a poster/thumbnail UUID at /video/<id>.
+      const explicitMediaSources = [
+        element.getAttribute("data-media-id"),
+        element.getAttribute("data-asset-id"),
+        element.getAttribute("data-uuid"),
         element.getAttribute("data-id"),
+      ].filter(Boolean).map(String);
+      const hrefSources = [
         element.getAttribute("href"),
         element.querySelector("a[href]")?.getAttribute("href"),
+      ].filter(Boolean).map(String);
+      const primarySources = [
+        ...explicitMediaSources,
+        ...hrefSources.filter(value => /\\/edit\\//i.test(value)),
+        ...hrefSources.filter(value => /\\/video\\//i.test(value)),
+        element.querySelector("video")?.getAttribute("src"),
+        ...hrefSources,
       ].filter(Boolean).map(String);
       const thumbnailSrc = element.querySelector("img")?.getAttribute("src") || null;
       const uuidFrom = value => {
@@ -3421,28 +3434,44 @@ async function prepare(args, browser, rl) {
           const refreshedTextCounts = new Map();
           for (const value of baselineTexts) baselineTextCounts.set(value, (baselineTextCounts.get(value) || 0) + 1);
           for (const value of refreshedTexts) refreshedTextCounts.set(value, (refreshedTextCounts.get(value) || 0) + 1);
+          const uniqueUuids = items => items.map(item => item?.mediaUuid).filter(Boolean);
+          const baselineUuids = uniqueUuids(initialScan.items);
+          const refreshedUuids = uniqueUuids(refreshedScan.items);
+          const baselineUuidSet = new Set(baselineUuids);
+          const refreshedUuidSet = new Set(refreshedUuids);
+          const policyTexts = items => items.filter(item => isKnownPolicyRefusalTile(item))
+            .map(item => normalizeTileText(item.text)).filter(Boolean);
+          const baselinePolicyTexts = policyTexts(initialScan.items);
+          const refreshedPolicyTexts = policyTexts(refreshedScan.items);
+          const sameMediaUuidSet = baselineUuids.length === initialScan.items.filter(item => item.mediaUuid).length
+            && refreshedUuids.length === refreshedScan.items.filter(item => item.mediaUuid).length
+            && baselineUuidSet.size === baselineUuids.length
+            && refreshedUuidSet.size === refreshedUuids.length
+            && baselineUuidSet.size === refreshedUuidSet.size
+            && [...baselineUuidSet].every(uuid => refreshedUuidSet.has(uuid));
+          const samePolicyRefusalSet = baselinePolicyTexts.length === refreshedPolicyTexts.length
+            && new Set(baselinePolicyTexts).size === baselinePolicyTexts.length
+            && new Set(refreshedPolicyTexts).size === refreshedPolicyTexts.length
+            && baselinePolicyTexts.every(text => refreshedPolicyTexts.includes(text));
+          // The gallery can reorder or swap /image/ and /video/ representations
+          // between scans. Verify the row as a set of independently resolved media
+          // UUIDs plus any exact known refusal, never by thumbnail UUID or position.
           const sameVisibleRow = refreshedScan.items.length === initialScan.items.length
-            && initialScan.items.every((item, index) => {
-              const refreshed = refreshedScan.items[index];
-              if (!refreshed) return false;
-              if (item.mediaUuid && refreshed.mediaUuid) return item.mediaUuid === refreshed.mediaUuid;
-              const text = baselineTexts[index];
-              return Boolean(text && text === refreshedTexts[index]
-                && baselineTextCounts.get(text) === 1 && refreshedTextCounts.get(text) === 1);
-            });
+            && sameMediaUuidSet && samePolicyRefusalSet
+            && baselineUuids.length + baselinePolicyTexts.length === initialScan.items.length
+            && refreshedUuids.length + refreshedPolicyTexts.length === refreshedScan.items.length;
           if (sameVisibleRow) {
             if (thumbnailRetry === 2) {
-              // The full inventory independently resolved all three video UUIDs.
-              // Exact, unique UUID equality at all positions is stronger identity
-              // proof than a lazy thumbnail that never loads.
-              // Verify media rows independently so a neighboring refusal card
-              // without a UUID does not invalidate an otherwise verified video row.
-              // If the original snapshot lacked UUID metadata, inherit it only from
-              // the same-position row with an exact, unique text fingerprint and a
-              // unique independently resolved UUID in the refreshed inventory.
-              const verifiedIndexes = applyVerifiedRowUuidFallback(
-                initialScan.items, refreshedScan.items, baselineTexts, refreshedTexts,
-              );
+              // UUID equality across independent full inventories verifies each media
+              // tile even if its DOM position changes. Only mark UUIDs that are unique
+              // and present in both inventories; refusal remains a text-keyed non-media tile.
+              const verifiedIndexes = new Set();
+              for (let index = 0; index < initialScan.items.length; index += 1) {
+                const item = initialScan.items[index];
+                if (item.mediaUuid && baselineUuidSet.has(item.mediaUuid) && refreshedUuidSet.has(item.mediaUuid)) {
+                  verifiedIndexes.add(index);
+                }
+              }
               for (const index of verifiedIndexes) verifiedUuidThumbnailIndexes.add(index);
             }
             for (const missingIndex of missingIndexes) {
@@ -3595,9 +3624,13 @@ async function prepare(args, browser, rl) {
             if (uuid) return `media:${uuid[0].toLowerCase()}`;
           }
           const routeHrefs = Array.from(element.querySelectorAll('a[href*="/edit/"], a[href*="/video/"]'))
-            .map(anchor => anchor.getAttribute("href")).filter(Boolean);
+            .map(anchor => anchor.getAttribute("href")).filter(Boolean)
+            .sort((a, b) => Number(/\\/edit\\//i.test(b)) - Number(/\\/edit\\//i.test(a)));
           const ownHref = element.getAttribute("href");
-          if (ownHref && (ownHref.includes("/edit/") || ownHref.includes("/video/"))) routeHrefs.unshift(ownHref);
+          if (ownHref && (ownHref.includes("/edit/") || ownHref.includes("/video/"))) {
+            if (/\\/edit\\//i.test(ownHref)) routeHrefs.unshift(ownHref);
+            else routeHrefs.push(ownHref);
+          }
           for (const href of routeHrefs) {
             const parts = String(href).split("/").filter(Boolean);
             const routeIndex = parts.findIndex(part => part === "edit" || part === "video");
