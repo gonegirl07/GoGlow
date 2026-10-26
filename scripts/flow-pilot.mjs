@@ -520,7 +520,8 @@ async function collectAllGeneratedItems(page, selector, { targetKey = null, maxS
         return matches && matches.length ? matches[matches.length - 1].toLowerCase() : null;
       };
       // Do not confuse /image/<uuid> thumbnail identifiers with video media UUIDs.
-      const mediaUuid = primarySources.map(uuidFrom).find(Boolean)
+      // A /image/<uuid> href is a thumbnail ID, not the video's media UUID.
+      const mediaUuid = primarySources.filter(value => !/\/image\//i.test(value)).map(uuidFrom).find(Boolean)
         || (thumbnailSrc && !/\/image\//i.test(thumbnailSrc) ? uuidFrom(thumbnailSrc) : null);
       const sources = [...primarySources, ...(thumbnailSrc ? [thumbnailSrc] : [])];
       const text = String(element.innerText || element.textContent || "").replace(/\s+/g, " ").trim();
