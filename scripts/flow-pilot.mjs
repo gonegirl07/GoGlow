@@ -9,6 +9,7 @@ import readline from "node:readline";
 import { stdin as input, stdout as output } from "node:process";
 import { chromium } from "playwright";
 import { createHash, randomUUID } from "node:crypto";
+import { normalizeAsbIdentityToken, firstThreeThumbnailTokensMatch } from "./asb-identity.mjs";
 
 const CDP_ENDPOINT = "http://127.0.0.1:9224";
 const LEGACY_FLOW_HOST = "labs.google";
@@ -1687,7 +1688,6 @@ function buildVerifiedThumbnailBaselineTokens(domTokens, items, domTexts, verifi
   return tokens;
 }
 
-import { normalizeAsbIdentityToken, firstThreeThumbnailTokensMatch } from "./asb-identity.mjs";
 
 function thumbnailIdentityToken(value) {
   const mediaUuidHint = arguments.length > 1 ? arguments[1] : null;
