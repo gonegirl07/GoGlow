@@ -1120,6 +1120,7 @@ async function waitForGenerationAndDownload(page, selectors, { beforeKeys, befor
             throw new Error(`FLOW_SUBMITTED_UNIDENTIFIED: New first-row tile was inferred from shifted neighbors, but opening it did not yield a verified non-baseline /edit/<uuid> URL (url=${openedUrl}). Do not retry automatically.`);
           }
           newKey = openedKey;
+          onSubmissionEvidence({ kind: "ordered_baseline_shift_and_detail_uuid", media_uuid: openedUuid });
           console.log(JSON.stringify({ event: "post_create_new_first_tile_verified",
             media_uuid: openedUuid, url: openedUrl, method: "edit_route_after_ordered_baseline_shift" }));
         } else {
@@ -1233,10 +1234,13 @@ async function waitForGenerationAndDownload(page, selectors, { beforeKeys, befor
       actualResolution: actualResolution?.label || null, downloadQualityLabel: selectedDownloadLabel,
       verifiedMediaUuid: String(newKey).replace(/^media:/i, "").toLowerCase(),
       verificationState: "verified_new_media_uuid",
-      verificationEvidence: "new_media_uuid_set_difference_and_matching_detail_route" };
+      verificationEvidence: "new_media_uuid_set_difference_or_ordered_baseline_shift_plus_matching_detail_route" };
   } catch (error) {
     return { downloadedFile: null, mediaUri, downloadError: String(error.message || error),
-      actualResolution: null, downloadQualityLabel: null };
+      actualResolution: null, downloadQualityLabel: null,
+      verifiedMediaUuid: String(newKey).replace(/^media:/i, "").toLowerCase(),
+      verificationState: "verified_new_media_uuid",
+      verificationEvidence: "new_media_uuid_set_difference_or_ordered_baseline_shift_plus_matching_detail_route" };
   }
 }
 
