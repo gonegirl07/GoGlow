@@ -1670,7 +1670,8 @@ function buildVerifiedThumbnailBaselineTokens(domTokens, items, domTexts, verifi
       && countText(baselineTexts, text) === 1 && countText(visibleTexts, text) === 1);
     // A resolved video UUID is authoritative only when it belongs to this exact
     // inventory position and its text fingerprint uniquely matches the live DOM row.
-    if (uniqueUuid && (samePositionText || verifiedUuidIndexes.has(index))) tokens[index] = `media:${uuid.toLowerCase()}`;
+    if (uniqueUuid && (!tokens[index] || /\/image\//i.test(String(tokens[index])))
+      && (samePositionText || verifiedUuidIndexes.has(index))) tokens[index] = `media:${uuid.toLowerCase()}`;
   }
   return tokens;
 }
