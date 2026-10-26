@@ -181,7 +181,9 @@ async function generatedItemKeys(page, selector) {
     };
     // /image/<uuid> identifies a thumbnail image, not necessarily the video asset.
     // Never promote it into the baseline media identity without independent evidence.
-    const mediaUuid = primarySources.map(uuidFrom).find(Boolean)
+    // Thumbnail routes are not video identities: /image/<uuid> can have a
+    // different UUID from the underlying generated video.
+    const mediaUuid = primarySources.filter(value => !/\/image\//i.test(value)).map(uuidFrom).find(Boolean)
       || (/\/image\//i.test(imageSource) ? null : uuidFrom(imageSource));
     if (mediaUuid) return `media:${mediaUuid}`;
     const textNode = element.cloneNode(true);
@@ -294,13 +296,14 @@ async function collectAllGeneratedItems(page, selector, { targetKey = null, maxS
     // Generic tile text is not a stable media identity and is never used as a key.
     if (!identity?.thumbnailSrc && Number.isInteger(index) && index >= 0) {
       const tokenRecaptureStartedAt = Date.now();
-      for (let tokenWait = 0; tokenWait < 8; tokenWait += 1) {
-        const source = await page.locator(selector).nth(index).locator("img").getAttribute("src").catch(() => null);
-        if (source && thumbnailIdentityToken(source)) {
-          identity = { ...(identity || {}), thumbnailSrc: source };
-          break;
-        }
-        await page.waitForTimeout(250);
+      // Read the existing DOM synchronously. Repeated locator.getAttribute() calls
+      // can each consume Playwright's default timeout when the tile has no <img>,
+      // turning this "8 x 250ms" probe into a multi-minute stall.
+      const source = await page.locator(selector).evaluateAll((elements, tileIndex) =>
+        elements[tileIndex]?.querySelector("img")?.getAttribute("src") || null, index
+      ).catch(() => null);
+      if (source && thumbnailIdentityToken(source)) {
+        identity = { ...(identity || {}), thumbnailSrc: source };
       }
       const hasStableUuid = Boolean(identity?.mediaUuid
         || String(identity?.key || "").match(/^media:([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})$/i)?.[1]);
@@ -625,7 +628,11 @@ async function collectAllGeneratedItems(page, selector, { targetKey = null, maxS
   }, { selectorText: selector, initialTop: scrollInfo.initialTop });
   page.off("response", networkResponseListener);
   page.off("response", networkResponseListener);
-  return { items: Array.from(all.values()).slice(0, Number.isInteger(topLimit) && topLimit > 0 ? topLimit : undefined), topItems: topItems || [], targetIndex: null, scrolledToTarget: false, unkeyedItemsDetected, duplicateVisibleKeyDetected, reachedBottom, topLimited: Number.isInteger(topLimit) && topLimit > 0 };
+  // A top-limited first-row snapshot must preserve DOM rows even when a tile has
+  // no key yet. Dropping unkeyed rows shifts indexes and makes a neighbor's UUID
+  // appear to belong to the missing tile. The full-grid inventory remains keyed.
+  const topLimited = Number.isInteger(topLimit) && topLimit > 0;
+  return { items: topLimited ? (topItems || []).slice(0, topLimit) : Array.from(all.values()), topItems: topItems || [], targetIndex: null, scrolledToTarget: false, unkeyedItemsDetected, duplicateVisibleKeyDetected, reachedBottom, topLimited };
 }
 
 function isGenerationFailureText(value) {
@@ -3231,7 +3238,7 @@ async function prepare(args, browser, rl) {
           uuid_count: initialUuids.filter(Boolean).length,
           missing_tile_indexes: missingIndexes,
           missing_thumbnail_token_indexes: missingIndexes,
-          retry_strategy: completeUniqueUuidBaseline ? "thumbnail_only_snapshot" : "full_uuid_inventory",
+          retry_strategy: thumbnailRetry === 1 && completeUniqueUuidBaseline ? "thumbnail_only_snapshot" : "full_row_dom_inventory",
           wait_ms: 500,
         }));
         await chosen.page.waitForTimeout(500);
@@ -3247,10 +3254,10 @@ async function prepare(args, browser, rl) {
         const retryInventoryStartedAt = Date.now();
         const refreshedScan = await collectAllGeneratedItems(chosen.page, selectors.generated_video_items, {
           uuidCache: baselineUuidCache, topLimit: 3, selectors,
-          // First try a fast thumbnail-only snapshot when all UUIDs are bound to the
-          // baseline row. If that snapshot is incomplete or reordered, the next
-          // attempt must perform a full-row UUID inventory rather than trust fragments.
-          skipUuidResolution: completeUniqueUuidBaseline && thumbnailRetry === 1,
+          // Both retries take a fresh full first-row DOM snapshot. UUIDs are resolved
+          // only by the initial inventory; re-opening tiles here can rotate tokens,
+          // change the grid route, and incur repeated navigation timeouts.
+          skipUuidResolution: true,
         });
         if (completeUniqueUuidBaseline) {
           const normalizeTileText = value => String(value || "").replace(/\s+/g, " ").trim();
@@ -3275,10 +3282,17 @@ async function prepare(args, browser, rl) {
               if (refreshed?.thumbnailSrc && thumbnailIdentityToken(refreshed.thumbnailSrc)) {
                 initialScan.items[missingIndex].thumbnailSrc = refreshed.thumbnailSrc;
               } else if (initialScan.items[missingIndex]?.mediaUuid
-                && refreshed?.mediaUuid === initialScan.items[missingIndex].mediaUuid) {
-                // The full row was re-identified at this exact index by the same
-                // unique media UUID. A media:<uuid> token is therefore a safe
-                // identity fallback even when Flow never exposes an img src.
+                && refreshed
+                && ((refreshed.mediaUuid && refreshed.mediaUuid === initialScan.items[missingIndex].mediaUuid)
+                  || (!refreshed.mediaUuid
+                    && normalizeTileText(refreshed.text) === baselineTexts[missingIndex]
+                    && Boolean(baselineTexts[missingIndex])
+                    && baselineTextCounts.get(baselineTexts[missingIndex]) === 1
+                    && refreshedTextCounts.get(refreshedTexts[missingIndex]) === 1))) {
+                // The same-position row is verified either by the same video UUID
+                // or by a unique, unchanged text fingerprint when UUID metadata is
+                // temporarily absent. Reuse only the UUID resolved for this exact
+                // baseline tile; never promote a /image/<uuid> thumbnail ID.
                 initialScan.items[missingIndex].thumbnailSrc = `media:${initialScan.items[missingIndex].mediaUuid}`;
               }
             }
