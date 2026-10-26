@@ -679,7 +679,7 @@ class FlowPilotContractTests(unittest.TestCase):
         self.assertIn('event: "baseline_thumbnail_tokens_ready"', preflight)
         self.assertIn('event: "baseline_thumbnail_token_missing_at_capture"', preflight)
         self.assertIn('thumbnailRetry <= 2', preflight)
-        self.assertIn('initialScan.items.some(item => !item.thumbnailSrc || !thumbnailIdentityToken(item.thumbnailSrc))', preflight)
+        self.assertIn('initialScan.items.some(item => !item.thumbnailSrc || !thumbnailIdentityToken(item.thumbnailSrc) || /\\/image\\//i.test(item.thumbnailSrc))', preflight)
         self.assertIn('missing_thumbnail_token_indexes: missingIndexes', preflight)
         self.assertIn("await waitForFirstRowThumbnailTokens(`recapture_retry_${thumbnailRetry}`)", preflight)
         self.assertIn('baselineUuidCache.clear()', preflight)
