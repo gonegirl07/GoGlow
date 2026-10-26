@@ -1184,7 +1184,7 @@ assert.equal(thumbnailIdentityToken('https://flow.google.com/asb/ANqvLObmDmk_6XQ
         baseline_helper = "function buildVerifiedThumbnailBaselineTokens" + self.script.split(
             "function buildVerifiedThumbnailBaselineTokens", 1
         )[1].split("\n\nfunction thumbnailIdentityToken", 1)[0]
-        node_test = apply_helper + "\\n\\n" + baseline_helper + r"""
+        node_test = apply_helper + "\n\n" + baseline_helper + r"""
 const assert = await import('node:assert/strict');
 const uuid = '07e82f95-f37f-412a-83bd-018fe25b1278';
 const initial = [
