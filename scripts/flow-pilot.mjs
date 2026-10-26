@@ -3776,7 +3776,7 @@ async function prepare(args, browser, rl) {
               element.querySelector("video source")?.getAttribute("src"),
               element.querySelector("video")?.getAttribute("poster"),
               element.querySelector("source")?.getAttribute("src"),
-              element.querySelector("img")?.getAttribute("srcset")?.split(",")[0]?.trim().split(/\\s+/)[0],
+              element.querySelector("img")?.getAttribute("srcset")?.split(",")[0]?.trim().split(/\s+/)[0],
             ].filter(Boolean);
             for (const source of sources) {
               const imageUuid = source.match(/\/image\/([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})(?:[/?#]|$)/i)
