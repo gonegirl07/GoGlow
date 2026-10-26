@@ -1687,13 +1687,7 @@ function buildVerifiedThumbnailBaselineTokens(domTokens, items, domTexts, verifi
   return tokens;
 }
 
-function normalizeAsbIdentityToken(value) {
-  const token = String(value || "");
-  if (!token.startsWith("asb:")) return token;
-  // Google may append image transform parameters (e.g. =mm,18,15) to the
-  // same asset token. They describe presentation, not the underlying identity.
-  return `asb:${token.slice(4).split("=", 1)[0]}`;
-}
+import { normalizeAsbIdentityToken } from "./asb-identity.mjs";
 
 function thumbnailIdentityToken(value) {
   const mediaUuidHint = arguments.length > 1 ? arguments[1] : null;
