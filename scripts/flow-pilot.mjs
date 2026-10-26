@@ -1822,7 +1822,7 @@ function buildVerifiedThumbnailBaselineTokens(domTokens, items, domTexts, verifi
     }
     // Unverified UUIDs may only fill a missing/image placeholder when the row's
     // unique text fingerprint is unchanged at the same position.
-    if (uniqueUuid && (!tokens[index] || /\\/image\\//i.test(String(tokens[index])))
+    if (uniqueUuid && (!tokens[index] || /\/image\//i.test(String(tokens[index])))
       && samePositionText) tokens[index] = `media:${uuid.toLowerCase()}`;
   }
   return tokens;
@@ -3498,7 +3498,7 @@ async function prepare(args, browser, rl) {
                 const item = initialScan.items[index];
                 if (item.mediaUuid) {
                   verifiedUuidThumbnailIndexes.add(index);
-                  if (!item.thumbnailSrc || /\\/image\\//i.test(item.thumbnailSrc)) {
+                  if (!item.thumbnailSrc || /\/image\//i.test(item.thumbnailSrc)) {
                     item.thumbnailSrc = `media:${item.mediaUuid.toLowerCase()}`;
                   }
                 }
