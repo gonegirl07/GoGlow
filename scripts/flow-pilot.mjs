@@ -87,6 +87,14 @@ Selector-only preflight (no Create click; validates balance and stable tile iden
     --selectors local/flow-selectors.json --account-label "my Flow account" \\\
     --expected-email "you@example.com" --expected-project "project-uuid"
 
+Recover an already charged unidentified attempt without submitting a prompt or clicking Create:
+  node scripts/flow-pilot.mjs --recover-attempt attempt-<uuid> --tab 5 --scene path/to/scene.json \\
+    --selectors local/flow-selectors.json --account-label "my Flow account" \\
+    --expected-email "you@example.com" --expected-project "project-uuid" \\
+    --log local/exec.log --ledger-output local/flow-generation-ledger.jsonl --download-dir local/flow-downloads
+
+--recover-attempt requires a matching submitted_unidentified ledger record and complete baseline/Create timestamp evidence in the log.
+It only resolves, verifies, and downloads an already submitted result; it never clicks Create.
 --wait requires selector keys: credit_balance, generated_video_items, and download_media_button.
 The download menu is selected dynamically by its visible "Original size" label. Pass --dry-run --wait
 to validate credit balance and existing tile identities before any real execute.
