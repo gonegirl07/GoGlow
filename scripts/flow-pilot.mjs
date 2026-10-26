@@ -3446,6 +3446,10 @@ async function prepare(args, browser, rl) {
       // trigger three editor round-trips (~30s) and can rotate the very /asb/ tokens
       // this snapshot is meant to capture. Keep UUID resolution fail-closed.
       const verifiedUuidThumbnailIndexes = new Set();
+      // Keep ASB tokens observed during the same refreshed first-row scan that
+      // independently verifies each media UUID. Some cards expose the token in
+      // the live DOM while collectAllGeneratedItems.item.thumbnailSrc is null.
+      const verifiedAsbAliasesByIndex = new Map();
       for (let thumbnailRetry = 1; thumbnailRetry <= 2
         && initialScan.items.length >= 3
         && initialScan.items.some(item => !item.thumbnailSrc || !thumbnailIdentityToken(item.thumbnailSrc) || /\/image\//i.test(item.thumbnailSrc)); thumbnailRetry += 1) {
@@ -3489,6 +3493,12 @@ async function prepare(args, browser, rl) {
           // verified by its generated-video UUID even when /image/ placeholders persist.
           skipUuidResolution: thumbnailRetry === 1,
         });
+        const refreshedDomAsbTokens = await chosen.page.locator(selectors.generated_video_items).evaluateAll(elements =>
+          elements.slice(0, 3).map(element => {
+            const source = element.querySelector("img")?.getAttribute("src") || "";
+            const match = source.match(/\\/asb\\/([^/?#]+)/i);
+            return match ? `asb:${match[1].split("=", 1)[0]}` : null;
+          })).catch(() => []);
         if (initialScan.items.length >= 3 && refreshedScan.items.length >= 3) {
           const normalizeTileText = value => String(value || "").replace(/\s+/g, " ").trim();
           const baselineTexts = initialScan.items.map(item => normalizeTileText(item.text));
@@ -3539,6 +3549,8 @@ async function prepare(args, browser, rl) {
                 const item = initialScan.items[index];
                 if (item.mediaUuid) {
                   verifiedUuidThumbnailIndexes.add(index);
+                  const observedAsb = refreshedDomAsbTokens[index];
+                  if (observedAsb) verifiedAsbAliasesByIndex.set(index, observedAsb);
                   if (!item.thumbnailSrc || /\/image\//i.test(item.thumbnailSrc)) {
                     item.thumbnailSrc = `media:${item.mediaUuid.toLowerCase()}`;
                   }
@@ -3762,7 +3774,7 @@ async function prepare(args, browser, rl) {
         // its ASB URL is present in the DOM snapshot rather than item.thumbnailSrc.
         // This alias is safe only because the same row index was independently
         // verified against the refreshed unique media-UUID inventory.
-        const candidates = [item.thumbnailSrc, domThumbnailBaseline.tokens?.[index]];
+        const candidates = [verifiedAsbAliasesByIndex.get(index), item.thumbnailSrc, domThumbnailBaseline.tokens?.[index]];
         for (const candidate of candidates) {
           if (!candidate) continue;
           const token = thumbnailIdentityToken(candidate);
