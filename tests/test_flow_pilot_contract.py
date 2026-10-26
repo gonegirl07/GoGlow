@@ -1079,6 +1079,8 @@ assert.equal(thumbnailIdentityToken('https://flow.google.com/asb/ANqvLObmDmk_6XQ
         self.assertIn("initialScan.items[missingIndex].thumbnailSrc = `media:${initialScan.items[missingIndex].mediaUuid}`", self.script)
         self.assertIn("refreshedTextCounts.get(refreshedTexts[missingIndex]) === 1", self.script)
         self.assertIn("primarySources.filter(value => !/\\/image\\//i.test(value)).map(uuidFrom).find(Boolean)", self.script)
+        self.assertIn("const mediaUuid = primarySources.filter(value => !/\\/image\\//i.test(value)).map(uuidFrom).find(Boolean)", self.script)
+        self.assertIn("turning this \"8 x 250ms\" probe into a multi-minute stall", self.script)
         self.assertIn("if (!sameVisibleRow)", self.script)
 
     def test_two_item_recapture_retries_full_row_before_fail_closed(self):
