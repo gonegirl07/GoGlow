@@ -1157,8 +1157,9 @@ assert.equal(thumbnailIdentityToken('https://flow.google.com/asb/ANqvLObmDmk_6XQ
 
 
     def test_missing_third_thumbnail_uses_uuid_only_after_same_position_row_verification(self):
-        self.assertIn("const sameVisibleRow = refreshedScan.items.length === initialScan.items.length", self.script)
-        self.assertIn("item.mediaUuid && refreshed.mediaUuid) return item.mediaUuid === refreshed.mediaUuid", self.script)
+        self.assertIn("const verifiedRowIndexes = verifiedFirstRowIdentityIndexes(initialScan.items, refreshedScan.items)", self.script)
+        self.assertIn("return new Set(initialMedia.map(item => item.index))", self.script)
+        self.assertIn("Prefer explicit media IDs and the editor's /edit/<media UUID> route", self.script)
         self.assertIn("refreshed.mediaUuid === initialScan.items[missingIndex].mediaUuid", self.script)
         self.assertIn("initialScan.items[missingIndex].thumbnailSrc = `media:${initialScan.items[missingIndex].mediaUuid}`", self.script)
         self.assertIn("refreshedTextCounts.get(refreshedTexts[missingIndex]) === 1", self.script)
@@ -1322,6 +1323,53 @@ assert.deepEqual(verified, [
         self.assertIn("skipUuidResolution: thumbnailRetry === 1", self.script)
         self.assertIn('phase: thumbnailRetry === 1 && completeUniqueUuidBaseline ? "thumbnail_only_recapture" : "full_row_dom_inventory"', self.script)
 
+    def test_first_row_identity_accepts_refusal_and_reordered_verified_media_but_fails_closed(self):
+        identity_helper = "function verifiedFirstRowIdentityIndexes" + self.script.split(
+            "function verifiedFirstRowIdentityIndexes", 1
+        )[1].split("\n\nfunction buildVerifiedThumbnailBaselineTokens", 1)[0]
+        refusal_helper = "function isKnownPolicyRefusalTile" + self.script.split(
+            "function isKnownPolicyRefusalTile", 1
+        )[1].split("\n\nfunction failedPolicyBaselineKey", 1)[0]
+        node_test = identity_helper + "\n\n" + refusal_helper + r"""
+const assert = await import('node:assert/strict');
+const refusal = {
+  text: 'Failed: This generation might violate our policies for prominent people. You will be refunded.',
+  mediaUuid: null,
+};
+const a = { mediaUuid: '07e82f95-f37f-412a-83bd-018fe25b1278', text: 'Mai variant A' };
+const b = { mediaUuid: '4bcc1ce2-4018-43fc-9a8a-059fdc315750', text: 'Mai variant B' };
+const baseline = [refusal, a, b];
+const reordered = [b, { ...refusal }, a];
+assert.deepEqual(
+  [...verifiedFirstRowIdentityIndexes(baseline, reordered)],
+  [1, 2],
+  'a unique known refusal plus the same two unique media UUIDs should verify despite order changes',
+);
+assert.equal(
+  verifiedFirstRowIdentityIndexes(baseline, [b, { ...refusal }, { ...a, mediaUuid: '11111111-1111-4111-8111-111111111111' }]),
+  null,
+  'a changed media UUID set must fail closed',
+);
+assert.equal(
+  verifiedFirstRowIdentityIndexes(baseline, [b, { text: 'unknown empty tile', mediaUuid: null }, a]),
+  null,
+  'an unknown non-media tile must fail closed',
+);
+assert.equal(
+  verifiedFirstRowIdentityIndexes(baseline, [b, { ...refusal, text: refusal.text + ' changed' }, a]),
+  null,
+  'a changed refusal text must fail closed',
+);
+assert.equal(
+  verifiedFirstRowIdentityIndexes(baseline, [b, { ...refusal }, { ...a, mediaUuid: b.mediaUuid }]),
+  null,
+  'duplicate media UUIDs must fail closed',
+);
+"""
+        result = subprocess.run(["node", "--input-type=module", "-e", node_test],
+                                capture_output=True, text=True, check=False, timeout=5)
+        self.assertEqual(result.returncode, 0, msg=result.stdout + result.stderr)
+
     def test_persistent_incomplete_recapture_fails_before_create(self):
         self.assertIn("First-row baseline requires loaded DOM thumbnail identities for all three tiles", self.script)
         self.assertIn("Refusing to Create with an incomplete baseline", self.script)
@@ -1331,10 +1379,8 @@ assert.deepEqual(verified, [
         )
 
     def test_tile_reorder_or_ambiguous_text_match_stops_before_create(self):
-        self.assertIn("const baselineTextCounts = new Map()", self.script)
-        self.assertIn("const refreshedTextCounts = new Map()", self.script)
-        self.assertIn("baselineTextCounts.get(text) === 1 && refreshedTextCounts.get(text) === 1", self.script)
-        self.assertIn("item.mediaUuid === refreshed.mediaUuid", self.script)
+        self.assertIn("function verifiedFirstRowIdentityIndexes(initialItems, refreshedItems)", self.script)
+        self.assertIn("const sameVisibleRow = verifiedRowIndexes !== null", self.script)
         self.assertIn("if (!sameVisibleRow)", self.script)
         self.assertIn("Pre-Create recheck could not confirm a stable first tile and three-tile row", self.script)
 
