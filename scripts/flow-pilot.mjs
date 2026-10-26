@@ -353,11 +353,11 @@ async function collectAllGeneratedItems(page, selector, { targetKey = null, maxS
               element.querySelector("video source")?.getAttribute("src"),
               element.querySelector("video")?.getAttribute("poster"),
               element.querySelector("source")?.getAttribute("src"),
-              element.querySelector("img")?.getAttribute("srcset")?.split(",")[0]?.trim().split(/\\s+/)[0],
+              element.querySelector("img")?.getAttribute("srcset")?.split(",")[0]?.trim().split(/\s+/)[0],
             ].filter(Boolean);
             for (const source of sources) {
-              if (/\\/image\\//i.test(source)) continue;
-              const asbMatch = String(source).match(/\\/asb\\/([^/?#]+)/i);
+              if (/\/image\//i.test(source)) continue;
+              const asbMatch = String(source).match(/\/asb\/([^/?#]+)/i);
               if (asbMatch?.[1]) return `asb:${asbMatch[1]}`;
               try {
                 const pathname = new URL(source, location.href).pathname;
@@ -3505,7 +3505,7 @@ async function prepare(args, browser, rl) {
             element.querySelector("video source")?.getAttribute("src"),
             element.querySelector("video")?.getAttribute("poster"),
             element.querySelector("source")?.getAttribute("src"),
-            element.querySelector("img")?.getAttribute("srcset")?.split(",")[0]?.trim().split(/\\s+/)[0],
+            element.querySelector("img")?.getAttribute("srcset")?.split(",")[0]?.trim().split(/\s+/)[0],
           ].filter(Boolean);
           if (!sources.length) return null;
           let source = sources[0];
