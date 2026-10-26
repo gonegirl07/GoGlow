@@ -1097,7 +1097,7 @@ assert.equal(thumbnailIdentityToken('https://flow.google.com/asb/ANqvLObmDmk_6XQ
     def test_null_asb_null_thumbnail_pattern_uses_verified_video_uuids_and_not_image_uuid(self):
         helper = "function buildVerifiedThumbnailBaselineTokens" + self.script.split(
             "function buildVerifiedThumbnailBaselineTokens", 1
-        )[1].split("\\n\\nfunction thumbnailIdentityToken", 1)[0]
+        )[1].split("\n\nfunction thumbnailIdentityToken", 1)[0]
         node_test = helper + r"""
 const assert = await import('node:assert/strict');
 const items = [
