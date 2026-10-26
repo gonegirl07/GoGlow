@@ -993,6 +993,7 @@ async function waitForGenerationAndDownload(page, selectors, { beforeKeys, befor
   let newKey = null;
   let newItem = null;
   let attemptedKeys = new Set();
+  let pollNumber = 0;
   const failIfVisible = async () => {
     // Project grids may retain older failed tiles. Only inspect the whole page on
     // a generation detail route; on the grid, inspect only newly-created tiles below.
@@ -1013,7 +1014,13 @@ async function waitForGenerationAndDownload(page, selectors, { beforeKeys, befor
     }
   };
   while (true) {
+    pollNumber += 1;
+    console.log(JSON.stringify({ event: "post_create_poll_started", poll_number: pollNumber,
+      poll_at: new Date().toISOString(), url: page.url(), baseline_key_count: (beforeKeys || []).length }));
     if (Date.now() >= deadline) {
+      console.warn(JSON.stringify({ event: "post_create_poll", poll_number: pollNumber,
+        poll_at: new Date().toISOString(), outcome: "wait_deadline_reached",
+        reason: chargedExtensionUsed ? "charged_extension_already_used" : "no_new_verified_media_before_deadline" }));
       // A credit debit is strong evidence that Create was accepted even when Flow's
       // media grid is stale. Give the newly charged generation one short, bounded
       // discovery extension; never click Create again.
@@ -1044,6 +1051,10 @@ async function waitForGenerationAndDownload(page, selectors, { beforeKeys, befor
       /unusual activity|browser extensions? that modify the page/i.test(item.text)
       && !baselineFailedTexts.has(item.text.replace(/\s+/g, " ").trim().toLowerCase()));
     if (unusualActivityTile) {
+      console.warn(JSON.stringify({ event: "post_create_poll", poll_number: pollNumber,
+        poll_at: new Date().toISOString(), outcome: "rejected_unusual_activity",
+        reject_reason: "new_unusual_activity_tile", tile_index: unusualActivityTile.index,
+        tile_text: unusualActivityTile.text }));
       throw new Error(`FLOW_REJECTED_UNUSUAL_ACTIVITY: Flow rejected this submission at visible tile position ${unusualActivityTile.index}: ${unusualActivityTile.text}`);
     }
     const newlyFailedTileWithoutIdentity = visibleTileFailures.find(item => {
@@ -1051,6 +1062,10 @@ async function waitForGenerationAndDownload(page, selectors, { beforeKeys, befor
       return (/^failed\b/i.test(text) || isGenerationFailureText(text)) && !baselineFailedTexts.has(text);
     });
     if (newlyFailedTileWithoutIdentity) {
+      console.warn(JSON.stringify({ event: "post_create_poll", poll_number: pollNumber,
+        poll_at: new Date().toISOString(), outcome: "new_failed_tile",
+        reject_reason: "failure_text_without_stable_media_identity",
+        tile_index: newlyFailedTileWithoutIdentity.index, tile_text: newlyFailedTileWithoutIdentity.text }));
       throw new Error(`FLOW_GENERATION_FAILED: new Flow tile at position ${newlyFailedTileWithoutIdentity.index} reports failure without a stable media identity: ${newlyFailedTileWithoutIdentity.text}`);
     }
     const scan = await collectAllGeneratedItems(page, selectors.generated_video_items, {
