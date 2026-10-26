@@ -193,7 +193,7 @@ class FlowPilotContractTests(unittest.TestCase):
         self.assertIn("const mediaUuid = primarySources.map(uuidFrom).find(Boolean)", self.script)
         self.assertIn("baseline_media_keys: initialItems", self.script)
         self.assertIn("ignored_failed_tile_keys: failedBaselineItems.map(item => item.key)", self.script)
-        self.assertIn("const candidateItems = newItems.filter(item =>", self.script)
+        self.assertIn("let candidateItems = newItems.filter(item =>", self.script)
         self.assertIn("async function collectAllGeneratedItems(page, selector", self.script)
         self.assertNotIn("count > beforeCount", self.script)
 
@@ -667,7 +667,7 @@ class FlowPilotContractTests(unittest.TestCase):
         self.assertNotIn('selectedAssetAriaSelected === "true" && addToPromptVisibleCount', upload_fn)
         self.assertLess(
             upload_fn.index('if (addToPromptVisibleCount === 1 && (selectedAssetAriaSelected === "true" || labelMatches)'),
-            upload_fn.index('const addToPrompt = pickerContainer.locator(addToPromptSelector);'),
+            upload_fn.index('const addToPromptCandidates = pickerContainer.locator(addToPromptSelector);'),
         )
 
     def test_first_row_thumbnail_tokens_wait_and_recapture_when_missing(self):
@@ -700,7 +700,7 @@ class FlowPilotContractTests(unittest.TestCase):
         self.assertIn('"data-asset-id"', self.script)
         self.assertIn('"data-media-id"', self.script)
         self.assertIn("Refusing to upload a duplicate; if this is the intended asset", self.script)
-        self.assertIn("let assetUuid = await assetUuidFromLocator(asset)", self.script)
+        self.assertIn("let assetUuid = reusedExistingUuid || await assetUuidFromLocator(asset, 1200)", self.script)
 
     def test_clear_prompt_removes_ingredient_chips_and_verifies_each_removal(self):
         self.assertIn('button[aria-label*="remove" i]', self.script)
@@ -815,7 +815,7 @@ class FlowPilotContractTests(unittest.TestCase):
         self.assertIn("topLimit: 3, selectors", self.script)
         self.assertIn("initialScan.items.length < 3", self.script)
         self.assertIn('baseline_strategy: "visible_first_row_min_3"', self.script)
-        self.assertIn("args._waitInitialThumbnailTokens = domThumbnailBaseline.tokens;", self.script)
+        self.assertIn("args._waitInitialThumbnailTokens = baselineTokensWithUuidFallback;", self.script)
         self.assertIn("args._waitInitialThumbnailTokens.slice(0, 3).some(token => !token)", self.script)
 
     def test_pre_create_recheck_is_read_only_and_uses_bounded_neighbor_fallback(self):
@@ -980,7 +980,7 @@ assert.deepEqual(findNewCompletedMediaItems([
     def test_picker_resets_between_assets_and_requires_preview_uuid_before_add(self):
         self.assertIn("async function resetIngredientsPicker(page, selectors)", self.script)
         self.assertIn('await page.keyboard.press("Escape")', self.script)
-        self.assertIn("Ingredients picker reset", self.script)
+        self.assertIn("Ingredients picker/detail pane did not fully close after Escape/backdrop close", self.script)
         self.assertIn("await resetIngredientsPicker(page, selectors);", self.script)
         self.assertIn("async function inspectAddToPromptContext(button)", self.script)
         self.assertIn('event: "ingredients_picker_add_action_identity"', self.script)
