@@ -1240,5 +1240,35 @@ assert.deepEqual(verified, [
         self.assertIn("Pre-Create recheck could not confirm a stable first tile and three-tile row", self.script)
 
 
+    def test_asb_size_suffix_normalization_accepts_same_asset_and_fails_closed(self):
+        helper_path = Path(__file__).parents[1] / "scripts" / "asb-identity.mjs"
+        node_test = f"""
+import assert from "node:assert/strict";
+import {{ normalizeAsbIdentityToken, firstThreeThumbnailTokensMatch }} from {helper_path.as_uri()!r};
+const baseline = ["asb:A", "asb:B", "asb:C"];
+assert.equal(normalizeAsbIdentityToken("asb:C=mm,18,15"), "asb:C");
+assert.equal(
+  firstThreeThumbnailTokensMatch(baseline, ["asb:A", "asb:B", "asb:C=mm,18,15"]),
+  true,
+  "same asb asset with image transform suffix must match",
+);
+assert.equal(
+  firstThreeThumbnailTokensMatch(baseline, ["asb:A", "asb:B", "asb:D=mm,18,15"]),
+  false,
+  "a different asb asset ID must fail closed",
+);
+assert.equal(
+  firstThreeThumbnailTokensMatch(baseline, ["asb:A", "asb:B", null]),
+  false,
+  "a missing token must fail closed",
+);
+"""
+        result = subprocess.run(
+            ["node", "--input-type=module", "-e", node_test],
+            capture_output=True, text=True, check=False, timeout=5,
+        )
+        self.assertEqual(result.returncode, 0, msg=result.stdout + result.stderr)
+
+
 if __name__ == "__main__":
     unittest.main()
