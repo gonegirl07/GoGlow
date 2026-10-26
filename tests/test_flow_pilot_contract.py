@@ -173,6 +173,17 @@ class FlowPilotContractTests(unittest.TestCase):
         self.assertIn("selectors.account_panel_close", self.script)
         self.assertIn("span.credits-count", (Path(__file__).parents[1] / "examples" / "flow-pilot-selectors.example.json").read_text(encoding="utf-8"))
 
+    def test_dry_run_requires_a_real_initial_credit_balance_and_fails_closed(self):
+        # Dry-run must read the live balance, not report success because --wait is absent.
+        self.assertIn("const requiresInitialBalance = args.waitForResult || args.dryRun;", self.script)
+        self.assertIn("const initialBalance = requiresInitialBalance ? await readCreditBalance(chosen.page, selectors) : null;", self.script)
+        self.assertIn("success: !requiresInitialBalance || (Number.isSafeInteger(initialBalance) && initialBalance >= 0)", self.script)
+        self.assertIn("balance_read: Number.isSafeInteger(initialBalance) && initialBalance >= 0", self.script)
+        self.assertIn("if (requiresInitialBalance && (!Number.isSafeInteger(initialBalance) || initialBalance < 0))", self.script)
+        self.assertIn("Could not read a valid non-negative integer credit balance; refusing to continue pre-Create.", self.script)
+        self.assertNotIn("success: !args.waitForResult || initialBalance !== null", self.script)
+
+
     def test_wait_returns_to_project_before_credit_polling_and_recovers_on_error(self):
         self.assertIn('chosen.page.goBack({ waitUntil: "domcontentloaded", timeout: 15000 })', self.script)
         self.assertIn('chosen.page.goBack({ waitUntil: "domcontentloaded", timeout: 10000 })', self.script)
