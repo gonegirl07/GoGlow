@@ -3274,7 +3274,11 @@ async function prepare(args, browser, rl) {
         await waitForFirstRowThumbnailTokens(`recapture_retry_${thumbnailRetry}`);
         const retryInventoryStartedAt = Date.now();
         const refreshedScan = await collectAllGeneratedItems(chosen.page, selectors.generated_video_items, {
-          uuidCache: baselineUuidCache, topLimit: 3, selectors,
+          // Do not reuse the first inventory's UUID cache on retry 2: the full pass
+          // must independently re-identify each tile, not merely replay a cached UUID
+          // for the same text/URL hint.
+          uuidCache: thumbnailRetry === 1 ? baselineUuidCache : new Map(),
+          topLimit: 3, selectors,
           // Retry 1 is a fast DOM-only recapture. Retry 2 repeats per-tile UUID
           // re-identification, as the initial inventory does, so each row can be
           // verified by its generated-video UUID even when /image/ placeholders persist.
