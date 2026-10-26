@@ -653,6 +653,24 @@ function isGenerationFailureText(value) {
   return /generation failed|failed to generate|couldn['’]?t generate|unable to generate|video failed|something went wrong|blocked by (?:policy|safety)|might violate|violate(?:s|d)? (?:our )?policies|violat(?:es|ed) (?:our )?(?:policy|policies|guidelines)|prominent people|you will be refunded|generation error|unusual activity|browser extensions? that modify the page/i.test(String(value || ""));
 }
 
+function isKnownPolicyRefusalTile(item) {
+  if (!item || item.mediaUuid) return false;
+  const text = String(item.text || "");
+  const state = String(item.state || "");
+  // Only an explicit provider refusal is a stable non-media baseline item.
+  // Generic failures, empty cards, loading cards, and unknown states still fail closed.
+  return /\\bfailed\\b/i.test(state + " " + text)
+    && /prominent people/i.test(text)
+    && /might violate our policies/i.test(text)
+    && /you will be refunded/i.test(text);
+}
+
+function failedPolicyBaselineKey(item) {
+  if (!isKnownPolicyRefusalTile(item)) return null;
+  const normalized = String(item.text || "").replace(/\\s+/g, " ").trim().toLowerCase();
+  return normalized ? "failed-policy:" + normalized : null;
+}
+
 async function activateVideosTab(page, selectors) {
   const isSelected = async locator => locator.evaluate(element => {
     let node = element;
@@ -2971,12 +2989,14 @@ async function readCreditCost(page) {
 
 
 function firstThreeMediaKeysMatch(baselineKeys, currentKeys) {
-  const isVideoKey = value => typeof value === "string"
-    && /^media:[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(value);
+  const isStableKey = value => typeof value === "string" && (
+    /^media:[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(value)
+    || /^failed-policy:.{20,}$/i.test(value)
+  );
   return Array.isArray(baselineKeys) && Array.isArray(currentKeys)
     && baselineKeys.length >= 3 && currentKeys.length >= 3
-    && baselineKeys.slice(0, 3).every((key, index) => isVideoKey(key)
-      && isVideoKey(currentKeys[index])
+    && baselineKeys.slice(0, 3).every((key, index) => isStableKey(key)
+      && isStableKey(currentKeys[index])
       && key.toLowerCase() === currentKeys[index].toLowerCase())
     && new Set(currentKeys.slice(0, 3).map(key => key.toLowerCase())).size === 3;
 }
@@ -3417,10 +3437,12 @@ async function prepare(args, browser, rl) {
       // later disappearing/refunded tile cannot make another existing card look new.
       // Failed tiles are diagnostics only and never count as usable video candidates.
       if (!initialScan.topLimited || initialScan.items.length < 3) throw new Error(`Pre-Create first-row baseline requires at least three visible tiles; observed ${initialScan.items.length}. Refusing to Create with an incomplete baseline.`);
-      const initialItems = initialScan.items.map(item => item.key);
+      const initialItems = initialScan.items.map(item => failedPolicyBaselineKey(item) || item.key);
       const baselineUuids = initialScan.items.map(item => item.mediaUuid).filter(Boolean);
       const failedBaselineItems = initialScan.items.filter(item =>
         /\bfailed\b/i.test(`${item.state} ${item.text}`) || isGenerationFailureText(`${item.state} ${item.text}`));
+      const knownPolicyRefusalIndexes = new Set(initialScan.items
+        .map((item, index) => isKnownPolicyRefusalTile(item) ? index : -1).filter(index => index >= 0));
       args._waitInitialFailedTileTexts = failedBaselineItems.map(item => String(item.text || "").replace(/\s+/g, " ").trim().toLowerCase());
       console.log(JSON.stringify({
         event: "baseline_media_inventory_summary",
@@ -3433,22 +3455,26 @@ async function prepare(args, browser, rl) {
         unkeyed_items_detected: initialScan.unkeyedItemsDetected,
         duplicate_visible_key_detected: initialScan.duplicateVisibleKeyDetected,
       }, null, 2));
+      const unresolvedBaselineIndexes = initialScan.items
+        .map((item, index) => item.mediaUuid && initialItems[index] ? -1
+          : knownPolicyRefusalIndexes.has(index) && initialItems[index]?.startsWith("failed-policy:") ? -1 : index)
+        .filter(index => index >= 0);
       if (initialScan.unkeyedItemsDetected || initialScan.duplicateVisibleKeyDetected
-        || baselineUuids.length !== initialScan.items.length || initialItems.some(key => !key) || new Set(initialItems).size !== initialItems.length) {
-        // Before Create, these are all pre-existing baseline tiles; none can be
-        // safely dismissed as unrelated because an unresolved tile could later
-        // disappear/refund and make another card look new. Log classification,
-        // but keep the baseline fail-closed until every tile has a stable identity.
+        || unresolvedBaselineIndexes.length > 0 || initialItems.some(key => !key) || new Set(initialItems).size !== initialItems.length) {
+        // An explicit provider refusal is a known non-media card. Its exact normalized
+        // text is the baseline key; all other unresolved tiles remain safety-critical.
         console.warn(JSON.stringify({
           event: "baseline_unresolved_tile_classification",
           phase: "pre_create_existing_baseline",
-          policy: "unresolved_tiles_remain_safety_critical",
+          policy: "explicit_policy_refusal_is_stable_non_media_other_unknowns_fail_closed",
           tiles: initialScan.items.map((item, index) => ({
             index,
             media_uuid_resolved: Boolean(item.mediaUuid),
-            key_resolved: Boolean(item.key),
-            classification: item.mediaUuid && item.key ? "stable_existing_baseline_tile" : "unknown_identity_fail_closed",
-            text: String(item.text || "").replace(/\s+/g, " ").trim().slice(0, 160),
+            key_resolved: Boolean(initialItems[index]),
+            classification: item.mediaUuid && initialItems[index] ? "stable_existing_baseline_tile"
+              : knownPolicyRefusalIndexes.has(index) && initialItems[index]?.startsWith("failed-policy:") ? "known_policy_refusal_non_media_baseline"
+                : "unknown_identity_fail_closed",
+            text: String(item.text || "").replace(/\\s+/g, " ").trim().slice(0, 160),
             thumbnail_token: item.thumbnailSrc ? thumbnailIdentityToken(item.thumbnailSrc) : null,
             state: String(item.state || "").slice(0, 100),
           })),
@@ -3729,10 +3755,16 @@ async function prepare(args, browser, rl) {
             const baselineText = normalize(baseline?.texts?.[tileIndex]);
             const baselineKey = String(baseline?.keys?.[tileIndex] || "");
             const uuid = baselineKey.match(/^media:([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})$/i)?.[1];
-            if (uuid && currentText && currentText === baselineText
+            const isPolicyRefusal = /prominent people/i.test(currentText)
+              && /might violate our policies/i.test(currentText)
+              && /you will be refunded/i.test(currentText)
+              && /\\bfailed\\b/i.test(currentText);
+            const sameUniqueText = currentText && currentText === baselineText
               && texts.filter(value => value === currentText).length === 1
               && Array.isArray(baseline?.texts)
-              && baseline.texts.filter(value => normalize(value) === currentText).length === 1) return `media:${uuid.toLowerCase()}`;
+              && baseline.texts.filter(value => normalize(value) === currentText).length === 1;
+            if (uuid && sameUniqueText) return `media:${uuid.toLowerCase()}`;
+            if (baselineKey.startsWith("failed-policy:") && isPolicyRefusal && sameUniqueText) return baselineKey;
             return null;
           }),
           tokens: elements.slice(0, 3).map((element, tileIndex) => {
