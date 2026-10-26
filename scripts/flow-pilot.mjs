@@ -4485,7 +4485,7 @@ async function prepare(args, browser, rl) {
 
 function readRecoveryEvidence(logPath, attemptId) {
   const absolute = path.resolve(logPath);
-  if (!fs.existsSync(absolute)) throw new Error(\`Recovery log not found: \${absolute}\`);
+  if (!fs.existsSync(absolute)) throw new Error(`Recovery log not found: ${absolute}`);
   const lines = fs.readFileSync(absolute, "utf8").split(/\r?\n/);
   let ledgerEventIndex = -1;
   for (let i = 0; i < lines.length; i += 1) {
@@ -4494,7 +4494,7 @@ function readRecoveryEvidence(logPath, attemptId) {
       if (event.event === "generation_ledger_recorded" && event.attempt_id === attemptId) ledgerEventIndex = i;
     } catch {}
   }
-  if (ledgerEventIndex < 0) throw new Error(\`Recovery log does not contain generation_ledger_recorded for \${attemptId}; refusing to infer which Create belongs to this ledger attempt.\`);
+  if (ledgerEventIndex < 0) throw new Error(`Recovery log does not contain generation_ledger_recorded for ${attemptId}; refusing to infer which Create belongs to this ledger attempt.`);
   let createClickedAt = null;
   let createLineIndex = -1;
   for (let i = 0; i < ledgerEventIndex; i += 1) {
@@ -4538,7 +4538,7 @@ function readRecoveryEvidence(logPath, attemptId) {
 
 function updateGenerationLedgerAttempt(pathname, attemptId, update) {
   const absolute = path.resolve(pathname);
-  if (!fs.existsSync(absolute)) throw new Error(\`Generation ledger not found: \${absolute}\`);
+  if (!fs.existsSync(absolute)) throw new Error(`Generation ledger not found: ${absolute}`);
   const lines = fs.readFileSync(absolute, "utf8").split(/\r?\n/);
   let matches = 0;
   const updated = lines.map(line => {
@@ -4549,7 +4549,7 @@ function updateGenerationLedgerAttempt(pathname, attemptId, update) {
     matches += 1;
     return JSON.stringify(update(record));
   });
-  if (matches !== 1) throw new Error(\`Expected exactly one ledger record for \${attemptId}; found \${matches}. No ledger changes written.\`);
+  if (matches !== 1) throw new Error(`Expected exactly one ledger record for ${attemptId}; found ${matches}. No ledger changes written.`);
   const temp = absolute + ".recover-tmp";
   fs.writeFileSync(temp, updated.join("\n"), "utf8");
   fs.renameSync(temp, absolute);
@@ -4561,19 +4561,19 @@ async function recoverAttempt(args, browser) {
     throw new Error("--recover-attempt requires --tab, --scene, --selectors, --account-label, --expected-email, and --expected-project.");
   }
   const ledgerPath = path.resolve(args.ledgerOutput);
-  if (!fs.existsSync(ledgerPath)) throw new Error(\`Generation ledger not found: \${ledgerPath}\`);
+  if (!fs.existsSync(ledgerPath)) throw new Error(`Generation ledger not found: ${ledgerPath}`);
   const records = fs.readFileSync(ledgerPath, "utf8").split(/\r?\n/).filter(Boolean).map(line => {
     try { return JSON.parse(line); } catch { return null; }
   }).filter(Boolean);
   const matches = records.filter(record => record.attempt_id === args.recoverAttempt);
-  if (matches.length !== 1) throw new Error(\`Expected exactly one ledger attempt \${args.recoverAttempt}; found \${matches.length}.\`);
+  if (matches.length !== 1) throw new Error(`Expected exactly one ledger attempt ${args.recoverAttempt}; found ${matches.length}.`);
   const record = matches[0];
   if (record.result?.status !== "submitted_unidentified" || record.media?.verification_state !== "unverified"
     || record.media?.verified_media_uuid || !(Number(record.credits?.actual_amount) > 0)) {
     throw new Error("Recovery is limited to a charged submitted_unidentified attempt with no verified UUID; ledger state does not qualify.");
   }
   const { scene, selectors } = await loadInputs(args);
-  if (scene.scene_id !== record.scene_id) throw new Error(\`Scene mismatch: supplied \${scene.scene_id}, ledger \${record.scene_id}. Refusing recovery.\`);
+  if (scene.scene_id !== record.scene_id) throw new Error(`Scene mismatch: supplied ${scene.scene_id}, ledger ${record.scene_id}. Refusing recovery.`);
   const evidence = readRecoveryEvidence(args.log, args.recoverAttempt);
   waitForSelectors(selectors, { ...args, waitForResult: true });
   const chosen = await chooseFlowTab(browser, args);
@@ -4589,7 +4589,7 @@ async function recoverAttempt(args, browser) {
     beforeKeys: evidence.beforeKeys, beforeBalance: record.credits.before_balance,
     createClickedAt: evidence.createClickedAt, uuidCache: new Map(), timeoutMs: args.waitTimeoutMs,
     downloadDir: args.downloadDir, sceneId: record.scene_id, attemptId: args.recoverAttempt,
-    timeoutScreenshot: args.screenshot || \`\${args.log}.recover-timeout.png\`,
+    timeoutScreenshot: args.screenshot || `${args.log}.recover-timeout.png`,
     initialFailedTileTexts: evidence.initialFailedTileTexts,
     onSubmissionEvidence: item => appendEvent(args.log, { event: "recovery_submission_evidence", attempt_id: args.recoverAttempt, evidence: item }),
     variantIndex: record.variant_index || 1, variantCount: record.variant_count || 1,
@@ -4615,7 +4615,7 @@ async function recoverAttempt(args, browser) {
       sha256: result.downloadedFile && fs.existsSync(result.downloadedFile) ? createHash("sha256").update(fs.readFileSync(result.downloadedFile)).digest("hex") : null,
       integrity_status: result.downloadedFile ? "verified" : "not_checked",
     };
-    const note = result.downloadError ? \`Recovery verified UUID but download failed: \${result.downloadError}\` : \`Recovered media UUID \${result.verifiedMediaUuid} without a new Create click.\`;
+    const note = result.downloadError ? `Recovery verified UUID but download failed: ${result.downloadError}` : `Recovered media UUID ${result.verifiedMediaUuid} without a new Create click.`;
     current.notes = [current.notes, note].filter(Boolean).join(" ");
     return current;
   });
