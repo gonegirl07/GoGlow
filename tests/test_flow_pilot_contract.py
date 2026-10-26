@@ -667,7 +667,7 @@ class FlowPilotContractTests(unittest.TestCase):
         self.assertNotIn('selectedAssetAriaSelected === "true" && addToPromptVisibleCount', upload_fn)
         self.assertLess(
             upload_fn.index('if (addToPromptVisibleCount === 1 && (selectedAssetAriaSelected === "true" || labelMatches)'),
-            upload_fn.index('const addToPromptCandidates = pickerContainer.locator(addToPromptSelector);'),
+            upload_fn.index('await addToPrompt.click({ timeout: 6000 });'),
         )
 
     def test_first_row_thumbnail_tokens_wait_and_recapture_when_missing(self):
