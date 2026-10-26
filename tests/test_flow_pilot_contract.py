@@ -336,6 +336,7 @@ function makePage(routeUuid, failDownload = false) {
         async count() { return 1; },
         async isVisible() { return true; },
         async innerText() { return "Original size"; },
+        nth() { return this; },
         async click() { if (failDownload) throw new Error("simulated download menu failure"); },
       };
     },
@@ -363,6 +364,7 @@ const result = await waitForGenerationAndDownload(downloadFailurePage, selectors
 assert.equal(result.verifiedMediaUuid, freshUuid);
 assert.equal(result.verificationState, "verified_new_media_uuid");
 assert.match(result.downloadError, /simulated download menu failure/);
+assert.doesNotMatch(result.downloadError, /is not a function/, "mock must exercise the intended download failure, not a missing mock method");
 const status = result.downloadError ? "download_failed" : "succeeded";
 const dir = fs.mkdtempSync(path.join(os.tmpdir(), "goglow-mocked-ledger-"));
 try {
