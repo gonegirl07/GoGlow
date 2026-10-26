@@ -358,7 +358,7 @@ async function collectAllGeneratedItems(page, selector, { targetKey = null, maxS
             for (const source of sources) {
               if (/\/image\//i.test(source)) continue;
               const asbMatch = String(source).match(/\/asb\/([^/?#]+)/i);
-              if (asbMatch?.[1]) return `asb:${asbMatch[1]}`;
+              if (asbMatch?.[1]) return normalizeAsbIdentityToken(`asb:${asbMatch[1]}`);
               try {
                 const pathname = new URL(source, location.href).pathname;
                 if (pathname) return pathname;
@@ -431,7 +431,7 @@ async function collectAllGeneratedItems(page, selector, { targetKey = null, maxS
               const source = element.querySelector("img")?.getAttribute("src") || "";
               const asb = source.match(/\/asb\/([^/?#]+)/i);
               let token;
-              if (asb) token = `asb:${asb[1]}`;
+              if (asb) token = normalizeAsbIdentityToken(`asb:${asb[1]}`);
               else { try { token = new URL(source, location.href).pathname; } catch { token = source.split(/[?#]/, 1)[0]; } }
               return token === expected;
             }), expectedToken).catch(() => -1);
@@ -1687,6 +1687,14 @@ function buildVerifiedThumbnailBaselineTokens(domTokens, items, domTexts, verifi
   return tokens;
 }
 
+function normalizeAsbIdentityToken(value) {
+  const token = String(value || "");
+  if (!token.startsWith("asb:")) return token;
+  // Google may append image transform parameters (e.g. =mm,18,15) to the
+  // same asset token. They describe presentation, not the underlying identity.
+  return `asb:${token.slice(4).split("=", 1)[0]}`;
+}
+
 function thumbnailIdentityToken(value) {
   const mediaUuidHint = arguments.length > 1 ? arguments[1] : null;
   const source = String(value || "");
@@ -1700,7 +1708,7 @@ function thumbnailIdentityToken(value) {
   const mediaUuid = assetUuidFromUrl(source);
   if (mediaUuid) return `media:${mediaUuid}`;
   const asbToken = source.match(/\/asb\/([^/?#]+)/i);
-  if (asbToken) return `asb:${asbToken[1]}`;
+  if (asbToken) return normalizeAsbIdentityToken(`asb:${asbToken[1]}`);
   try { return new URL(source, "https://flow.google.com").pathname; }
   catch { return source.split(/[?#]/, 1)[0]; }
 }
@@ -3188,7 +3196,7 @@ async function prepare(args, browser, rl) {
             const asbIndex = source.toLowerCase().indexOf("/asb/");
             if (asbIndex >= 0) {
               const token = source.slice(asbIndex + 5).split(/[/?#]/, 1)[0];
-              if (token) return `asb:${token}`;
+              if (token) return normalizeAsbIdentityToken(`asb:${token}`);
             }
             try {
               const url = new URL(source, location.href);
@@ -3541,7 +3549,7 @@ async function prepare(args, browser, rl) {
           if (/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(token)) {
             return `media:${token.toLowerCase()}`;
           }
-          return segments[assetIndex] === "asb" ? `asb:${token}` : pathname;
+          return segments[assetIndex] === "asb" ? normalizeAsbIdentityToken(`asb:${token}`) : pathname;
         }),
       })).catch(() => ({ tileCount: 0, tokens: [] }));
       const baselineTokensWithUuidFallback = buildVerifiedThumbnailBaselineTokens(
@@ -3783,7 +3791,7 @@ async function prepare(args, browser, rl) {
                 || source.match(/\/asb\/([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})(?:[/?#]|$)/i);
               if (imageUuid) return `media:${imageUuid[1].toLowerCase()}`;
               const asb = source.match(/\/asb\/([^/?#]+)/i);
-              if (asb) return `asb:${asb[1]}`;
+              if (asb) return normalizeAsbIdentityToken(`asb:${asb[1]}`);
               try {
                 const pathname = new URL(source, location.href).pathname;
                 if (pathname && pathname !== "/") return pathname;
