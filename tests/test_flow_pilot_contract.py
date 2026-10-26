@@ -826,6 +826,10 @@ class FlowPilotContractTests(unittest.TestCase):
         self.assertIn('thumbnailIdentityToken(item.thumbnailSrc) : null', self.script)
         self.assertIn("accepted_by_neighbor_rule: preCreateSnapshot.acceptedByNeighborRule", self.script)
         self.assertIn("acceptedByNeighborRule: stableFirstToken && (Number(lastSnapshot.tileCount) || 0) >= 3", self.script)
+        self.assertIn("lastTokens.slice(0, 3).every(token => typeof token === \"string\" && token.length > 0)", self.script)
+        self.assertIn("currentTokens.slice(0, 3).every(validToken)", self.script)
+        self.assertIn("secondNeighborMatches && thirdNeighborMatches", self.script)
+        self.assertNotIn("thirdNeighborStillLoading", self.script)
         self.assertIn("}, ms => chosen.page.waitForTimeout(ms), 10000);", self.script)
         self.assertNotIn("const currentScan = await collectAllGeneratedItems(chosen.page, selectors.generated_video_items", self.script)
 
