@@ -3821,8 +3821,7 @@ async function prepare(args, browser, rl) {
       if (!stableCurrentGrid || preCreateSnapshot.tileCount < 3 || !currentFirstToken) {
         throw new Error(`Pre-Create recheck could not confirm a stable first tile and three-tile row (observed ${preCreateSnapshot.tileCount}); refusing to click Create.`);
       }
-      if (!sameFirstThreeThumbnailTokens && currentFirstToken !== expectedFirstToken
-        && !sameFirstTileAfterThumbnailRotation && !sameFirstRowMediaIdentity) {
+      if (!sameFirstThreeThumbnailTokens && !sameFirstTileAfterThumbnailRotation && !sameFirstRowMediaIdentity) {
         throw new Error("Pre-Create first tile identity differs from the validated baseline; stable-neighbor identity check did not confirm a thumbnail-only change. Refusing to click Create.");
       }
       args._waitInitialItemCount = args._waitInitialItemKeys.length;
