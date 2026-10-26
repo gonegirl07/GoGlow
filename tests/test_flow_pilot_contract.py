@@ -917,6 +917,9 @@ assert.deepEqual(findNewCompletedMediaItems([
                                 capture_output=True, text=True, check=False, timeout=5)
         self.assertEqual(result.returncode, 0, msg=result.stdout + result.stderr)
         self.assertIn("skipUuidResolution: thumbnailRetry === 1", self.script)
+        self.assertIn("if (thumbnailRetry === 2) await waitForFirstRowThumbnailTokens", self.script)
+        self.assertIn("verifiedUuidThumbnailIndexes.add(index)", self.script)
+        self.assertIn("verifiedUuidThumbnailIndexes.has(index)", self.script)
         self.assertIn("uuidCache: thumbnailRetry === 1 ? baselineUuidCache : new Map()", self.script)
         self.assertIn('phase: thumbnailRetry === 1 && completeUniqueUuidBaseline ? "thumbnail_only_recapture" : "full_row_dom_inventory"', self.script)
         self.assertIn("topLimit: 3", self.script)
@@ -1118,6 +1121,15 @@ const ambiguous = buildVerifiedThumbnailBaselineTokens(
   ['Mai seated breathing', 'Mai standing', 'different row'],
 );
 assert.equal(ambiguous[2], null, 'must not reuse UUID when same-position row fingerprint differs');
+// Retry 2 independently resolved the same three unique video UUIDs at the same
+// positions as the initial inventory (row_identity_verified=true).
+const verified = buildVerifiedThumbnailBaselineTokens(
+  [null, 'asb:ANqvLOa3xUpF', 'asb:ANqvLOaNiC06'],
+  items,
+  ['text may differ while the thumbnail is lazy', 'Mai standing', 'Mai kneeling'],
+  new Set([0, 1, 2]),
+);
+assert.deepEqual(verified, items.map(item => 'media:' + item.mediaUuid));
 """
         result = subprocess.run(["node", "--input-type=module", "-e", node_test],
                                 capture_output=True, text=True, check=False, timeout=5)
