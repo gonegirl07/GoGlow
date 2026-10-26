@@ -577,7 +577,8 @@ async function collectAllGeneratedItems(page, selector, { targetKey = null, maxS
     if (step === 0) topItems = visible.map(item => ({ ...item }));
     const keysThisViewport = new Set();
     for (const item of visible) {
-      if (!item.key || !item.mediaUuid) unkeyedItemsDetected = true;
+      const knownPolicyRefusal = isKnownPolicyRefusalTile(item);
+      if (!knownPolicyRefusal && (!item.key || !item.mediaUuid)) unkeyedItemsDetected = true;
       if (item.key) {
         if (keysThisViewport.has(item.key)) duplicateVisibleKeyDetected = true;
         keysThisViewport.add(item.key);
