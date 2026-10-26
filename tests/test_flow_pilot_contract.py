@@ -1184,7 +1184,13 @@ assert.equal(thumbnailIdentityToken('https://flow.google.com/asb/ANqvLObmDmk_6XQ
         baseline_helper = "function buildVerifiedThumbnailBaselineTokens" + self.script.split(
             "function buildVerifiedThumbnailBaselineTokens", 1
         )[1].split("\n\nfunction thumbnailIdentityToken", 1)[0]
-        node_test = apply_helper + "\n\n" + baseline_helper + r"""
+        asset_uuid_helper = "function assetUuidFromUrl" + self.script.split(
+            "function assetUuidFromUrl", 1
+        )[1].split("\n\nfunction applyVerifiedRowUuidFallback", 1)[0]
+        thumbnail_helper = "function thumbnailIdentityToken" + self.script.split(
+            "function thumbnailIdentityToken", 1
+        )[1].split("\n\nasync function assetUuidFromLocator", 1)[0]
+        node_test = asset_uuid_helper + "\n\n" + apply_helper + "\n\n" + baseline_helper + "\n\n" + thumbnail_helper + r"""
 const assert = await import('node:assert/strict');
 const uuid = '07e82f95-f37f-412a-83bd-018fe25b1278';
 const initial = [
@@ -1216,6 +1222,25 @@ const mismatchVerified = applyVerifiedRowUuidFallback(
 );
 assert.equal(mismatchVerified.has(0), false);
 assert.equal(mismatch[0].mediaUuid, undefined);
+
+// Fresh tile: same unique UUID in both row scans is sufficient even with empty text.
+const emptyTextInitial = [
+  { mediaUuid: uuid, text: '' },
+  { mediaUuid: 'ae294080-b7e0-41d6-a825-30824b910dfc', text: 'Older standing' },
+  { mediaUuid: 'e4ebbe7d-2c9f-484b-b165-31480077cea5', text: 'Kneeling' },
+];
+const emptyTextRefreshed = emptyTextInitial.map(item => ({ ...item }));
+const emptyTextVerified = applyVerifiedRowUuidFallback(
+  emptyTextInitial, emptyTextRefreshed,
+  ['', 'Older standing', 'Kneeling'], ['', 'Older standing', 'Kneeling'],
+);
+assert.equal(emptyTextVerified.has(0), true);
+assert.deepEqual(buildVerifiedThumbnailBaselineTokens(
+  [null, 'asb:older', 'asb:kneeling'], emptyTextInitial,
+  ['', 'Older standing', 'Kneeling'], emptyTextVerified,
+), ['media:' + uuid, 'asb:older', 'asb:kneeling']);
+assert.equal(thumbnailIdentityToken('https://flow.google.com/project/2c77da50-fb9e-4cc2-bf50-8ce67649c32e/video/' + uuid), 'media:' + uuid);
+assert.equal(thumbnailIdentityToken('https://flow.google.com/image/' + uuid), '/image/' + uuid);
 """
         result = subprocess.run(["node", "--input-type=module", "-e", node_test],
                                 capture_output=True, text=True, check=False, timeout=5)
