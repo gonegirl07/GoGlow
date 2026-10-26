@@ -659,7 +659,7 @@ function isKnownPolicyRefusalTile(item) {
   const state = String(item.state || "");
   // Only an explicit provider refusal is a stable non-media baseline item.
   // Generic failures, empty cards, loading cards, and unknown states still fail closed.
-  return /\\bfailed\\b/i.test(state + " " + text)
+  return /\bfailed\b/i.test(state + " " + text)
     && /prominent people/i.test(text)
     && /might violate our policies/i.test(text)
     && /you will be refunded/i.test(text);
@@ -667,7 +667,7 @@ function isKnownPolicyRefusalTile(item) {
 
 function failedPolicyBaselineKey(item) {
   if (!isKnownPolicyRefusalTile(item)) return null;
-  const normalized = String(item.text || "").replace(/\\s+/g, " ").trim().toLowerCase();
+  const normalized = String(item.text || "").replace(/\s+/g, " ").trim().toLowerCase();
   return normalized ? "failed-policy:" + normalized : null;
 }
 
@@ -3474,7 +3474,7 @@ async function prepare(args, browser, rl) {
             classification: item.mediaUuid && initialItems[index] ? "stable_existing_baseline_tile"
               : knownPolicyRefusalIndexes.has(index) && initialItems[index]?.startsWith("failed-policy:") ? "known_policy_refusal_non_media_baseline"
                 : "unknown_identity_fail_closed",
-            text: String(item.text || "").replace(/\\s+/g, " ").trim().slice(0, 160),
+            text: String(item.text || "").replace(/\s+/g, " ").trim().slice(0, 160),
             thumbnail_token: item.thumbnailSrc ? thumbnailIdentityToken(item.thumbnailSrc) : null,
             state: String(item.state || "").slice(0, 100),
           })),
@@ -3758,7 +3758,7 @@ async function prepare(args, browser, rl) {
             const isPolicyRefusal = /prominent people/i.test(currentText)
               && /might violate our policies/i.test(currentText)
               && /you will be refunded/i.test(currentText)
-              && /\\bfailed\\b/i.test(currentText);
+              && /\bfailed\b/i.test(currentText);
             const sameUniqueText = currentText && currentText === baselineText
               && texts.filter(value => value === currentText).length === 1
               && Array.isArray(baseline?.texts)
