@@ -3751,12 +3751,22 @@ async function prepare(args, browser, rl) {
       );
       args._waitInitialThumbnailTokens = baselineTokensWithUuidFallback;
       args._waitInitialThumbnailImageTokens = domThumbnailBaseline.imageTokens || [];
+      // Preserve the exact ASB thumbnail token that was observed while the tile's
+      // generated-video UUID was independently verified. The pre-Create DOM reader
+      // may expose that same ASB token but no media UUID after composer interaction.
+      // Only these verified UUID-to-thumbnail aliases can bridge media:UUID to asb:token.
+      args._waitInitialVerifiedThumbnailAliases = initialScan.items.slice(0, 3).map((item, index) => {
+        if (!item?.mediaUuid || !verifiedUuidThumbnailIndexes.has(index) || !item.thumbnailSrc) return null;
+        const token = thumbnailIdentityToken(item.thumbnailSrc);
+        return token?.startsWith("asb:") ? token : null;
+      });
       if (domThumbnailBaseline.tileCount < 3 || args._waitInitialThumbnailTokens.length < 3
         || args._waitInitialThumbnailTokens.slice(0, 3).some(token => !token)) {
         throw new Error(`First-row baseline requires loaded DOM thumbnail identities for all three tiles; observed tile count=${domThumbnailBaseline.tileCount}, tokens=${JSON.stringify(args._waitInitialThumbnailTokens)}.`);
       }
       console.log(JSON.stringify({ event: "baseline_dom_thumbnail_identity", tile_count: domThumbnailBaseline.tileCount,
         first_three_tokens: args._waitInitialThumbnailTokens.slice(0, 3),
+        verified_asb_thumbnail_aliases: args._waitInitialVerifiedThumbnailAliases,
         identity_sources: args._waitInitialThumbnailTokens.slice(0, 3).map((token, index) =>
           verifiedUuidThumbnailIndexes.has(index) && !domThumbnailBaseline.tokens[index] ? "verified_video_uuid" : "dom_thumbnail"),
         identity_source: verifiedUuidThumbnailIndexes.size ? "verified_video_uuid_with_dom_thumbnail_fallback" : "same_precreate_dom_precedence" }));
@@ -4033,6 +4043,7 @@ async function prepare(args, browser, rl) {
       // and a lazy third thumbnail, but never an absent/mismatched UUID.
       const sameFirstThreeThumbnailTokens = firstThreeThumbnailTokensMatch(
         baselineTokens, currentTokens, args._waitInitialThumbnailImageTokens || [],
+        args._waitInitialVerifiedThumbnailAliases || [],
       );
       const stableCurrentGrid = preCreateSnapshot.fullyStable || preCreateSnapshot.acceptedByNeighborRule
         || (preCreateSnapshot.stableFirstToken && preCreateSnapshot.tileCount >= 3 && sameFirstRowMediaIdentity)
