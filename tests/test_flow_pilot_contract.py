@@ -173,6 +173,22 @@ class FlowPilotContractTests(unittest.TestCase):
         self.assertIn("selectors.account_panel_close", self.script)
         self.assertIn("span.credits-count", (Path(__file__).parents[1] / "examples" / "flow-pilot-selectors.example.json").read_text(encoding="utf-8"))
 
+    def test_picker_selection_has_one_bounded_reopen_retry_before_add(self):
+        # Recovery is allowed only after the original selection budget fails and a
+        # pinned UUID exists; the reopened picker must contain one visible match.
+        self.assertIn('event: "ingredients_picker_selection_reopen_retry"', self.script)
+        self.assertIn("if (!referenceSelectionReady && expectedPreviewUuid)", self.script)
+        self.assertIn("await resetIngredientsPicker(page, selectors);", self.script)
+        self.assertIn("await openIngredientsPicker(page, selectors, filename);", self.script)
+        self.assertIn("reopened.visibleMatches !== 1 || reopenedCount !== 1", self.script)
+        self.assertIn("const retryDeadline = Date.now() + 3500;", self.script)
+        self.assertIn('event: "ingredients_picker_selection_reopen_retry_result"', self.script)
+        self.assertIn("exact preview identity not verified; no Add to prompt click attempted", self.script)
+        self.assertIn("picker_reopen_retried=", self.script)
+        self.assertLess(self.script.index("if (!referenceSelectionReady) {", self.script.index("const retryDeadline = Date.now() + 3500;")), self.script.index("const addToPromptCandidatesFresh = activePickerContainer.locator(addToPromptSelector);"))
+        self.assertIn("expectedPreviewUuid = (requestedAssetUuidForPin || assetUuid || \"\").toLowerCase();", self.script)
+
+
     def test_dry_run_requires_a_real_initial_credit_balance_and_fails_closed(self):
         # Dry-run must read the live balance, not report success because --wait is absent.
         self.assertIn("const requiresInitialBalance = args.waitForResult || args.dryRun;", self.script)
