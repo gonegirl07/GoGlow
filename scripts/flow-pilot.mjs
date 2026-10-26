@@ -3433,7 +3433,6 @@ async function prepare(args, browser, rl) {
       const visibleRowTexts = (domThumbnailBaseline.texts || []).map(normalizeRowText);
       const countText = (values, target) => values.filter(value => value && value === target).length;
       for (let tileIndex = 0; tileIndex < 3; tileIndex += 1) {
-        if (baselineTokensWithUuidFallback[tileIndex]) continue;
         const item = initialScan.items[tileIndex];
         const text = baselineRowTexts[tileIndex];
         const uuid = item?.mediaUuid;
@@ -3442,7 +3441,11 @@ async function prepare(args, browser, rl) {
           && countText(baselineRowTexts, text) === 1 && countText(visibleRowTexts, text) === 1);
         // UUID fallback is allowed only when the UUID belongs to this exact inventory
         // index and the same-index visible tile has a unique, identical text fingerprint.
-        if (uniqueUuid && samePositionText) baselineTokensWithUuidFallback[tileIndex] = `media:${uuid}`;
+        if (uniqueUuid && samePositionText) {
+          // Prefer the media UUID over a signed thumbnail token when both can be
+          // tied to the same unique row text at the same position.
+          baselineTokensWithUuidFallback[tileIndex] = `media:${uuid}`;
+        }
       }
       args._waitInitialThumbnailTokens = baselineTokensWithUuidFallback;
       if (domThumbnailBaseline.tileCount < 3 || args._waitInitialThumbnailTokens.length < 3
@@ -3618,19 +3621,17 @@ async function prepare(args, browser, rl) {
               const routeUuid = String(href).match(/\/(?:edit|video)\/([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})(?:[/?#]|$)/i);
               if (routeUuid) return `media:${routeUuid[1].toLowerCase()}`;
             }
+            const normalize = value => String(value || "").replace(/\\s+/g, " ").trim();
+            const currentText = normalize(element.innerText || element.textContent || "");
+            const texts = elements.slice(0, 3).map(node => normalize(node.innerText || node.textContent || ""));
+            const baselineText = normalize(baseline?.texts?.[tileIndex]);
+            const baselineKey = String(baseline?.keys?.[tileIndex] || "");
+            const uuid = baselineKey.match(/^media:([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})$/i)?.[1];
+            if (elements.length === baseline?.tileCount && uuid && currentText && currentText === baselineText
+              && texts.filter(value => value === currentText).length === 1
+              && baseline.texts.filter(value => normalize(value) === currentText).length === 1) return `media:${uuid.toLowerCase()}`;
             const source = element.querySelector("img")?.getAttribute("src") || "";
-            if (!source) {
-              const normalize = value => String(value || "").replace(/\\s+/g, " ").trim();
-              const currentText = normalize(element.innerText || element.textContent || "");
-              const texts = elements.slice(0, 3).map(node => normalize(node.innerText || node.textContent || ""));
-              const baselineText = normalize(baseline?.texts?.[tileIndex]);
-              const baselineKey = String(baseline?.keys?.[tileIndex] || "");
-              const uuid = baselineKey.match(/^media:([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})$/i)?.[1];
-              if (elements.length === baseline?.tileCount && uuid && currentText && currentText === baselineText
-                && texts.filter(value => value === currentText).length === 1
-                && baseline.texts.filter(value => normalize(value) === currentText).length === 1) return `media:${uuid.toLowerCase()}`;
-              return null;
-            }
+            if (!source) return null;
             const imageUuid = source.match(/\/image\/([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})(?:[/?#]|$)/i)
               || source.match(/\/asb\/([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})(?:[/?#]|$)/i);
             if (imageUuid) return `media:${imageUuid[1].toLowerCase()}`;
