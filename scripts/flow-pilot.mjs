@@ -1699,9 +1699,17 @@ function buildVerifiedThumbnailBaselineTokens(domTokens, items, domTexts, verifi
     const text = baselineTexts[index];
     const samePositionText = Boolean(text && text === visibleTexts[index]
       && countText(baselineTexts, text) === 1 && countText(visibleTexts, text) === 1);
-    // A resolved video UUID is authoritative only when it belongs to this exact
-    // inventory position and its text fingerprint uniquely matches the live DOM row.
-    if (uniqueUuid && (!tokens[index] || /\/image\//i.test(String(tokens[index])))
+    // An explicit provider refusal has no media UUID; preserve it as a stable
+    // non-media identity only when the exact normalized text is unique in both views.
+    if (!uuid && isKnownPolicyRefusalTile(item) && text
+      && countText(baselineTexts, text) === 1
+      && countText(visibleTexts, text) === 1 && text === visibleTexts[index]) {
+      tokens[index] = failedPolicyBaselineKey(item);
+      continue;
+    }
+    // A resolved UUID can fill an empty/image placeholder when this row is
+    // text-matched uniquely or the UUID was independently re-verified.
+    if (uniqueUuid && (!tokens[index] || /\\/image\\//i.test(String(tokens[index])))
       && (samePositionText || verifiedUuidIndexes.has(index))) tokens[index] = `media:${uuid.toLowerCase()}`;
   }
   return tokens;
@@ -3357,12 +3365,19 @@ async function prepare(args, browser, rl) {
               // Exact, unique UUID equality at all positions is stronger identity
               // proof than a lazy thumbnail that never loads.
               const refreshedUuids = refreshedScan.items.map(item => item.mediaUuid);
-              const exactUniqueUuidRow = refreshedUuids.length === initialScan.items.length
-                && refreshedUuids.every(Boolean)
-                && new Set(refreshedUuids).size === refreshedUuids.length
-                && initialScan.items.every((item, index) => item.mediaUuid === refreshedUuids[index]);
-              if (exactUniqueUuidRow) {
-                for (let index = 0; index < refreshedUuids.length; index += 1) verifiedUuidThumbnailIndexes.add(index);
+              // Verify media rows independently so a neighboring refusal card
+              // without a UUID does not invalidate an otherwise verified video row.
+              for (let index = 0; index < initialScan.items.length; index += 1) {
+                const original = initialScan.items[index];
+                const refreshed = refreshedScan.items[index];
+                const uuid = original?.mediaUuid;
+                const text = baselineTexts[index];
+                if (!uuid || !refreshed || refreshed.mediaUuid !== uuid
+                  || initialUuids.filter(value => value === uuid).length !== 1
+                  || refreshedUuids.filter(value => value === uuid).length !== 1
+                  || !text || text !== refreshedTexts[index]
+                  || baselineTextCounts.get(text) !== 1 || refreshedTextCounts.get(text) !== 1) continue;
+                verifiedUuidThumbnailIndexes.add(index);
               }
             }
             for (const missingIndex of missingIndexes) {
@@ -3536,8 +3551,17 @@ async function prepare(args, browser, rl) {
             element.querySelector("source")?.getAttribute("src"),
             element.querySelector("img")?.getAttribute("srcset")?.split(",")[0]?.trim().split(/\s+/)[0],
           ].filter(Boolean);
-          if (!sources.length) return null;
-          let source = sources[0];
+          if (!sources.length) {
+            const tileText = String(element.innerText || element.textContent || "").replace(/\\s+/g, " ").trim();
+            if (/\\bfailed\\b/i.test(tileText)
+              && /prominent people/i.test(tileText)
+              && /might violate our policies/i.test(tileText)
+              && /you will be refunded/i.test(tileText)) {
+              return "failed-policy:" + tileText.toLowerCase();
+            }
+            return null;
+          }
+          let source = sources[0];          let source = sources[0];
           let pathname = "";
           let segments = [];
           let assetIndex = -1;
@@ -3545,7 +3569,7 @@ async function prepare(args, browser, rl) {
             let candidatePath = candidate;
             try { candidatePath = new URL(candidate, location.href).pathname; } catch {}
             const candidateSegments = candidatePath.split("/").filter(Boolean);
-            const candidateAssetIndex = candidateSegments.findIndex(part => part === "image" || part === "asb");
+            const candidateAssetIndex = candidateSegments.findIndex(part => part === "image" || part === "asb" || part === "video");
             if (candidateAssetIndex >= 0 && candidateSegments[candidateAssetIndex + 1]) {
               source = candidate;
               pathname = candidatePath;
@@ -3559,7 +3583,7 @@ async function prepare(args, browser, rl) {
             catch { return source.split(/[?#]/, 1)[0] || null; }
           }
           if (!segments.length) segments = pathname.split("/").filter(Boolean);
-          assetIndex = segments.findIndex(part => part === "image" || part === "asb");
+          assetIndex = segments.findIndex(part => part === "image" || part === "asb" || part === "video");
           if (assetIndex < 0 || !segments[assetIndex + 1]) {
             try { return new URL(source, location.href).pathname; }
             catch { return source.split(/[?#]/, 1)[0] || null; }
