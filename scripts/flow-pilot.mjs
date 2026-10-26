@@ -3779,10 +3779,10 @@ async function prepare(args, browser, rl) {
               element.querySelector("img")?.getAttribute("srcset")?.split(",")[0]?.trim().split(/\\s+/)[0],
             ].filter(Boolean);
             for (const source of sources) {
-              const imageUuid = source.match(/\\/image\\/([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})(?:[/?#]|$)/i)
-                || source.match(/\\/asb\\/([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})(?:[/?#]|$)/i);
+              const imageUuid = source.match(/\/image\/([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})(?:[/?#]|$)/i)
+                || source.match(/\/asb\/([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})(?:[/?#]|$)/i);
               if (imageUuid) return `media:${imageUuid[1].toLowerCase()}`;
-              const asb = source.match(/\\/asb\\/([^/?#]+)/i);
+              const asb = source.match(/\/asb\/([^/?#]+)/i);
               if (asb) return `asb:${asb[1]}`;
               try {
                 const pathname = new URL(source, location.href).pathname;
