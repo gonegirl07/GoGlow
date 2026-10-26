@@ -345,15 +345,26 @@ async function collectAllGeneratedItems(page, selector, { targetKey = null, maxS
         // at least three non-empty thumbnail URL tokens in two consecutive snapshots.
         for (let gridPoll = 0; gridPoll < 30; gridPoll += 1) {
           currentTokens = await page.locator(selector).evaluateAll(elements => elements.slice(0, 6).map(element => {
-            const source = element.querySelector("img")?.getAttribute("src") || "";
-            if (!source || /\/image\//i.test(source)) return "";
-            const asbIndex = source.toLowerCase().indexOf("/asb/");
-            if (asbIndex >= 0) {
-              const token = source.slice(asbIndex + 5).split(/[/?#]/, 1)[0];
-              if (token) return `asb:${token}`;
+            // A tile can render its preview as img or video. Prefer active media
+            // src, then nested source, then poster; all identify the visible preview.
+            const sources = [
+              element.querySelector("img")?.getAttribute("src"),
+              element.querySelector("video")?.getAttribute("src"),
+              element.querySelector("video source")?.getAttribute("src"),
+              element.querySelector("video")?.getAttribute("poster"),
+              element.querySelector("source")?.getAttribute("src"),
+              element.querySelector("img")?.getAttribute("srcset")?.split(",")[0]?.trim().split(/\\s+/)[0],
+            ].filter(Boolean);
+            for (const source of sources) {
+              if (/\\/image\\//i.test(source)) continue;
+              const asbMatch = String(source).match(/\\/asb\\/([^/?#]+)/i);
+              if (asbMatch?.[1]) return `asb:${asbMatch[1]}`;
+              try {
+                const pathname = new URL(source, location.href).pathname;
+                if (pathname) return pathname;
+              } catch {}
             }
-            try { return new URL(source, location.href).pathname; }
-            catch { return source.split(/[?#]/, 1)[0]; }
+            return "";
           })).catch(() => []);
           const firstThreeTokens = currentTokens.slice(0, 3);
           const previousFirstThreeTokens = previousTokens?.slice(0, 3) || [];
@@ -2956,6 +2967,15 @@ async function readCreditCost(page) {
   return match ? Number(match[1]) : null;
 }
 
+function firstThreeThumbnailTokensMatch(baselineTokens, currentTokens) {
+  const validThumbnail = value => typeof value === "string"
+    && /^(?:asb:.+|\\/(?:asb|image)\\/.+|https?:\\/\\/.+)$/i.test(value);
+  return Array.isArray(baselineTokens) && Array.isArray(currentTokens)
+    && baselineTokens.length >= 3 && currentTokens.length >= 3
+    && baselineTokens.slice(0, 3).every((token, index) => validThumbnail(token)
+      && validThumbnail(currentTokens[index]) && token === currentTokens[index]);
+}
+
 function firstThreeMediaKeysMatch(baselineKeys, currentKeys) {
   const isVideoKey = value => typeof value === "string"
     && /^media:[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(value);
@@ -3477,11 +3497,39 @@ async function prepare(args, browser, rl) {
               return `media:${routeUuid.toLowerCase()}`;
             }
           }
-          const source = element.querySelector("img")?.getAttribute("src") || "";
-          if (!source) return null;
-          let pathname = source;
-          try { pathname = new URL(source, location.href).pathname; } catch {}
-          const segments = pathname.split("/").filter(Boolean);
+          // Virtualized Flow tiles may swap img for video during playback.
+          // Resolve thumbnail identity from img/video src, nested source, or poster.
+          const sources = [
+            element.querySelector("img")?.getAttribute("src"),
+            element.querySelector("video")?.getAttribute("src"),
+            element.querySelector("video source")?.getAttribute("src"),
+            element.querySelector("video")?.getAttribute("poster"),
+            element.querySelector("source")?.getAttribute("src"),
+            element.querySelector("img")?.getAttribute("srcset")?.split(",")[0]?.trim().split(/\\s+/)[0],
+          ].filter(Boolean);
+          if (!sources.length) return null;
+          let source = sources[0];
+          let pathname = "";
+          let segments = [];
+          let assetIndex = -1;
+          for (const candidate of sources) {
+            let candidatePath = candidate;
+            try { candidatePath = new URL(candidate, location.href).pathname; } catch {}
+            const candidateSegments = candidatePath.split("/").filter(Boolean);
+            const candidateAssetIndex = candidateSegments.findIndex(part => part === "image" || part === "asb");
+            if (candidateAssetIndex >= 0 && candidateSegments[candidateAssetIndex + 1]) {
+              source = candidate;
+              pathname = candidatePath;
+              segments = candidateSegments;
+              assetIndex = candidateAssetIndex;
+              if (candidateSegments[candidateAssetIndex] === "asb") break;
+            }
+          }
+          if (!pathname) {
+            try { pathname = new URL(source, location.href).pathname; }
+            catch { return source.split(/[?#]/, 1)[0] || null; }
+          }
+          if (!segments.length) segments = pathname.split("/").filter(Boolean);
           const assetIndex = segments.findIndex(part => part === "image" || part === "asb");
           if (assetIndex < 0 || !segments[assetIndex + 1]) {
             try { return new URL(source, location.href).pathname; }
@@ -3750,8 +3798,10 @@ async function prepare(args, browser, rl) {
       const sameFirstRowMediaIdentity = firstThreeMediaKeysMatch(baselineMediaKeys, currentMediaKeys);
       // UUID-confirmed row identity can override a different virtualized DOM count
       // and a lazy third thumbnail, but never an absent/mismatched UUID.
+      const sameFirstThreeThumbnailTokens = firstThreeThumbnailTokensMatch(baselineTokens, currentTokens);
       const stableCurrentGrid = preCreateSnapshot.fullyStable || preCreateSnapshot.acceptedByNeighborRule
-        || (preCreateSnapshot.stableFirstToken && preCreateSnapshot.tileCount >= 3 && sameFirstRowMediaIdentity);
+        || (preCreateSnapshot.stableFirstToken && preCreateSnapshot.tileCount >= 3 && sameFirstRowMediaIdentity)
+        || (preCreateSnapshot.stableFirstToken && preCreateSnapshot.tileCount >= 3 && sameFirstThreeThumbnailTokens);
       console.log(JSON.stringify({
         event: "pre_create_first_tile_identity_recheck",
         expected_first_thumbnail_token: expectedFirstToken,
@@ -3761,6 +3811,7 @@ async function prepare(args, browser, rl) {
         stable_first_token: preCreateSnapshot.stableFirstToken || preCreateSnapshot.fullyStable,
         accepted_by_neighbor_rule: preCreateSnapshot.acceptedByNeighborRule,
         accepted_by_media_uuid_neighbor_identity: sameFirstRowMediaIdentity,
+        accepted_by_thumbnail_row_identity: sameFirstThreeThumbnailTokens,
         baseline_first_three_media_keys: baselineMediaKeys.slice(0, 3),
         current_first_three_media_keys: currentMediaKeys.slice(0, 3),
         baseline_dom_tile_count: args._waitInitialDomTileCount,
@@ -3770,7 +3821,8 @@ async function prepare(args, browser, rl) {
       if (!stableCurrentGrid || preCreateSnapshot.tileCount < 3 || !currentFirstToken) {
         throw new Error(`Pre-Create recheck could not confirm a stable first tile and three-tile row (observed ${preCreateSnapshot.tileCount}); refusing to click Create.`);
       }
-      if (currentFirstToken !== expectedFirstToken && !sameFirstTileAfterThumbnailRotation && !sameFirstRowMediaIdentity) {
+      if (!sameFirstThreeThumbnailTokens && currentFirstToken !== expectedFirstToken
+        && !sameFirstTileAfterThumbnailRotation && !sameFirstRowMediaIdentity) {
         throw new Error("Pre-Create first tile identity differs from the validated baseline; stable-neighbor identity check did not confirm a thumbnail-only change. Refusing to click Create.");
       }
       args._waitInitialItemCount = args._waitInitialItemKeys.length;

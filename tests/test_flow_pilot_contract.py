@@ -825,6 +825,9 @@ class FlowPilotContractTests(unittest.TestCase):
         self.assertIn("read_only_dom_check: true", self.script)
         self.assertIn("const currentMediaKeys = Array.isArray(preCreateSnapshot.mediaKeys)", self.script)
         self.assertIn("firstThreeMediaKeysMatch(baselineMediaKeys, currentMediaKeys)", self.script)
+        self.assertIn('element.querySelector("video")?.getAttribute("src")', self.script)
+        self.assertIn('element.querySelector("video source")?.getAttribute("src")', self.script)
+        self.assertIn("firstThreeThumbnailTokensMatch(baselineTokens, currentTokens)", self.script)
         self.assertIn("preCreateSnapshot.stableFirstToken && preCreateSnapshot.tileCount >= 3 && sameFirstRowMediaIdentity", self.script)
         self.assertNotIn("elements.length === baseline?.tileCount && uuid && currentText", self.script)
         self.assertIn("waitForPreCreateThumbnailSnapshot", self.script)
@@ -838,6 +841,30 @@ class FlowPilotContractTests(unittest.TestCase):
         self.assertNotIn("thirdNeighborStillLoading", self.script)
         self.assertIn("}, ms => chosen.page.waitForTimeout(ms), 10000);", self.script)
         self.assertNotIn("const currentScan = await collectAllGeneratedItems(chosen.page, selectors.generated_video_items", self.script)
+
+    def test_pre_create_img_img_video_thumbnail_tokens_match_despite_virtualized_count(self):
+        helper = "function firstThreeThumbnailTokensMatch" + self.script.split(
+            "function firstThreeThumbnailTokensMatch", 1
+        )[1].split("\n\nfunction firstThreeMediaKeysMatch", 1)[0]
+        node_test = helper + r"""
+const assert = await import('node:assert/strict');
+const baseline = ['asb:ANqvLOamTU8', 'asb:ANqvLOalS5Vz', 'asb:ANqvLOa10OIBbsk_ndWcBa6F'];
+const current = ['asb:ANqvLOamTU8', 'asb:ANqvLOalS5Vz', 'asb:ANqvLOa10OIBbsk_ndWcBa6F'];
+const baselineDomCount = 42;
+const currentDomCount = 28;
+const identicalTileTexts = ['play_circle 360p', 'play_circle 360p', 'play_circle 360p'];
+assert.equal(new Set(identicalTileTexts).size, 1);
+assert.notEqual(baselineDomCount, currentDomCount);
+assert.equal(firstThreeThumbnailTokensMatch(baseline, current), true,
+  'img/img/video asb tokens at the same positions should confirm the row independent of DOM count');
+assert.equal(firstThreeThumbnailTokensMatch(baseline, [current[0], current[1], null]), false,
+  'missing video src/poster token must reject');
+assert.equal(firstThreeThumbnailTokensMatch(baseline, [current[0], current[1], 'asb:wrong']), false,
+  'mismatched video token must reject');
+"""
+        result = subprocess.run(["node", "--input-type=module", "-e", node_test],
+                                capture_output=True, text=True, check=False, timeout=5)
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
 
     def test_pre_create_uuid_identity_accepts_lazy_thumbnail_but_rejects_mismatch(self):
         helper = "function firstThreeMediaKeysMatch" + self.script.split(
