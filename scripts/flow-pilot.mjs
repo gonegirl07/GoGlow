@@ -1702,21 +1702,31 @@ function applyVerifiedRowUuidFallback(initialItems, refreshedItems, baselineText
   };
   const initialCounts = counts(initialLabels);
   const refreshedCounts = counts(refreshedLabels);
+  const initialUuids = initialItems.map(item => item?.mediaUuid);
   const refreshedUuids = refreshedItems.map(item => item?.mediaUuid);
   for (let index = 0; index < initialItems.length; index += 1) {
     const original = initialItems[index];
     const refreshed = refreshedItems[index];
     const uuid = refreshed?.mediaUuid;
     const text = initialLabels[index];
+    const uniqueRefreshedUuid = Boolean(uuid && refreshedUuids.filter(value => value === uuid).length === 1);
+    const uniqueInitialUuid = Boolean(original?.mediaUuid
+      && initialUuids.filter(value => value === original.mediaUuid).length === 1);
+    // Strongest case: the same unique video UUID is present at the same position
+    // in both independently collected row inventories. Text may be empty or change
+    // because Flow does not always expose a stable accessible title for fresh clips.
+    if (uniqueInitialUuid && uniqueRefreshedUuid && original.mediaUuid === uuid) {
+      verifiedIndexes.add(index);
+      continue;
+    }
+    // If a baseline UUID exists but differs from the refreshed row, fail closed.
+    if (original?.mediaUuid) continue;
+    // Only inherit a newly resolved UUID when a unique text fingerprint matches
+    // at the same position in both snapshots. Never replace a conflicting UUID.
     if (!uuid || !text || text !== refreshedLabels[index]
       || initialCounts.get(text) !== 1 || refreshedCounts.get(text) !== 1
-      || refreshedUuids.filter(value => value === uuid).length !== 1) continue;
-    // A fresh, unique video UUID may be assigned to a baseline tile that lacked
-    // UUID metadata only when its unique text fingerprint matches at the same
-    // position in both snapshots. Never replace a conflicting known UUID.
-    if (original?.mediaUuid && original.mediaUuid !== uuid) continue;
-    if (!original?.mediaUuid && initialItems.some((item, otherIndex) =>
-      otherIndex !== index && item?.mediaUuid === uuid)) continue;
+      || !uniqueRefreshedUuid
+      || initialUuids.some((value, otherIndex) => otherIndex !== index && value === uuid)) continue;
     original.mediaUuid = uuid;
     verifiedIndexes.add(index);
   }
