@@ -3530,7 +3530,7 @@ async function prepare(args, browser, rl) {
             catch { return source.split(/[?#]/, 1)[0] || null; }
           }
           if (!segments.length) segments = pathname.split("/").filter(Boolean);
-          const assetIndex = segments.findIndex(part => part === "image" || part === "asb");
+          assetIndex = segments.findIndex(part => part === "image" || part === "asb");
           if (assetIndex < 0 || !segments[assetIndex + 1]) {
             try { return new URL(source, location.href).pathname; }
             catch { return source.split(/[?#]/, 1)[0] || null; }
