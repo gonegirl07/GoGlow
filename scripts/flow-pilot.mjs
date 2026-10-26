@@ -3324,7 +3324,7 @@ async function prepare(args, browser, rl) {
               if (refreshed?.thumbnailSrc && thumbnailIdentityToken(refreshed.thumbnailSrc)
                 && !/\/image\//i.test(refreshed.thumbnailSrc)) {
                 initialScan.items[missingIndex].thumbnailSrc = refreshed.thumbnailSrc;
-              } else if (initialScan.items[missingIndex]?.mediaUuid
+              } else if (thumbnailRetry === 2 && initialScan.items[missingIndex]?.mediaUuid
                 && refreshed
                 && ((refreshed.mediaUuid && refreshed.mediaUuid === initialScan.items[missingIndex].mediaUuid)
                   || (!refreshed.mediaUuid
