@@ -1655,7 +1655,7 @@ function assetUuidFromUrl(value) {
   return match?.[0]?.toLowerCase() || null;
 }
 
-function buildVerifiedThumbnailBaselineTokens(domTokens, items, domTexts) {
+function buildVerifiedThumbnailBaselineTokens(domTokens, items, domTexts, verifiedUuidIndexes = new Set()) {
   const tokens = [...(domTokens || [])];
   const normalize = value => String(value || "").replace(/\s+/g, " ").trim();
   const baselineTexts = (items || []).slice(0, 3).map(item => normalize(item?.text));
@@ -1670,7 +1670,7 @@ function buildVerifiedThumbnailBaselineTokens(domTokens, items, domTexts) {
       && countText(baselineTexts, text) === 1 && countText(visibleTexts, text) === 1);
     // A resolved video UUID is authoritative only when it belongs to this exact
     // inventory position and its text fingerprint uniquely matches the live DOM row.
-    if (uniqueUuid && samePositionText) tokens[index] = `media:${uuid.toLowerCase()}`;
+    if (uniqueUuid && (samePositionText || verifiedUuidIndexes.has(index))) tokens[index] = `media:${uuid.toLowerCase()}`;
   }
   return tokens;
 }
@@ -3243,6 +3243,7 @@ async function prepare(args, browser, rl) {
       // resolved uniquely, refresh thumbnail URLs only. Re-opening every tile would
       // trigger three editor round-trips (~30s) and can rotate the very /asb/ tokens
       // this snapshot is meant to capture. Keep UUID resolution fail-closed.
+      const verifiedUuidThumbnailIndexes = new Set();
       for (let thumbnailRetry = 1; thumbnailRetry <= 2
         && initialScan.items.length >= 3
         && initialScan.items.some(item => !item.thumbnailSrc || !thumbnailIdentityToken(item.thumbnailSrc) || /\/image\//i.test(item.thumbnailSrc)); thumbnailRetry += 1) {
@@ -3271,7 +3272,9 @@ async function prepare(args, browser, rl) {
           await retryTiles.nth(tileIndex).scrollIntoViewIfNeeded({ timeout: 2500 }).catch(() => {});
           await chosen.page.waitForTimeout(150);
         }
-        await waitForFirstRowThumbnailTokens(`recapture_retry_${thumbnailRetry}`);
+        // Retry 1 is a cheap DOM snapshot; reserve the thumbnail wait for the
+        // expensive full-row retry, which independently resolves video UUIDs.
+        if (thumbnailRetry === 2) await waitForFirstRowThumbnailTokens(`recapture_retry_${thumbnailRetry}`);
         const retryInventoryStartedAt = Date.now();
         const refreshedScan = await collectAllGeneratedItems(chosen.page, selectors.generated_video_items, {
           // Do not reuse the first inventory's UUID cache on retry 2: the full pass
@@ -3302,6 +3305,19 @@ async function prepare(args, browser, rl) {
                 && baselineTextCounts.get(text) === 1 && refreshedTextCounts.get(text) === 1);
             });
           if (sameVisibleRow) {
+            if (thumbnailRetry === 2) {
+              // The full inventory independently resolved all three video UUIDs.
+              // Exact, unique UUID equality at all positions is stronger identity
+              // proof than a lazy thumbnail that never loads.
+              const refreshedUuids = refreshedScan.items.map(item => item.mediaUuid);
+              const exactUniqueUuidRow = refreshedUuids.length === initialScan.items.length
+                && refreshedUuids.every(Boolean)
+                && new Set(refreshedUuids).size === refreshedUuids.length
+                && initialScan.items.every((item, index) => item.mediaUuid === refreshedUuids[index]);
+              if (exactUniqueUuidRow) {
+                for (let index = 0; index < refreshedUuids.length; index += 1) verifiedUuidThumbnailIndexes.add(index);
+              }
+            }
             for (const missingIndex of missingIndexes) {
               const refreshed = refreshedScan.items[missingIndex];
               if (refreshed?.thumbnailSrc && thumbnailIdentityToken(refreshed.thumbnailSrc)
@@ -3469,7 +3485,7 @@ async function prepare(args, browser, rl) {
         }),
       })).catch(() => ({ tileCount: 0, tokens: [] }));
       const baselineTokensWithUuidFallback = buildVerifiedThumbnailBaselineTokens(
-        domThumbnailBaseline.tokens, initialScan.items, domThumbnailBaseline.texts,
+        domThumbnailBaseline.tokens, initialScan.items, domThumbnailBaseline.texts, verifiedUuidThumbnailIndexes,
       );
       args._waitInitialThumbnailTokens = baselineTokensWithUuidFallback;
       if (domThumbnailBaseline.tileCount < 3 || args._waitInitialThumbnailTokens.length < 3
@@ -3477,7 +3493,10 @@ async function prepare(args, browser, rl) {
         throw new Error(`First-row baseline requires loaded DOM thumbnail identities for all three tiles; observed tile count=${domThumbnailBaseline.tileCount}, tokens=${JSON.stringify(args._waitInitialThumbnailTokens)}.`);
       }
       console.log(JSON.stringify({ event: "baseline_dom_thumbnail_identity", tile_count: domThumbnailBaseline.tileCount,
-        first_three_tokens: args._waitInitialThumbnailTokens.slice(0, 3), identity_source: "same_precreate_dom_precedence" }));
+        first_three_tokens: args._waitInitialThumbnailTokens.slice(0, 3),
+        identity_sources: args._waitInitialThumbnailTokens.slice(0, 3).map((token, index) =>
+          verifiedUuidThumbnailIndexes.has(index) && !domThumbnailBaseline.tokens[index] ? "verified_video_uuid" : "dom_thumbnail"),
+        identity_source: verifiedUuidThumbnailIndexes.size ? "verified_video_uuid_with_dom_thumbnail_fallback" : "same_precreate_dom_precedence" }));
       args._waitUuidCache = baselineUuidCache;
       args._waitInitialItemCount = initialItems.length - failedBaselineItems.length;
       console.log(args.waitForResult
