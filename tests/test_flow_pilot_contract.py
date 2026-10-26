@@ -281,9 +281,19 @@ import { createHash, randomUUID } from "node:crypto";
 const baselineUuid = "11111111-1111-4111-8111-111111111111";
 const freshUuid = "44444444-4444-4444-8444-444444444444";
 const oldUuid = "22222222-2222-4222-8222-222222222222";
+const thirdUuid = "33333333-3333-4333-8333-333333333333";
 const baselineKeys = ["media:" + baselineUuid, "media:" + oldUuid];
+const policyText = "Failed prominent people: This video might violate our policies. You will be refunded.";
+const policyKey = "failed-policy:" + policyText.toLowerCase();
+const policyBaselineKeys = [policyKey, "media:" + baselineUuid, "media:" + oldUuid];
 const freshItem = { key: "media:" + freshUuid, mediaUuid: freshUuid, text: "completed", state: "completed", index: 0 };
-const isGenerationFailureText = () => false;
+const isGenerationFailureText = value => /prominent people|might violate our policies|you will be refunded/i.test(String(value || ""));
+const failedPolicyBaselineKey = item => {
+  const text = String(item?.text || "").replace(/\s+/g, " ").trim().toLowerCase();
+  return !item?.mediaUuid && /\bfailed\b/i.test(String(item?.state || "") + " " + text)
+    && /prominent people/i.test(text) && /might violate our policies/i.test(text)
+    && /you will be refunded/i.test(text) ? "failed-policy:" + text : null;
+};
 const rawProviderMessage = value => String(value || "").trim() || null;
 const findNewCompletedMediaItems = (items, keys) => (items || []).filter(item => item.mediaUuid && item.key && !new Set(keys || []).has(item.key) && !item.progress && !/generating|processing|queued|pending/i.test(String(item.state || item.text || "")));
 const orderedBaselineShiftIsVerified = () => false;
@@ -292,11 +302,21 @@ const openedMediaUuidMatches = (candidateUuid, openedUrl, keys) => {
   return Boolean(match && candidateUuid && match[1].toLowerCase() === candidateUuid.toLowerCase() && !(keys || []).includes("media:" + match[1].toLowerCase()));
 };
 let currentPage;
+let scenario = "default";
 let getDownloadMenuCalls = 0;
 const activateVideosTab = async () => "selected";
-const collectAllGeneratedItems = async (_page, _selector, options = {}) => options.targetKey
-  ? { targetIndex: 0 }
-  : { items: [freshItem, { key: baselineKeys[0], mediaUuid: baselineUuid, index: 1 }, { key: baselineKeys[1], mediaUuid: oldUuid, index: 2 }], topItems: [], topLimited: true, duplicateVisibleKeyDetected: false };
+const collectAllGeneratedItems = async (_page, _selector, options = {}) => {
+  if (options.targetKey) return { targetIndex: 0 };
+  if (scenario === "failed-policy-row") {
+    return { items: [
+      { key: "thumbnail:asb-new-video", mediaUuid: null, text: "Standing woman in sage outfit", state: "completed", progress: false, index: 0 },
+      { key: "", mediaUuid: null, text: policyText, state: "Failed", progress: false, index: 1 },
+      { key: "media:" + baselineUuid, mediaUuid: baselineUuid, text: "old completed", state: "completed", progress: false, index: 2 },
+      { key: "media:" + oldUuid, mediaUuid: oldUuid, text: "older completed", state: "completed", progress: false, index: 3 },
+    ], topItems: [], topLimited: true, duplicateVisibleKeyDetected: false };
+  }
+  return { items: [freshItem, { key: baselineKeys[0], mediaUuid: baselineUuid, index: 1 }, { key: baselineKeys[1], mediaUuid: oldUuid, index: 2 }], topItems: [], topLimited: true, duplicateVisibleKeyDetected: false };
+};
 const exactVisibleLocator = async (page, selector) => page.locator(selector);
 const readCreditBalance = async () => 841;
 function makePage(routeUuid, failDownload = false) {
@@ -389,6 +409,21 @@ try {
 }
 assert.equal(downloadFailurePage.clicks.filter(selector => selector === "generated-video-items").length, 1, "one candidate click only; wait function has no Create action");
 assert.equal(downloadFailurePage.clicks.includes("download-button"), true);
+
+// Regression: baseline first row starts with a policy-refusal card that has no UUID,
+// followed by two existing videos. A new thumbnail-only tile is inserted at index 0.
+// The detector must compare the shifted row including the non-media policy identity.
+scenario = "failed-policy-row";
+const policyRowPage = makePage(freshUuid);
+const policyRowResult = await waitForGenerationAndDownload(policyRowPage, selectors, {
+  beforeKeys: policyBaselineKeys, beforeBalance: 841, createClickedAt: new Date().toISOString(),
+  timeoutMs: 3000, downloadDir: os.tmpdir(), sceneId: "scene-test", attemptId: "attempt-policy-row",
+});
+assert.equal(policyRowResult.verifiedMediaUuid, freshUuid);
+assert.equal(policyRowResult.verificationState, "verified_new_media_uuid");
+assert.match(policyRowResult.downloadError, /simulated save failure/);
+assert.equal(policyRowPage.clicks.filter(selector => selector === "generated-video-items").length, 1);
+assert.equal(policyRowPage.clicks.includes("download-button"), true);
 """
         result = subprocess.run(
             ["node", "--input-type=module", "-e", node_test],
@@ -398,6 +433,8 @@ assert.equal(downloadFailurePage.clicks.includes("download-button"), true);
         self.assertEqual(result.returncode, 0, msg=result.stdout + result.stderr)
         self.assertIn('resultStatus = downloadError ? "download_failed" : "succeeded";', self.script)
         self.assertIn("await finalButton.click({ timeout: 2500 })", self.script)
+        self.assertIn('ordered_baseline_shift_with_non_media_baseline_support', self.script)
+        self.assertIn('event: "post_create_poll"', self.script)
 
     def test_wait_tracks_new_tile_by_stable_identity_and_never_retries(self):
         self.assertIn('collectAllGeneratedItems(page, selectors.generated_video_items, {\n      uuidCache, topLimit: 3, selectors, skipUuidResolution: true,', self.script)
