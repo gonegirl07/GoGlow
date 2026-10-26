@@ -1430,7 +1430,7 @@ assert.equal(
     def test_tile_reorder_or_ambiguous_text_match_stops_before_create(self):
         self.assertIn("function verifiedFirstRowIdentityIndexes(initialItems, refreshedItems)", self.script)
         self.assertIn("const sameVisibleRow = verifiedRowIndexes !== null", self.script)
-        self.assertIn("if (!sameVisibleRow)", self.script)
+        self.assertIn("if (!sameVisibleRow && thumbnailRetry === 2)", self.script)
         self.assertIn("Pre-Create recheck could not confirm a stable first tile and three-tile row", self.script)
 
 
