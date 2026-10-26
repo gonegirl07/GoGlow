@@ -3413,10 +3413,9 @@ async function prepare(args, browser, rl) {
       args._waitInitialItemKeys = initialItems;
       args._waitInitialItemTexts = initialScan.items.slice(0, 3).map(item => String(item.text || "").replace(/\s+/g, " ").trim());
       args._waitInitialDomTileCount = await chosen.page.locator(selectors.generated_video_items).count();
-      // Capture the baseline with the exact same DOM identity precedence used by
-      // the pre-Create check. Do not substitute media UUIDs here: Flow may expose
-      // the same card as a media UUID during network inventory and an /asb/ token
-      // in the visible grid, making a cross-domain comparison impossible.
+      // Capture visible DOM thumbnail tokens, rejecting /image/<uuid> placeholders.
+      // A verified video UUID may fill a missing token only when its same-position
+      // row text is unique and unchanged in both the inventory and visible DOM.
       const domThumbnailBaseline = await chosen.page.locator(selectors.generated_video_items).evaluateAll(elements => ({
         tileCount: elements.length,
         texts: elements.slice(0, 3).map(element => String(element.innerText || element.textContent || "").replace(/\s+/g, " ").trim()),
