@@ -221,7 +221,9 @@ try {
         self.assertIn('integrity_status: downloadedFile ? "verified" : (mediaUri ? "not_checked" : "missing")', self.script)
         self.assertIn('event: "generation_ledger_recorded"', self.script)
         self.assertIn('status: "unknown_do_not_retry"', self.script)
-        self.assertIn('resultStatus, mediaUri, downloadedFile, downloadError, timeoutError, actualResolution, downloadQualityLabel, attemptNumber', self.script)
+        self.assertIn('resultStatus, mediaUri, downloadedFile, downloadError, timeoutError, actualResolution, downloadQualityLabel,', self.script)
+        self.assertIn('verifiedMediaUuid: typeof verifiedMediaUuid === "undefined" ? null : verifiedMediaUuid', self.script)
+        self.assertIn('verificationEvidence: typeof verificationEvidence === "undefined" ? null : verificationEvidence', self.script)
         self.assertIn('--ledger-project-id', self.script)
         self.assertIn('ledgerProjectId || scene.goglow_project_id || projectId', self.script)
 
