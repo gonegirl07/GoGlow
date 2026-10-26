@@ -3235,10 +3235,22 @@ async function prepare(args, browser, rl) {
           wait_ms: 500,
         }));
         await chosen.page.waitForTimeout(500);
+        // Explicitly bring each first-row tile into view on every bounded recapture;
+        // lazy thumbnail loading can stall on the third tile even when UUID lookup succeeds.
+        const retryTiles = chosen.page.locator(selectors.generated_video_items);
+        const retryTileCount = await retryTiles.count().catch(() => 0);
+        for (let tileIndex = 0; tileIndex < Math.min(3, retryTileCount); tileIndex += 1) {
+          await retryTiles.nth(tileIndex).scrollIntoViewIfNeeded({ timeout: 2500 }).catch(() => {});
+          await chosen.page.waitForTimeout(150);
+        }
         await waitForFirstRowThumbnailTokens(`recapture_retry_${thumbnailRetry}`);
         const retryInventoryStartedAt = Date.now();
         const refreshedScan = await collectAllGeneratedItems(chosen.page, selectors.generated_video_items, {
-          uuidCache: baselineUuidCache, topLimit: 3, selectors, skipUuidResolution: completeUniqueUuidBaseline,
+          uuidCache: baselineUuidCache, topLimit: 3, selectors,
+          // First try a fast thumbnail-only snapshot when all UUIDs are bound to the
+          // baseline row. If that snapshot is incomplete or reordered, the next
+          // attempt must perform a full-row UUID inventory rather than trust fragments.
+          skipUuidResolution: completeUniqueUuidBaseline && thumbnailRetry === 1,
         });
         if (completeUniqueUuidBaseline) {
           const normalizeTileText = value => String(value || "").replace(/\s+/g, " ").trim();
@@ -3262,6 +3274,12 @@ async function prepare(args, browser, rl) {
               const refreshed = refreshedScan.items[missingIndex];
               if (refreshed?.thumbnailSrc && thumbnailIdentityToken(refreshed.thumbnailSrc)) {
                 initialScan.items[missingIndex].thumbnailSrc = refreshed.thumbnailSrc;
+              } else if (initialScan.items[missingIndex]?.mediaUuid
+                && refreshed?.mediaUuid === initialScan.items[missingIndex].mediaUuid) {
+                // The full row was re-identified at this exact index by the same
+                // unique media UUID. A media:<uuid> token is therefore a safe
+                // identity fallback even when Flow never exposes an img src.
+                initialScan.items[missingIndex].thumbnailSrc = `media:${initialScan.items[missingIndex].mediaUuid}`;
               }
             }
           }
@@ -3276,8 +3294,12 @@ async function prepare(args, browser, rl) {
             refreshed_indexes: sameVisibleRow ? missingIndexes.filter(index => initialScan.items[index]?.thumbnailSrc && thumbnailIdentityToken(initialScan.items[index].thumbnailSrc)) : [],
           }));
           if (!sameVisibleRow) {
-            console.warn("Thumbnail-only recapture could not verify the same first-row tiles; preserving the original UUID baseline and leaving missing tokens unresolved.");
-            break;
+            console.warn(JSON.stringify({ event: "thumbnail_recapture_row_identity_unverified", retry: thumbnailRetry,
+              max_retries: 2, observed_items: refreshedScan.items.length,
+              action: thumbnailRetry < 2 ? "retry_full_row_inventory" : "fail_closed_after_retries" }));
+            // Do not return early: the next bounded retry performs a fresh full-row
+            // inventory (including UUID resolution), rather than reusing partial rows.
+            continue;
           }
         } else {
           baselineUuidCache.clear();
