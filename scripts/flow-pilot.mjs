@@ -23,7 +23,7 @@ if (!Number.isInteger(ASSET_READY_TIMEOUT_MS) || ASSET_READY_TIMEOUT_MS < 15000 
 function argsOf(argv) {
   const args = { inspect: false, execute: false, dryRun: false, clearAfterDryRun: true, tab: null, scene: null, selectors: null,
     accountLabel: null, expectedEmail: null, expectedProject: null, log: "flow-pilot.jsonl", screenshot: null,
-    waitForResult: false, waitTimeoutMs: 600000, downloadDir: "local/flow-downloads", ledgerOutput: "local/flow-generation-ledger.jsonl", ledgerProjectId: null, variantIndex: null };
+    waitForResult: false, recoverAttempt: null, waitTimeoutMs: 600000, downloadDir: "local/flow-downloads", ledgerOutput: "local/flow-generation-ledger.jsonl", ledgerProjectId: null, variantIndex: null };
   for (let i = 0; i < argv.length; i += 1) {
     const arg = argv[i];
     if (arg === "--inspect") args.inspect = true;
@@ -40,6 +40,7 @@ function argsOf(argv) {
     else if (arg === "--log") args.log = argv[++i];
     else if (arg === "--screenshot") args.screenshot = argv[++i];
     else if (arg === "--wait") args.waitForResult = true;
+    else if (arg === "--recover-attempt") args.recoverAttempt = argv[++i];
     else if (arg === "--wait-timeout-ms") args.waitTimeoutMs = Number(argv[++i]);
     else if (arg === "--download-dir") args.downloadDir = argv[++i];
     else if (arg === "--ledger-output") args.ledgerOutput = argv[++i];
@@ -49,6 +50,12 @@ function argsOf(argv) {
   }
   if (args.inspect && args.execute) throw new Error("Use --inspect or --execute, not both.");
   if (args.execute && args.dryRun) throw new Error("Use --dry-run or --execute, not both.");
+  if (args.recoverAttempt && (args.inspect || args.execute || args.dryRun || args.waitForResult || args.variantIndex !== null)) {
+    throw new Error("--recover-attempt is a separate no-Create recovery mode; do not combine it with inspect, execute, dry-run, wait, or variant-index.");
+  }
+  if (args.recoverAttempt && !/^attempt-[0-9a-f-]{36}$/i.test(args.recoverAttempt)) {
+    throw new Error("--recover-attempt must be the exact attempt-<UUID> from the generation ledger.");
+  }
   if (args.waitForResult && !args.execute && !args.dryRun) throw new Error("--wait without --execute is preflight-only; pass --dry-run --wait explicitly.");
   if (!Number.isInteger(args.waitTimeoutMs) || args.waitTimeoutMs < 30000 || args.waitTimeoutMs > 1800000) throw new Error("--wait-timeout-ms must be an integer from 30000 to 1800000.");
   if (args.waitForResult && (!args.downloadDir || !args.ledgerOutput)) throw new Error("--wait requires non-empty --download-dir and --ledger-output paths.");
