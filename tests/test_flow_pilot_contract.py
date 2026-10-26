@@ -1612,7 +1612,7 @@ assert.equal(
     def test_preverified_asb_alias_accepts_normalized_token_with_media_uuid_placeholder(self):
         helper = "function thumbnailIdentityToken(value)" + self.script.split(
             "function thumbnailIdentityToken(value)", 1
-        )[1].split("\\n\\nfunction mediaUuidFromLocatorValues", 1)[0]
+        )[1].split("\n\nfunction mediaUuidFromLocatorValues", 1)[0]
         node_test = helper + r"""
 const assert = await import('node:assert/strict');
 const { normalizeAsbIdentityToken } = await import('./scripts/asb-identity.mjs');
