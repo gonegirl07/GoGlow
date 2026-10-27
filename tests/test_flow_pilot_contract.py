@@ -511,9 +511,10 @@ try {
   };
   const evidence = readRecoveryEvidence(logPath, attemptId, target);
   assert.equal(evidence.createClickedAt, "2026-10-26T23:27:22.857Z");
+  const originalLog = fs.readFileSync(logPath, "utf8");
   fs.appendFileSync(logPath, timestampLine + "\n");
   assert.throws(() => readRecoveryEvidence(logPath, attemptId, target), /exactly one Create timestamp/);
-  fs.writeFileSync(logPath, fs.readFileSync(logPath, "utf8").split(timestampLine + "\n").slice(0, -1).join(timestampLine + "\n") + timestampLine + "\n");
+  fs.writeFileSync(logPath, originalLog);
   assert.deepEqual(evidence.beforeKeys, [
     "failed-policy:" + policyText.toLowerCase(),
     "media:4bcc1ce2-4018-43fc-9a8a-059fdc315750",
