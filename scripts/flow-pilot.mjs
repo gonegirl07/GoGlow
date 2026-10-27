@@ -95,6 +95,8 @@ Recover an already charged unidentified attempt without submitting a prompt or c
     --expected-email "you@example.com" --expected-project "project-uuid" \\
     --log local/exec.log --ledger-output local/flow-generation-ledger.jsonl --download-dir local/flow-downloads
 
+Identify-only recovery: pass --no-download with --recover-attempt to stop after strict UUID set-difference and matching /edit/<uuid> route verification. It records identified_not_downloaded and integrity_status not_checked without opening the download menu.
+
 --recover-attempt requires a matching submitted_unidentified ledger record and complete baseline/Create timestamp evidence in the log.
 It only resolves, verifies, and downloads an already submitted result; it never clicks Create.
 --wait requires selector keys: credit_balance, generated_video_items, and download_media_button.
