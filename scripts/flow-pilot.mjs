@@ -4554,8 +4554,14 @@ function readRecoveryEvidence(logPath, attemptId, ledgerRecord = null) {
       throw new Error("Legacy Create timestamp must fall within the matching ledger attempt's started_on/finished_on interval.");
     }
     const sceneEvents = parsedEvents.filter(event => event.scene_id);
-    if (!sceneEvents.some(event => event.scene_id === ledgerRecord.scene_id)
-      || sceneEvents.some(event => event.scene_id !== ledgerRecord.scene_id)) {
+    // Some legacy logs embed scene_id only inside a pretty-printed JSON object,
+    // so no individual line parses as an event. In that case, extract exact
+    // quoted scene_id fields from the complete log and still reject any conflict.
+    const sceneIds = sceneEvents.length
+      ? sceneEvents.map(event => String(event.scene_id))
+      : [...logText.matchAll(/"scene_id"\\s*:\\s*"([^"]+)"/g)].map(match => match[1]);
+    if (!sceneIds.includes(String(ledgerRecord.scene_id))
+      || sceneIds.some(sceneId => sceneId !== String(ledgerRecord.scene_id))) {
       throw new Error("Legacy log scene_id does not uniquely match the ledger attempt; refusing recovery.");
     }
     const projectEvents = parsedEvents.filter(event => event.project_id);
