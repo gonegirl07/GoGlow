@@ -1,5 +1,6 @@
 """Static safety contract checks for the human-gated Flow pilot runner."""
 import re
+import subprocess
 import unittest
 from pathlib import Path
 
@@ -8,11 +9,18 @@ class FlowPilotContractTests(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
         cls.script = (Path(__file__).parents[1] / "scripts" / "flow-pilot.mjs").read_text(encoding="utf-8")
+        cls.policy_stats_script = (Path(__file__).parents[1] / "scripts" / "summarize-policy-refusals.mjs").read_text(encoding="utf-8")
 
-    def test_uses_only_the_configured_local_cdp_endpoint_and_never_navigates(self):
+    def test_flow_pilot_script_passes_node_syntax_check(self):
+        script_path = Path(__file__).parents[1] / "scripts" / "flow-pilot.mjs"
+        result = subprocess.run(["node", "--check", str(script_path)], capture_output=True, text=True, check=False)
+        self.assertEqual(result.returncode, 0, msg=result.stdout + result.stderr)
+
+    def test_uses_configured_local_cdp_and_only_reloads_the_current_flow_project_for_tile_lookup(self):
         self.assertIn('const CDP_ENDPOINT = "http://127.0.0.1:9224"', self.script)
         self.assertIn("chromium.connectOverCDP(CDP_ENDPOINT)", self.script)
-        self.assertNotIn("page.goto(", self.script)
+        self.assertIn("await page.goto(gridUrl, { waitUntil: \"domcontentloaded\", timeout: 12000 }).catch(() => {});", self.script)
+        self.assertNotIn('page.goto("http', self.script)
 
     def test_current_flow_project_urls_are_supported_and_404_is_rejected(self):
         self.assertIn('const FLOW_HOST = "flow.google.com"', self.script)
@@ -54,8 +62,8 @@ class FlowPilotContractTests(unittest.TestCase):
         self.assertIn("Model selector did not become visible within 5000ms", self.script)
 
     def test_waits_for_model_option_after_opening_model_menu(self):
-        self.assertIn('option.waitFor({ state: "visible", timeout: 5000 })', self.script)
-        self.assertIn("Model option did not become visible within 5000ms", self.script)
+        self.assertIn('option.waitFor({ state: "visible", timeout: 8000 })', self.script)
+        self.assertIn("Model option did not become stably visible within 8000ms", self.script)
 
     def test_dry_run_closes_readline_interface(self):
         self.assertIn("DRY RUN COMPLETE: stopped before clicking Create", self.script)
@@ -85,20 +93,25 @@ class FlowPilotContractTests(unittest.TestCase):
 
     def test_picker_closure_clicks_backdrop_edge_and_verifies_closed(self):
         self.assertIn('position: { x: 5, y: 5 }', self.script)
-        self.assertIn('Ingredients picker closure verification failed; backdrop remains visible', self.script)
-        self.assertIn('Clicked the edge of the Ingredients picker backdrop, but the overlay is still open', self.script)
+        self.assertIn('Ingredients picker closure verification failed; a current picker surface or backdrop remains visible.', self.script)
+        self.assertIn('Ingredients picker closure verification failed; a current picker surface or backdrop remains visible.', self.script)
         self.assertIn('await page.waitForFunction(selector => !Array.from(document.querySelectorAll(selector))', self.script)
 
-    def test_upload_failure_runs_verified_cleanup_in_finally(self):
-        self.assertIn('async function uploadSceneReferences(page, selectors, referenceImages, prompt)', self.script)
-        self.assertIn('finally {\n    if (uploadError)', self.script)
-        self.assertIn('Upload failure cleanup (finally):', self.script)
-        self.assertIn('await closeIngredientsPicker(page, selectors)', self.script)
-        self.assertIn('await clearPromptContentsVerified(prompt, selectors, 4000)', self.script)
+    def test_upload_failure_closes_picker_and_leaves_one_cleanup_owner(self):
+        self.assertIn('async function uploadSceneReferences(page, selectors, referenceImages, prompt, referenceAssetUuids = new Map())', self.script)
+        upload_wrapper = self.script.split('async function uploadSceneReferences(page, selectors', 1)[1].split('function requiredSelectorConfig', 1)[0]
+        self.assertIn('await closeIngredientsPicker(page, selectors)', upload_wrapper)
+        self.assertIn('outer handler will verify prompt/chip cleanup', upload_wrapper)
+        self.assertNotIn('clearPromptContentsVerified(prompt, selectors, 4000)', upload_wrapper)
+        self.assertIn('await clearPromptVerified(promptForCleanup, selectors, 4000);', self.script)
         self.assertIn('chipCount !== 0', self.script)
+        self.assertIn('async function waitForStableVisibleChipCount(page, selector, timeoutMs = 2000)', self.script)
+        self.assertIn('visible Ingredients chip(s) remain after the DOM settled', self.script)
+        self.assertIn('function isElementActuallyVisible(element)', self.script)
 
     def test_deduplicated_upload_can_reuse_a_verifiable_existing_asset(self):
-        self.assertIn('event: reusedExistingUuid ? "asset_upload_reused_existing" : "asset_upload_uuid_timeout"', self.script)
+        self.assertIn('event: "asset_library_reused_existing"', self.script)
+        self.assertIn("Existing unique library asset found; skipping upload and UUID timeout wait.", self.script)
         self.assertIn('existing_uuids_before_upload: Array.from(existingUuids)', self.script)
         self.assertIn('matching_uuids_after_timeout: diagnostics', self.script)
         self.assertIn('selected_existing_uuid: reusedExistingUuid', self.script)
@@ -120,21 +133,453 @@ class FlowPilotContractTests(unittest.TestCase):
     def test_wait_mode_requires_execute_and_bounded_timeout(self):
         self.assertIn('if (args.waitForResult && !args.execute && !args.dryRun)', self.script)
         self.assertIn('--wait without --execute is preflight-only; pass --dry-run --wait explicitly.', self.script)
-        self.assertIn('WAIT SELECTOR PREFLIGHT (read-only; no Create click; Videos tab selected when available; virtualized grid swept)', self.script)
+        self.assertIn('WAIT SELECTOR PREFLIGHT (read-only; no Create click; Videos tab selected when available; visible first row only; Failed tiles retained only as baseline UUIDs)', self.script)
         self.assertIn('--wait-timeout-ms must be an integer from 30000 to 1800000', self.script)
         self.assertIn('--wait requires a non-empty', self.script)
         self.assertIn('["credit_balance", "generated_video_items", "download_media_button", "download_360p_original_button", "account_panel_open", "account_panel_close"]', self.script)
 
+    def test_post_create_identity_helpers_and_resolution_parser_behave_fail_closed(self):
+        helper = self.script.split("function findNewCompletedMediaItems(items, beforeKeys)", 1)[1].split(
+            "\n\nasync function waitForGenerationAndDownload", 1
+        )[0]
+        helper = "function findNewCompletedMediaItems(items, beforeKeys)" + helper
+        node_test = r"""
+import assert from "node:assert/strict";
+import fs from "node:fs";
+import os from "node:os";
+import path from "node:path";
+const isGenerationFailureText = value => /generation failed|policy refusal|prominent people|might violate our policies|you will be refunded/i.test(String(value || ""));
+const failedPolicyBaselineKey = item => {
+  const text = String(item?.text || "").replace(/\s+/g, " ").trim().toLowerCase();
+  return !item?.mediaUuid && /\bfailed\b/i.test(String(item?.state || "") + " " + text)
+    && /prominent people/i.test(text) && /might violate our policies/i.test(text)
+    && /you will be refunded/i.test(text) ? "failed-policy:" + text : null;
+};
+""" + helper + r"""
+const baseline = [
+  "media:11111111-1111-4111-8111-111111111111",
+  "media:22222222-2222-4222-8222-222222222222",
+  "media:33333333-3333-4333-8333-333333333333",
+];
+const old = { key: baseline[0], mediaUuid: baseline[0].slice(6), text: "old video" };
+const generating = { key: "media:33333333-3333-4333-8333-333333333333", mediaUuid: "33333333-3333-4333-8333-333333333333", text: "generating", progress: 40 };
+const fresh = { key: "media:44444444-4444-4444-8444-444444444444", mediaUuid: "44444444-4444-4444-8444-444444444444", text: "completed" };
+assert.deepEqual(findNewCompletedMediaItems([old, generating, fresh], baseline), [fresh]);
+assert.equal(openedMediaUuidMatches(fresh.mediaUuid, "https://flow.google.com/project/aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa/edit/" + fresh.mediaUuid, baseline), true);
+assert.equal(openedMediaUuidMatches(fresh.mediaUuid, "https://flow.google.com/project/aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa/edit/" + old.mediaUuid, baseline), false, "stale editor UUID must not match the new candidate");
+assert.equal(openedMediaUuidMatches(fresh.mediaUuid, "https://flow.google.com/project/aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa/edit/" + baseline[1].slice(6), baseline), false, "baseline UUID must fail closed");
+assert.equal(openedMediaUuidMatches(fresh.mediaUuid, "https://flow.google.com/project/aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa", baseline), false, "non-detail route must fail closed");
+const first = { key: "thumbnail:new", mediaUuid: null, text: "new tile" };
+const second = { key: baseline[0], mediaUuid: baseline[0].slice(6) };
+const third = { key: baseline[1], mediaUuid: baseline[1].slice(6) };
+const fourth = { key: baseline[2], mediaUuid: baseline[2].slice(6) };
+assert.equal(orderedBaselineShiftIsVerified(first, [second, third, fourth], baseline), true);
+assert.equal(orderedBaselineShiftIsVerified(first, [third, second, fourth], baseline), false, "neighbor order change must fail closed");
+assert.equal(orderedBaselineShiftIsVerified({ ...first, mediaUuid: "55555555-5555-4555-8555-555555555555" }, [second, third, fourth], baseline), false);
+assert.equal(orderedBaselineShiftIsVerified({ ...first, text: "generation failed" }, [second, third, fourth], baseline), false);
+const policyText = "Failed prominent people: This video might violate our policies. You will be refunded.";
+const policyKey = "failed-policy:" + policyText.toLowerCase();
+const policyBaseline = [policyKey, baseline[0], baseline[1]];
+const shiftedFailure = { key: "", mediaUuid: null, text: policyText, state: "Failed" };
+assert.equal(failedPolicyBaselineKey(shiftedFailure), policyKey);
+assert.equal(orderedBaselineShiftIsVerified(first, [shiftedFailure, second, third], policyBaseline), true, "must match non-UUID failed-policy baseline tile followed by two UUID-backed neighbors");
+const dir = fs.mkdtempSync(path.join(os.tmpdir(), "goglow-mp4-test-"));
+try {
+  const file = path.join(dir, "fixture.mp4");
+  const buffer = Buffer.alloc(48);
+  buffer.write("avc1", 4, "ascii");
+  buffer.writeUInt16BE(360, 32);
+  buffer.writeUInt16BE(640, 34);
+  fs.writeFileSync(file, buffer);
+  assert.deepEqual(readMp4VideoResolution(file), { width: 360, height: 640, label: "360x640", codec: "avc1" });
+  assert.equal(readMp4VideoResolution(path.join(dir, "missing.mp4")), null);
+} finally {
+  fs.rmSync(dir, { recursive: true, force: true });
+}
+"""
+        result = subprocess.run(
+            ["node", "--input-type=module", "-e", node_test],
+            capture_output=True, text=True, check=False, timeout=5,
+            cwd=Path(__file__).parents[1],
+        )
+        self.assertEqual(result.returncode, 0, msg=result.stdout + result.stderr)
+        self.assertIn("openedMediaUuidMatches(candidateUuid, openedUrl, beforeKeys)", self.script)
+        self.assertIn('resultStatus = downloadError ? "download_failed" : "succeeded";', self.script)
+        self.assertIn('verification_state: verificationState', self.script)
+        self.assertIn('verified_media_uuid: verifiedMediaUuid || null', self.script)
+        self.assertIn('verification_evidence: verificationEvidence || null', self.script)
+        self.assertIn('resolution_match_status:', self.script)
+
+    def test_generation_ledger_records_verified_media_and_download_failure_behavior(self):
+        ledger_fn = self.script.split("function makeGenerationLedgerRecord(", 1)[1].split(
+            "\n\nfunction findNewCompletedMediaItems", 1
+        )[0]
+        ledger_fn = "function makeGenerationLedgerRecord(" + ledger_fn
+        node_test = r"""
+import assert from "node:assert/strict";
+import fs from "node:fs";
+import os from "node:os";
+import path from "node:path";
+import { createHash, randomUUID } from "node:crypto";
+const rawProviderMessage = value => String(value || "").trim() || null;
+""" + ledger_fn + r"""
+const dir = fs.mkdtempSync(path.join(os.tmpdir(), "goglow-ledger-test-"));
+try {
+  const face = path.join(dir, "face.jpg");
+  const ref = path.join(dir, "pose.png");
+  fs.writeFileSync(face, Buffer.from("face-reference"));
+  fs.writeFileSync(ref, Buffer.from("pose-reference"));
+  const scene = {
+    scene_id: "scene-ledger-test", job_id: "job-ledger-test",
+    model: "Omni 1.1 Flash", resolution: "360p", duration: "8s",
+    reference_images: [face, ref], face_reference_ids: [face],
+  };
+  const record = makeGenerationLedgerRecord({
+    scene, projectId: "project-test", prompt: "test prompt", estimatedCost: 6,
+    beforeBalance: 841, afterBalance: 835, resultStatus: "download_failed",
+    mediaUri: "https://flow.google.com/project/aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa/edit/44444444-4444-4444-8444-444444444444",
+    downloadedFile: null, downloadError: "download timed out", timeoutError: null,
+    actualResolution: "360x640", downloadQualityLabel: "Original size",
+    verifiedMediaUuid: "44444444-4444-4444-8444-444444444444",
+    verificationState: "verified_new_media_uuid",
+    verificationEvidence: "new_media_uuid_set_difference_and_matching_detail_route",
+    attemptNumber: 1, attemptId: "attempt-test",
+  });
+  assert.equal(record.result.status, "download_failed");
+  assert.equal(record.credits.actual_amount, 6);
+  assert.equal(record.credits.before_balance, 841);
+  assert.equal(record.credits.after_balance, 835);
+  assert.equal(record.media.verification_state, "verified_new_media_uuid");
+  assert.equal(record.media.verified_media_uuid, "44444444-4444-4444-8444-444444444444");
+  assert.equal(record.media.verification_evidence, "new_media_uuid_set_difference_and_matching_detail_route");
+  assert.equal(record.media.resolution_match_status, "match");
+  assert.equal(record.media.integrity_status, "not_checked");
+  assert.match(record.notes, /Download failed: download timed out/);
+  const mismatch = makeGenerationLedgerRecord({
+    scene, projectId: "project-test", prompt: "test prompt", estimatedCost: 6,
+    beforeBalance: 841, afterBalance: 835, resultStatus: "succeeded",
+    mediaUri: "https://flow.google.com/video/44444444-4444-4444-8444-444444444444",
+    downloadedFile: null, downloadError: null, timeoutError: null,
+    actualResolution: "720x1280", downloadQualityLabel: "Original size",
+    verifiedMediaUuid: "44444444-4444-4444-8444-444444444444",
+    verificationState: "verified_new_media_uuid",
+    verificationEvidence: "new_media_uuid_set_difference_and_matching_detail_route",
+  });
+  assert.equal(mismatch.media.resolution_match_status, "mismatch");
+} finally {
+  fs.rmSync(dir, { recursive: true, force: true });
+}
+"""
+        result = subprocess.run(
+            ["node", "--input-type=module", "-e", node_test],
+            capture_output=True, text=True, check=False, timeout=5,
+            cwd=Path(__file__).parents[1],
+        )
+        self.assertEqual(result.returncode, 0, msg=result.stdout + result.stderr)
+
+    def test_wait_for_generation_mocked_page_rejects_old_detail_and_ledgers_download_failure(self):
+        wait_fn = self.script.split("async function waitForGenerationAndDownload", 1)[1].split(
+            "\n\nfunction createConfirmationReader", 1
+        )[0]
+        wait_fn = "async function waitForGenerationAndDownload" + wait_fn
+        ledger_fn = self.script.split("function makeGenerationLedgerRecord(", 1)[1].split(
+            "\n\nfunction findNewCompletedMediaItems", 1
+        )[0]
+        ledger_fn = "function makeGenerationLedgerRecord(" + ledger_fn
+        node_test = r"""
+import assert from "node:assert/strict";
+import fs from "node:fs";
+import os from "node:os";
+import path from "node:path";
+import { createHash, randomUUID } from "node:crypto";
+const baselineUuid = "11111111-1111-4111-8111-111111111111";
+const freshUuid = "44444444-4444-4444-8444-444444444444";
+const oldUuid = "22222222-2222-4222-8222-222222222222";
+const thirdUuid = "33333333-3333-4333-8333-333333333333";
+const baselineKeys = ["media:" + baselineUuid, "media:" + oldUuid];
+const policyText = "Failed prominent people: This video might violate our policies. You will be refunded.";
+const policyKey = "failed-policy:" + policyText.toLowerCase();
+const policyBaselineKeys = [policyKey, "media:" + baselineUuid, "media:" + oldUuid];
+const freshItem = { key: "media:" + freshUuid, mediaUuid: freshUuid, text: "completed", state: "completed", index: 0 };
+const isGenerationFailureText = value => /prominent people|might violate our policies|you will be refunded/i.test(String(value || ""));
+const failedPolicyBaselineKey = item => {
+  const text = String(item?.text || "").replace(/\s+/g, " ").trim().toLowerCase();
+  return !item?.mediaUuid && /\bfailed\b/i.test(String(item?.state || "") + " " + text)
+    && /prominent people/i.test(text) && /might violate our policies/i.test(text)
+    && /you will be refunded/i.test(text) ? "failed-policy:" + text : null;
+};
+const rawProviderMessage = value => String(value || "").trim() || null;
+const findNewCompletedMediaItems = (items, keys) => (items || []).filter(item => item.mediaUuid && item.key && !new Set(keys || []).has(item.key) && !item.progress && !/generating|processing|queued|pending/i.test(String(item.state || item.text || "")));
+const orderedBaselineShiftIsVerified = (first, shiftedItems, beforeKeys) => {
+  const baselineKeys = beforeKeys || [];
+  if (!first || !Array.isArray(shiftedItems) || baselineKeys.length < 3) return false;
+  const firstKey = failedPolicyBaselineKey(first) || first.key || "";
+  const firstState = String(first.state || "") + " " + String(first.text || "");
+  if (!firstKey || new Set(baselineKeys).has(firstKey) || first.mediaUuid || first.progress
+    || /\bfailed\b/i.test(firstState) || isGenerationFailureText(firstState)) return false;
+  return baselineKeys.slice(0, 3).every((baselineKey, index) => {
+    const item = shiftedItems[index];
+    if (!item) return false;
+    const actualKey = failedPolicyBaselineKey(item) || item.key || "";
+    if (baselineKey.startsWith("failed-policy:")) return actualKey === baselineKey;
+    return actualKey === baselineKey && Boolean(item.mediaUuid);
+  });
+};
+const openedMediaUuidMatches = (candidateUuid, openedUrl, keys) => {
+  const match = String(openedUrl).match(/\/(?:edit|video)\/([0-9a-f-]{36})(?:[/?#]|$)/i);
+  return Boolean(match && candidateUuid && match[1].toLowerCase() === candidateUuid.toLowerCase() && !(keys || []).includes("media:" + match[1].toLowerCase()));
+};
+let currentPage;
+let scenario = "default";
+let getDownloadMenuCalls = 0;
+const activateVideosTab = async () => "selected";
+const collectAllGeneratedItems = async (_page, _selector, options = {}) => {
+  if (options.targetKey) return { targetIndex: 0 };
+  if (scenario === "failed-policy-row") {
+    return { items: [
+      { key: "thumbnail:asb-new-video", mediaUuid: null, text: "Standing woman in sage outfit", state: "completed", progress: false, index: 0 },
+      { key: "", mediaUuid: null, text: policyText, state: "Failed", progress: false, index: 1 },
+      { key: "media:" + baselineUuid, mediaUuid: baselineUuid, text: "old completed", state: "completed", progress: false, index: 2 },
+      { key: "media:" + oldUuid, mediaUuid: oldUuid, text: "older completed", state: "completed", progress: false, index: 3 },
+    ], topItems: [], topLimited: true, duplicateVisibleKeyDetected: false };
+  }
+  return { items: [freshItem, { key: baselineKeys[0], mediaUuid: baselineUuid, index: 1 }, { key: baselineKeys[1], mediaUuid: oldUuid, index: 2 }], topItems: [], topLimited: true, duplicateVisibleKeyDetected: false };
+};
+const exactVisibleLocator = async (page, selector) => page.locator(selector);
+const readCreditBalance = async () => 841;
+function makePage(routeUuid, failDownload = false) {
+  const page = {
+    currentUrl: "https://flow.google.com/project/aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+    clicks: [],
+    url() { return this.currentUrl; },
+    async waitForURL() {},
+    async waitForTimeout() {},
+    async goBack() {},
+    async screenshot() {},
+    async waitForEvent() { return Promise.resolve({ suggestedFilename: () => "test.mp4", saveAs: async () => { throw new Error("simulated save failure"); } }); },
+    locator(selector) {
+      const locator = {
+        selector,
+        async evaluateAll() { return []; },
+        async innerText() { return ""; },
+        async waitFor() {},
+        async isVisible() { return true; },
+        async count() { return 1; },
+        async click() {
+          page.clicks.push(selector);
+          if (selector === "generated-video-items") page.currentUrl = "https://flow.google.com/project/aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa/edit/" + routeUuid;
+          if (selector === "download-button") getDownloadMenuCalls += 1;
+        },
+        nth() { return this; },
+        first() { return this; },
+        filter() { return this; },
+      };
+      return locator;
+    },
+    getByRole() {
+      return {
+        filter() { return this; },
+        first() { return this; },
+        async waitFor() {},
+        async count() { return 1; },
+        async isVisible() { return true; },
+        async innerText() { return "Original size"; },
+        nth() { return this; },
+        async click() { if (failDownload) throw new Error("simulated download menu failure"); },
+      };
+    },
+  };
+  return page;
+}
+""" + wait_fn + "\n" + ledger_fn + r"""
+const selectors = { generated_video_items: "generated-video-items", download_media_button: "download-button" };
+const mismatchPage = makePage(oldUuid);
+await assert.rejects(
+  waitForGenerationAndDownload(mismatchPage, selectors, {
+    beforeKeys: baselineKeys, beforeBalance: 841, createClickedAt: new Date().toISOString(),
+    timeoutMs: 3000, downloadDir: os.tmpdir(), sceneId: "scene-test", attemptId: "attempt-mismatch",
+  }),
+  /Opened detail route did not match the newly detected candidate media UUID/,
+);
+assert.equal(mismatchPage.clicks.includes("download-button"), false, "must not open Download on an old/stale video detail page");
+assert.equal(getDownloadMenuCalls, 0, "old video must never reach download UI");
+
+const downloadFailurePage = makePage(freshUuid, true);
+const result = await waitForGenerationAndDownload(downloadFailurePage, selectors, {
+  beforeKeys: baselineKeys, beforeBalance: 841, createClickedAt: new Date().toISOString(),
+  timeoutMs: 3000, downloadDir: os.tmpdir(), sceneId: "scene-test", attemptId: "attempt-download-failure",
+});
+assert.equal(result.verifiedMediaUuid, freshUuid);
+assert.equal(result.verificationState, "verified_new_media_uuid");
+assert.match(result.downloadError, /simulated download menu failure/);
+assert.doesNotMatch(result.downloadError, /is not a function/, "mock must exercise the intended download failure, not a missing mock method");
+const status = result.downloadError ? "download_failed" : "succeeded";
+const dir = fs.mkdtempSync(path.join(os.tmpdir(), "goglow-mocked-ledger-"));
+try {
+  const face = path.join(dir, "face.jpg");
+  const pose = path.join(dir, "pose.png");
+  fs.writeFileSync(face, Buffer.from("face"));
+  fs.writeFileSync(pose, Buffer.from("pose"));
+  const record = makeGenerationLedgerRecord({
+    scene: { scene_id: "scene-test", job_id: "job-test", model: "Omni 1.1 Flash", resolution: "360p", duration: "8s", reference_images: [face, pose], face_reference_ids: [face] },
+    projectId: "project-test", prompt: "test prompt", estimatedCost: 6,
+    beforeBalance: 841, afterBalance: 835, resultStatus: status,
+    mediaUri: result.mediaUri, downloadedFile: result.downloadedFile, downloadError: result.downloadError,
+    timeoutError: null, actualResolution: result.actualResolution, downloadQualityLabel: result.downloadQualityLabel,
+    verifiedMediaUuid: result.verifiedMediaUuid, verificationState: result.verificationState,
+    verificationEvidence: result.verificationEvidence, attemptNumber: 1, attemptId: "attempt-download-failure",
+  });
+  assert.equal(record.result.status, "download_failed", "ledger must not claim success if download fails");
+  assert.equal(record.media.verified_media_uuid, freshUuid);
+  assert.match(record.notes, /Download failed: simulated download menu failure/);
+} finally {
+  fs.rmSync(dir, { recursive: true, force: true });
+}
+assert.equal(downloadFailurePage.clicks.filter(selector => selector === "generated-video-items").length, 1, "one candidate click only; wait function has no Create action");
+assert.equal(downloadFailurePage.clicks.includes("download-button"), true);
+
+// Regression: baseline first row starts with a policy-refusal card that has no UUID,
+// followed by two existing videos. A new thumbnail-only tile is inserted at index 0.
+// The detector must compare the shifted row including the non-media policy identity.
+scenario = "failed-policy-row";
+const policyRowPage = makePage(freshUuid);
+const policyRowResult = await waitForGenerationAndDownload(policyRowPage, selectors, {
+  beforeKeys: policyBaselineKeys, beforeBalance: 841, createClickedAt: new Date().toISOString(),
+  timeoutMs: 3000, downloadDir: os.tmpdir(), sceneId: "scene-test", attemptId: "attempt-policy-row",
+});
+assert.equal(policyRowResult.verifiedMediaUuid, freshUuid);
+assert.equal(policyRowResult.verificationState, "verified_new_media_uuid");
+assert.match(policyRowResult.downloadError, /simulated save failure/);
+assert.equal(policyRowPage.clicks.filter(selector => selector === "generated-video-items").length, 1);
+assert.equal(policyRowPage.clicks.includes("download-button"), true);
+"""
+        result = subprocess.run(
+            ["node", "--input-type=module", "-e", node_test],
+            capture_output=True, text=True, check=False, timeout=8,
+            cwd=Path(__file__).parents[1],
+        )
+        self.assertEqual(result.returncode, 0, msg=result.stdout + result.stderr)
+        self.assertIn('resultStatus = downloadError ? "download_failed" : "succeeded";', self.script)
+        self.assertIn("await finalButton.click({ timeout: 2500 })", self.script)
+        self.assertIn('ordered_baseline_shift_with_non_media_baseline_support', self.script)
+        self.assertIn('event: "post_create_poll"', self.script)
+
+    def test_recovery_mode_reconstructs_baseline_and_updates_only_matching_attempt(self):
+        recovery_helpers = self.script.split("function readRecoveryEvidence", 1)[1].split(
+            "\n\nasync function recoverAttempt", 1
+        )[0]
+        recovery_helpers = "function readRecoveryEvidence" + recovery_helpers
+        node_test = r"""
+import assert from "node:assert/strict";
+import fs from "node:fs";
+import os from "node:os";
+import path from "node:path";
+""" + recovery_helpers + r"""
+const dir = fs.mkdtempSync(path.join(os.tmpdir(), "goglow-recovery-test-"));
+try {
+  const logPath = path.join(dir, "exec.log");
+  const ledgerPath = path.join(dir, "ledger.jsonl");
+  const attemptId = "attempt-6deba36d-1984-4467-a445-59a43df4a818";
+  const policyText = "Failed prominent people: This generation might violate our policies. You will be refunded.";
+  const events = [
+    { event: "baseline_media_inventory_summary", baseline_media_uuids: [
+      "4bcc1ce2-4018-43fc-9a8a-059fdc315750", "07e82f95-f37f-412a-83bd-018fe25b1278"
+    ] },
+    { event: "baseline_unresolved_tile_classification", tiles: [
+      { index: 0, classification: "known_policy_refusal_non_media_baseline", text: policyText },
+      { index: 1, classification: "stable_existing_baseline_tile", text: "old video" },
+      { index: 2, classification: "stable_existing_baseline_tile", text: "older video" },
+    ] },
+    { event: "project_verified", scene_id: "mai-daily4-136-a-front-opt1", project_id: "2c77da50-fb9e-4cc2-bf50-8ce67649c32e" },
+  ];
+  const timestampLine = "Pre-Create baseline UUID count: 3. Create timestamp: 2026-10-26T23:27:22.857Z";
+  fs.writeFileSync(logPath, [
+    ...events.map(event => JSON.stringify(event)),
+    // Match the real exec log's pretty-printed JSON and bare JSON-value lines.
+    JSON.stringify([null, 42, "not-an-event"], null, 2),
+    JSON.stringify({ scene_id: "mai-daily4-136-a-front-opt1", nested: { project_id: "2c77da50-fb9e-4cc2-bf50-8ce67649c32e" } }, null, 2),
+    JSON.stringify({ baseline_first_three_media_keys: [
+      "failed-policy:" + policyText.toLowerCase(),
+      "media:4bcc1ce2-4018-43fc-9a8a-059fdc315750",
+      "media:07e82f95-f37f-412a-83bd-018fe25b1278",
+    ] }, null, 2),
+    timestampLine,
+  ].join("\n") + "\n");
+  const target = {
+    attempt_id: attemptId, scene_id: "mai-daily4-136-a-front-opt1",
+    project_id: "2c77da50-fb9e-4cc2-bf50-8ce67649c32e",
+    started_on: "2026-10-26T23:20:00.000Z", finished_on: "2026-10-26T23:40:00.000Z",
+    result: { status: "submitted_unidentified" }, media: { verification_state: "unverified" },
+    credits: { actual_amount: 6, before_balance: 841 },
+  };
+  const evidence = readRecoveryEvidence(logPath, attemptId, target);
+  assert.equal(evidence.createClickedAt, "2026-10-26T23:27:22.857Z");
+  const originalLog = fs.readFileSync(logPath, "utf8");
+  fs.appendFileSync(logPath, timestampLine + "\n");
+  assert.throws(() => readRecoveryEvidence(logPath, attemptId, target), /exactly one Create timestamp/);
+  fs.writeFileSync(logPath, originalLog);
+  assert.deepEqual(evidence.beforeKeys, [
+    "failed-policy:" + policyText.toLowerCase(),
+    "media:4bcc1ce2-4018-43fc-9a8a-059fdc315750",
+    "media:07e82f95-f37f-412a-83bd-018fe25b1278",
+  ]);
+  const other = { attempt_id: "attempt-11111111-1111-4111-8111-111111111111", result: { status: "succeeded" } };
+  fs.writeFileSync(ledgerPath, [JSON.stringify(other), JSON.stringify(target)].join("\n") + "\n");
+  updateGenerationLedgerAttempt(ledgerPath, attemptId, record => ({ ...record, result: { status: "succeeded" } }));
+  const records = fs.readFileSync(ledgerPath, "utf8").trim().split("\n").map(JSON.parse);
+  assert.deepEqual(records[0], other, "unrelated ledger attempts must remain unchanged");
+  assert.equal(records[1].result.status, "succeeded");
+  assert.throws(() => readRecoveryEvidence(logPath, "attempt-22222222-2222-4222-8222-222222222222"), /Legacy recovery requires the exact charged submitted_unidentified ledger record/);
+} finally {
+  fs.rmSync(dir, { recursive: true, force: true });
+}
+"""
+        result = subprocess.run(
+            ["node", "--input-type=module", "-e", node_test],
+            capture_output=True, text=True, check=False, timeout=5,
+            cwd=Path(__file__).parents[1],
+        )
+        self.assertEqual(result.returncode, 0, msg=result.stdout + result.stderr)
+        self.assertIn('--recover-attempt', self.script)
+        self.assertIn('async function recoverAttempt(args, browser)', self.script)
+        recovery_body = self.script.split("async function recoverAttempt(args, browser)", 1)[1].split(
+            "\n\nasync function main", 1
+        )[0]
+        self.assertNotIn("finalButton.click", recovery_body)
+        self.assertIn("create_clicks_by_recovery: 0", recovery_body)
+
     def test_wait_tracks_new_tile_by_stable_identity_and_never_retries(self):
-        self.assertIn('collectAllGeneratedItems(page, selectors.generated_video_items)', self.script)
+        self.assertIn('collectAllGeneratedItems(page, selectors.generated_video_items, {\n      uuidCache, topLimit: 4, selectors, skipUuidResolution: true,', self.script)
         self.assertIn('candidateItems.length === 1', self.script)
         self.assertIn('refusing to guess which clip to download', self.script)
         self.assertIn('status: "unknown_do_not_retry"', self.script)
         self.assertIn('Do NOT retry automatically', self.script)
 
+    def test_identify_only_recovery_stops_before_download_menu_and_records_unchecked_integrity(self):
+        self.assertIn('else if (arg === "--no-download") args.noDownload = true;', self.script)
+        self.assertIn('if (args.noDownload && !args.recoverAttempt)', self.script)
+        self.assertIn('identifyOnly: args.noDownload', self.script)
+        self.assertIn('const status = args.noDownload ? "identified_not_downloaded"', self.script)
+        self.assertIn('integrity_status: args.noDownload ? "not_checked"', self.script)
+        wait_body = self.script.split("async function waitForGenerationAndDownload", 1)[1].split(
+            "\n\nfunction createConfirmationReader", 1
+        )[0]
+        identify_branch = wait_body.index('if (identifyOnly) {')
+        early_return = wait_body.index('return { downloadedFile: null, mediaUri: page.url()', identify_branch)
+        candidate_wait = wait_body.index('const shortWait =', identify_branch)
+        download_menu = wait_body.index('getByRole("menuitem", { name: /Original size/i })')
+        self.assertLess(identify_branch, early_return)
+        self.assertLess(early_return, candidate_wait)
+        self.assertLess(early_return, download_menu)
+        recovery_body = self.script.split("async function recoverAttempt(args, browser)", 1)[1].split(
+            "\n\nasync function main", 1
+        )[0]
+        self.assertIn('download_attempted: !args.noDownload', recovery_body)
+        self.assertIn('create_clicks_by_recovery: 0', recovery_body)
+
     def test_wait_downloads_original_360p_and_hashes_saved_file(self):
         self.assertIn('page.waitForEvent("download", { timeout: 30000 })', self.script)
-        self.assertIn('selectors.download_360p_original_button', self.script)
+        self.assertIn('getByRole("menuitem", { name: /Original size/i })', self.script)
         self.assertIn('await download.saveAs(target)', self.script)
         self.assertIn('createHash("sha256").update(fs.readFileSync(downloadedFile))', self.script)
         self.assertIn('if (!fs.statSync(target).size) throw new Error("Downloaded media file is empty.")', self.script)
@@ -150,7 +595,9 @@ class FlowPilotContractTests(unittest.TestCase):
         self.assertIn('integrity_status: downloadedFile ? "verified" : (mediaUri ? "not_checked" : "missing")', self.script)
         self.assertIn('event: "generation_ledger_recorded"', self.script)
         self.assertIn('status: "unknown_do_not_retry"', self.script)
-        self.assertIn('resultStatus, mediaUri, downloadedFile, downloadError, timeoutError, attemptNumber', self.script)
+        self.assertIn('resultStatus, mediaUri, downloadedFile, downloadError, timeoutError, actualResolution, downloadQualityLabel,', self.script)
+        self.assertIn('verifiedMediaUuid: typeof verifiedMediaUuid === "undefined" ? null : verifiedMediaUuid', self.script)
+        self.assertIn('verificationEvidence: typeof verificationEvidence === "undefined" ? null : verificationEvidence', self.script)
         self.assertIn('--ledger-project-id', self.script)
         self.assertIn('ledgerProjectId || scene.goglow_project_id || projectId', self.script)
 
@@ -159,6 +606,33 @@ class FlowPilotContractTests(unittest.TestCase):
         self.assertIn("selectors.account_panel_open", self.script)
         self.assertIn("selectors.account_panel_close", self.script)
         self.assertIn("span.credits-count", (Path(__file__).parents[1] / "examples" / "flow-pilot-selectors.example.json").read_text(encoding="utf-8"))
+
+    def test_picker_selection_has_one_bounded_reopen_retry_before_add(self):
+        # Recovery is allowed only after the original selection budget fails and a
+        # pinned UUID exists; the reopened picker must contain one visible match.
+        self.assertIn('event: "ingredients_picker_selection_reopen_retry"', self.script)
+        self.assertIn("if (!referenceSelectionReady && expectedPreviewUuid)", self.script)
+        self.assertIn("await resetIngredientsPicker(page, selectors);", self.script)
+        self.assertIn("await openIngredientsPicker(page, selectors, filename);", self.script)
+        self.assertIn("reopened.visibleMatches !== 1 || reopenedCount !== 1", self.script)
+        self.assertIn("const retryDeadline = Date.now() + 3500;", self.script)
+        self.assertIn('event: "ingredients_picker_selection_reopen_retry_result"', self.script)
+        self.assertIn("exact preview identity not verified; no Add to prompt click attempted", self.script)
+        self.assertIn("picker_reopen_retried=", self.script)
+        self.assertLess(self.script.index("if (!referenceSelectionReady) {", self.script.index("const retryDeadline = Date.now() + 3500;")), self.script.index("const addToPromptCandidatesFresh = activePickerContainer.locator(addToPromptSelector);"))
+        self.assertIn("expectedPreviewUuid = (requestedAssetUuidForPin || assetUuid || \"\").toLowerCase();", self.script)
+
+
+    def test_dry_run_requires_a_real_initial_credit_balance_and_fails_closed(self):
+        # Dry-run must read the live balance, not report success because --wait is absent.
+        self.assertIn("const requiresInitialBalance = args.waitForResult || args.dryRun;", self.script)
+        self.assertIn("const initialBalance = requiresInitialBalance ? await readCreditBalance(chosen.page, selectors) : null;", self.script)
+        self.assertIn("success: !requiresInitialBalance || (Number.isSafeInteger(initialBalance) && initialBalance >= 0)", self.script)
+        self.assertIn("balance_read: Number.isSafeInteger(initialBalance) && initialBalance >= 0", self.script)
+        self.assertIn("if (requiresInitialBalance && (!Number.isSafeInteger(initialBalance) || initialBalance < 0))", self.script)
+        self.assertIn("Could not read a valid non-negative integer credit balance; refusing to continue pre-Create.", self.script)
+        self.assertNotIn("success: !args.waitForResult || initialBalance !== null", self.script)
+
 
     def test_wait_returns_to_project_before_credit_polling_and_recovers_on_error(self):
         self.assertIn('chosen.page.goBack({ waitUntil: "domcontentloaded", timeout: 15000 })', self.script)
@@ -169,10 +643,18 @@ class FlowPilotContractTests(unittest.TestCase):
         self.assertIn('const safeScene = String(sceneId || "scene")', self.script)
         self.assertIn('const safeAttempt = String(attemptId || "attempt")', self.script)
         self.assertIn('${safeScene}__${safeAttempt}${extension}', self.script)
+        self.assertIn('const targetName = `${safeScene}__${safeAttempt}${extension}`', self.script)
         self.assertIn("Refusing to overwrite an existing scene/attempt download", self.script)
 
     def test_virtualized_flow_grid_uses_new_stable_keys_not_tile_count(self):
-        self.assertIn("const newItems = scan.items.filter(item => item.key && !beforeKeys.includes(item.key))", self.script)
+        self.assertIn("const topItemsNow = (scan.items || scan.topItems || []).map(item => ({", self.script)
+        self.assertIn("const newItems = findNewCompletedMediaItems(topItemsNow, beforeKeys);", self.script)
+        self.assertIn("Normalize media URLs to their stable UUID", self.script)
+        self.assertIn("tileText.slice(0, 220)", self.script)
+        self.assertIn("const mediaUuid = primarySources.filter(value => !/\\/image\\//i.test(value)).map(uuidFrom).find(Boolean)", self.script)
+        self.assertIn("baseline_media_keys: initialItems", self.script)
+        self.assertIn("ignored_failed_tile_keys: failedBaselineItems.map(item => item.key)", self.script)
+        self.assertIn("let candidateItems = newItems.filter(item =>", self.script)
         self.assertIn("async function collectAllGeneratedItems(page, selector", self.script)
         self.assertNotIn("count > beforeCount", self.script)
 
@@ -189,7 +671,7 @@ class FlowPilotContractTests(unittest.TestCase):
     def test_settings_failures_attempt_overlay_cleanup(self):
         self.assertIn("Settings preparation failed; attempted to close Flow overlays", self.script)
         self.assertIn('keyboard.press("Escape")', self.script)
-        self.assertIn('settings_trigger).click({ timeout: 1500 })', self.script)
+        self.assertIn('settings_trigger).click({ timeout: 4000 })', self.script)
 
     def test_dry_run_clears_prompt_by_default(self):
         self.assertIn("clearAfterDryRun: true", self.script)
@@ -214,12 +696,31 @@ class FlowPilotContractTests(unittest.TestCase):
         self.assertIn('"duration"', self.script)
         self.assertLess(self.script.index('exactVisibleLocator(chosen.page, selectors.duration'), self.script.index("await prompt.fill(scene.prompt"))
         self.assertIn('role !== "radio"', self.script)
-        self.assertIn('after !== "true"', self.script)
+        self.assertIn('checked !== "true"', self.script)
+
+    def test_model_selection_skips_menu_when_already_selected_and_waits_longer_when_needed(self):
+        choose_model = self.script.split("async function chooseModel", 1)[1].split("function assetUuidFromUrl", 1)[0]
+        self.assertIn("currentText.includes(model)", choose_model)
+        self.assertIn("skipping model menu interaction", choose_model)
+        self.assertIn("trigger.click({ timeout: 8000 })", choose_model)
+        self.assertIn('option.waitFor({ state: "visible", timeout: 8000 })', choose_model)
+        self.assertIn("await page.waitForTimeout(150)", choose_model)
+        self.assertIn("stableBox = true", choose_model)
+        self.assertIn("Model menu option layout did not stabilize", choose_model)
+        self.assertIn("verifiedOption.click({ timeout: 8000 })", choose_model)
+
+    def test_preflight_screenshot_failure_is_nonfatal(self):
+        screenshot_block = self.script.split("// A screenshot is diagnostic only", 1)[1].split("} catch (error) {\n    let cleanupStatus;", 1)[0]
+        self.assertIn("timeout: 10000", screenshot_block)
+        self.assertIn("non-fatal", screenshot_block)
+        self.assertIn("catch (screenshotError)", screenshot_block)
+        self.assertIn("console.warn", screenshot_block)
+        self.assertNotIn("throw new Error", screenshot_block)
 
     def test_credit_cost_is_reported_and_overlay_is_closed_before_prompt_fill(self):
         self.assertIn("Generating will use", self.script)
         self.assertIn("estimated_credit_cost", self.script)
-        self.assertIn("settingsAgain.click({ timeout: 2500 })", self.script)
+        self.assertIn("settingsAgain.click({ timeout: 8000 })", self.script)
         self.assertLess(self.script.index("settingsAgain.click"), self.script.index("await prompt.fill(scene.prompt"))
 
     def test_ambiguous_submission_is_logged_without_retry(self):
@@ -242,8 +743,8 @@ class FlowPilotContractTests(unittest.TestCase):
         self.assertIn('reference_images as an array of 1 to 3 local file paths', self.script)
         self.assertIn('Character description must be ASCII/English only', self.script)
         self.assertIn('Scene JSON must contain a non-empty character_description', self.script)
-        self.assertIn('uploadSceneReferences(chosen.page, selectors, referenceImages, prompt)', self.script)
-        self.assertLess(self.script.index('await uploadSceneReferences(chosen.page, selectors, referenceImages, prompt)'), self.script.index('await prompt.fill(scene.prompt'))
+        self.assertIn('uploadSceneReferences(chosen.page, selectors, referenceImages, prompt, referenceAssetUuids)', self.script)
+        self.assertLess(self.script.index('await uploadSceneReferences(chosen.page, selectors, referenceImages, prompt, referenceAssetUuids)'), self.script.index('await prompt.fill(scene.prompt'))
         self.assertIn('reference_image_count: referenceImages.length', self.script)
         self.assertIn('ingredient_reference_items', self.script)
         self.assertIn('Stopping before prompt fill/Create', self.script)
@@ -253,33 +754,41 @@ class FlowPilotContractTests(unittest.TestCase):
     def test_hybrid_face_description_and_expression_are_composed_near_prompt_end(self):
         self.assertIn('faceDescriptionMode === "hybrid"', self.script)
         self.assertIn("HYBRID FACE DESCRIPTION (brief matching traits only; reference images remain authoritative)", self.script)
-        self.assertIn("const expressionSection = scene.expression", self.script)
+        self.assertIn("const rawNormalizedExpression = scene.expression", self.script)
+        self.assertIn('.replace(/(?:[,;.]?\\s*)natural brief blinks only\\b/ig, "")', self.script)
+        self.assertIn("const openEyesRequested =", self.script)
+        self.assertIn("const expressionContent = [normalizedExpression, openEyesGuard].filter(Boolean)", self.script)
+        self.assertIn("const expressionSection = expressionContent", self.script)
         self.assertIn("EXPRESSION AND EYE STATE (follow throughout the entire shot)", self.script)
         self.assertIn("this instruction takes priority over breathing or other subtle motion", self.script)
         self.assertIn("Expression must be ASCII/English only", self.script)
 
     def test_generation_ledger_records_face_reference_configuration(self):
-        self.assertIn("face_reference_ids: selectedFaceRefs.map(item => path.basename(item))", self.script)
+        self.assertIn("face_reference_ids: faceReferenceIds", self.script)
         self.assertIn('face_description_mode: scene.face_description_mode || "include"', self.script)
+        self.assertIn('reference_language_mode: scene.reference_language_mode || "identity_preserving"', self.script)
         self.assertIn("expression: scene.expression || null", self.script)
-        self.assertIn("other_reference_ids: referenceImages.filter(item => !selectedPaths.has", self.script)
+        self.assertIn("reference_set_key: referenceSetKey", self.script)
+        self.assertIn("other_reference_ids: otherReferenceIds", self.script)
 
-    def test_virtualized_media_grid_is_swept_before_tile_identity_comparison(self):
+    def test_media_grid_uses_top_six_and_stable_keys_before_tile_identity_comparison(self):
         self.assertIn("async function collectAllGeneratedItems(page, selector", self.script)
         self.assertIn("Flow's media grid may virtualize its DOM", self.script)
-        self.assertIn("const initialScan = await collectAllGeneratedItems", self.script)
+        self.assertIn("let initialScan = await collectAllGeneratedItems", self.script)
         self.assertIn("const videosTabState = await activateVideosTab", self.script)
         self.assertIn('page.getByRole("tab", { name: /^Videos$/i })', self.script)
         self.assertIn("unkeyedItemsDetected", self.script)
         self.assertIn("duplicateVisibleKeyDetected", self.script)
-        self.assertIn("Pre-Create media inventory is ambiguous", self.script)
-        self.assertIn("full virtualized-grid sweep", self.script)
+        self.assertIn("First-row baseline requires unique, stable media UUIDs/keys", self.script)
+        self.assertIn("tileText.slice(0, 220)", self.script)
 
     def test_generation_failure_is_detected_and_logged_without_retry(self):
         self.assertIn("function isGenerationFailureText(value)", self.script)
         self.assertIn("FLOW_GENERATION_FAILED:", self.script)
-        self.assertIn('event: resultStatus === "failed" ? "generation_failed_detected" : "generation_wait_unverified"', self.script)
-        self.assertIn('resultStatus === "failed" && beforeBalance !== null && afterBalance !== null && beforeBalance === afterBalance ? "not_charged" : "unknown"', self.script)
+        self.assertIn('event: resultStatus === "rejected_unusual_activity" ? "flow_rejected_unusual_activity"', self.script)
+        self.assertIn('resultStatus === "failed" ? "generation_failed_detected"', self.script)
+        self.assertIn('resultStatus === "submitted_unidentified" ? "submitted_unidentified"', self.script)
+        self.assertIn('["failed", "rejected_unusual_activity"].includes(resultStatus) && beforeBalance !== null && afterBalance !== null && beforeBalance === afterBalance ? "not_charged" : "unknown"', self.script)
         self.assertIn('else if (resultStatus === "failed")', self.script)
         self.assertIn("Flow generation failure was detected and recorded in the ledger", self.script)
         self.assertIn("Wait-timeout screenshot saved", self.script)
@@ -289,11 +798,11 @@ class FlowPilotContractTests(unittest.TestCase):
 
     def test_credit_preflight_waits_for_render_and_retries_once(self):
         self.assertIn('waitFor({ state: "visible", timeout: 8000 })', self.script)
-        self.assertIn("for (let attempt = 0; attempt < 2; attempt += 1)", self.script)
-        self.assertIn("retry opening the account panel once", self.script)
+        self.assertIn("for (let attempt = 0; attempt < 3 && balance === null; attempt += 1)", self.script)
+        self.assertIn("if (balance === null && attempt < 2)", self.script)
 
     def test_cleanup_does_not_click_clear_when_already_clean(self):
-        self.assertIn("const initialChipCount = await page.locator(selectors.ingredient_reference_items)", self.script)
+        self.assertIn("let initialChipCount = await waitForStableVisibleChipCount(page, selectors.ingredient_reference_items, 2000)", self.script)
         self.assertIn('String(initialValue).trim() === "" && initialChipCount === 0', self.script)
 
 
@@ -323,7 +832,7 @@ class FlowPilotContractTests(unittest.TestCase):
         self.assertIn('["include", "hybrid", "reference_only"].includes(faceDescriptionMode)', self.script)
         self.assertIn('face_description_mode is \'reference_only\'', self.script)
         self.assertIn('faceDescriptionMode === "reference_only" || !scene.character_description', self.script)
-        self.assertIn("Use the attached reference images for all appearance details; do not invent or reinterpret facial features.", self.script)
+        self.assertIn("Use the reference image as the visual guide for the character", self.script)
 
     def test_dry_run_reports_selected_face_reference_and_order(self):
         self.assertIn("face_reference_id: scene.face_reference_id", self.script)
@@ -340,7 +849,7 @@ class FlowPilotContractTests(unittest.TestCase):
             "async function main()", 1
         )[0]
         self.assertIn(
-            "const { scene, selectors, referenceImages, faceReferenceImage } = await loadInputs(args);",
+            "const { scene, selectors, referenceImages, faceReferenceImage, referenceAssetUuids } = await loadInputs(args);",
             prepare,
         )
         self.assertIn("face_reference_image: path.basename(faceReferenceImage)", prepare)
@@ -357,25 +866,25 @@ class FlowPilotContractTests(unittest.TestCase):
         self.assertIn("Failure cleanup: prompt and Ingredients chips cleared and verified.", prepare)
         self.assertIn("CRITICAL: failure cleanup could not verify prompt/chips empty", prepare)
         self.assertLess(
-            prepare.index("await uploadSceneReferences(chosen.page, selectors, referenceImages, prompt)"),
+            prepare.index("await uploadSceneReferences(chosen.page, selectors, referenceImages, prompt, referenceAssetUuids)"),
             prepare.index("face_reference_image: path.basename(faceReferenceImage)"),
         )
         self.assertLess(
-            prepare.index("createMayHaveBeenClicked = true;"),
             prepare.index("await finalButton.click({ timeout: 2500 })"),
+            prepare.index("createMayHaveBeenClicked = true;"),
         )
 
 
-    def test_wait_reselects_videos_and_uses_new_first_tile_when_inventory_grows(self):
+    def test_wait_reselects_videos_and_requires_new_media_id(self):
         wait_fn = self.script.split("async function waitForGenerationAndDownload", 1)[1].split(
             "function createConfirmationReader()", 1
         )[0]
         self.assertIn("Explicitly re-select Videos", wait_fn)
         self.assertIn("await activateVideosTab(page, selectors)", wait_fn)
-        self.assertIn("const firstTile = scan.items[0] || null", wait_fn)
-        self.assertIn("const firstTileIsNew = Boolean(firstTile", wait_fn)
-        self.assertIn("scan.items.length > beforeKeys.length", wait_fn)
-        self.assertIn("const candidateItems = firstTileIsNew ? [firstTile] : newItems", wait_fn)
+        self.assertIn("let candidateItems = newItems.filter(item =>", wait_fn)
+        self.assertNotIn("firstTileIsNew", wait_fn)
+        self.assertIn("if (candidateItems.length > 1)", wait_fn)
+        self.assertIn("if (candidateItems.length === 1 && !attemptedKeys.has(candidateItems[0].key))", wait_fn)
 
     def test_wait_extends_polling_when_credit_was_charged_but_result_is_late(self):
         wait_fn = self.script.split("async function waitForGenerationAndDownload", 1)[1].split(
@@ -383,7 +892,7 @@ class FlowPilotContractTests(unittest.TestCase):
         )[0]
         self.assertIn("beforeBalance", wait_fn)
         self.assertIn("currentBalance < beforeBalance", wait_fn)
-        self.assertIn("deadline = Date.now() + 300000", wait_fn)
+        self.assertIn("deadline = Date.now() + 30000", wait_fn)
         self.assertIn("without resubmitting", wait_fn)
         self.assertIn('page.goBack({ waitUntil: "domcontentloaded", timeout: 10000 })', wait_fn)
         self.assertIn("newItem = null", wait_fn)
@@ -396,12 +905,13 @@ class FlowPilotContractTests(unittest.TestCase):
         self.assertIn("await addToPrompt.click({ timeout: 6000 })", upload_fn)
         self.assertIn("attachedAfterClick = await page.waitForFunction", upload_fn)
         self.assertIn("if (attachedAfterClick) break", upload_fn)
-        self.assertIn("did not attach asset", upload_fn)
+        self.assertIn("did not add a new Ingredients chip", upload_fn)
 
 
 
-    def test_variants_are_limited_to_one_through_three_and_default_to_one(self):
-        self.assertIn('const variants = scene.variants === undefined ? 1 : scene.variants;', self.script)
+    def test_variants_are_limited_to_one_through_three_and_default_to_two(self):
+        self.assertIn('const variants = scene.variants === undefined ? 2 : scene.variants;', self.script)
+        self.assertIn('variantCount = inputScene.variants === undefined ? 2 : inputScene.variants;', self.script)
         self.assertIn('variants < 1 || variants > 3', self.script)
         self.assertIn('args._variantCount = variantCount', self.script)
         self.assertIn('for (let index = 1; index <= variantCount; index += 1)', self.script)
@@ -419,13 +929,49 @@ class FlowPilotContractTests(unittest.TestCase):
         self.assertIn('variant_count: variantCount', self.script)
         self.assertIn('selected_variant: null', self.script)
         self.assertIn('variantIndex, variantCount,', self.script)
-        self.assertIn('variantCount > 1 ? `${safeScene}__v${variantIndex}${extension}`', self.script)
+        self.assertIn('const targetName = `${safeScene}__${safeAttempt}${extension}`', self.script)
+        self.assertIn('Refusing to overwrite an existing scene/attempt download', self.script)
 
-    def test_seated_shots_get_optional_wide_knee_margin_helper(self):
+    def test_seated_shots_get_head_to_knees_framing_and_wide_knee_margins(self):
         self.assertIn('scene.framing_helper_applied', self.script)
         self.assertIn('Locked-off tripod shot from the first frame: the camera does not move, pan, tilt, dolly, or zoom at any time', self.script)
-        self.assertIn('Camera pulled back, with a wide margin on both sides of the knees', self.script)
+        self.assertIn('Medium-wide full-body shot.', self.script)
+        self.assertIn('The person and yoga mat fill most of the frame', self.script)
+        self.assertIn('Keep the face large enough for facial features to remain readable', self.script)
+        self.assertIn('Do not crop the body or mat.', self.script)
+        self.assertIn('is framed from head to knees', self.script)
         self.assertIn('scene.framing_helper === false ? false', self.script)
+
+    def test_supporting_reference_sentence_is_conditional(self):
+        self.assertIn('const supportingReferenceImages = referenceImages.filter(imagePath => !faceReferenceImages.includes(imagePath));', self.script)
+        self.assertIn('const supportingReferenceSection = supportingReferenceImages.length', self.script)
+        self.assertIn('${supportingReferencePrefix}Keep the same character, hair, and skin tone throughout.', self.script)
+        self.assertIn('const supportingReferencePrefix = supportingReferenceSection ?', self.script)
+
+    def test_expression_punctuation_is_normalized_and_open_eyes_guard_is_added(self):
+        self.assertIn('scene.expression.trim().replace(/[.!?]+\\s*$/, "")', self.script)
+        self.assertIn('Eyes remain clearly open throughout the entire shot, with natural brief blinks only. No prolonged eye closure or eyes-closed meditation.', self.script)
+        self.assertIn('Medium-wide full-body shot.', self.script)
+        self.assertIn('The person and yoga mat fill most of the frame', self.script)
+        self.assertIn('No prolonged eye closure or eyes-closed meditation.', self.script)
+        self.assertIn('const expressionContent = [normalizedExpression, openEyesGuard].filter(Boolean)', self.script)
+        self.assertIn('EXPRESSION AND EYE STATE (follow throughout the entire shot): ${expressionContent}', self.script)
+
+
+    def test_open_eyes_guard_does_not_duplicate_natural_blinks_clause(self):
+        self.assertIn('.replace(/(?:[,;.]?\\s*)natural brief blinks only\\b/ig, "")', self.script)
+        self.assertIn('const openEyesRequested =', self.script)
+        self.assertIn('const openEyesGuard = openEyesRequested', self.script)
+
+    def test_composed_prompt_has_no_leading_space_before_final_character_guard(self):
+        self.assertIn('const supportingReferencePrefix = supportingReferenceSection ?', self.script)
+        self.assertIn('${supportingReferencePrefix}Keep the same character, hair, and skin tone throughout.', self.script)
+
+    def test_reference_upload_emits_phase_timings_to_diagnose_slow_dry_runs(self):
+        self.assertIn('Phase timing: reference upload started', self.script)
+        self.assertIn('Phase timing: reference upload completed in', self.script)
+        self.assertIn('Reference UUID ready:', self.script)
+        self.assertIn('total reference step', self.script)
 
     def test_watermark_status_is_recorded_for_human_qc(self):
         self.assertIn('watermark_status: scene.watermark_status || "not_reviewed"', self.script)
@@ -451,12 +997,15 @@ class FlowPilotContractTests(unittest.TestCase):
     def test_failure_ledger_preserves_provider_message_without_automation_prefix(self):
         self.assertIn("function rawProviderMessage(value)", self.script)
         self.assertIn('const tileMarker = " reports failure: "', self.script)
-        self.assertIn('provider_message: resultStatus === "failed" ? rawProviderMessage(timeoutError)', self.script)
+        self.assertIn('provider_message: ["failed", "rejected_unusual_activity"].includes(resultStatus) ? rawProviderMessage(timeoutError)', self.script)
         self.assertNotIn('.slice(-700)', self.script)
 
     def test_failed_variant_stops_batch_and_records_refund_pending_when_provider_says_refund(self):
         self.assertIn("refundPending", self.script)
         self.assertIn('"refunded_pending"', self.script)
+        self.assertIn('"provider_policy_prominent_people"', self.script)
+        self.assertIn("POLICY REFUSAL: Flow flagged this request under its prominent-people policy", self.script)
+        self.assertIn("no automatic retry or reference/prompt substitution", self.script)
         self.assertIn("args._stopVariants = true", self.script)
         self.assertIn("if (args._stopVariants) break", self.script)
         self.assertIn("later variants will NOT be submitted with the same prompt", self.script)
@@ -467,6 +1016,1087 @@ class FlowPilotContractTests(unittest.TestCase):
         self.assertNotIn("primary face identity anchor", self.script)
         self.assertNotIn("overall likeness", self.script)
         self.assertNotIn("Preserve the selected face identity", self.script)
+
+    def test_ledger_records_reference_set_fingerprint_for_policy_analysis(self):
+        self.assertIn("const referenceSetKey = createHash(\"sha256\").update(JSON.stringify({", self.script)
+        self.assertIn("reference_set_key: referenceSetKey", self.script)
+        self.assertIn('prompt: { text: prompt, sha256: createHash("sha256").update(prompt, "utf8").digest("hex")', self.script)
+
+    def test_expression_guard_removes_duplicate_short_eye_smile_clause(self):
+        self.assertIn(r'eyes?\s+(?:stay|remain)\s+open', self.script)
+        self.assertIn("standard guard below already states this full eye/smile requirement", self.script)
+
+    def test_policy_refusal_report_groups_by_reference_set_and_prompt(self):
+        self.assertIn("by_reference_set_and_prompt", self.policy_stats_script)
+        self.assertIn("by_reference_set:", self.policy_stats_script)
+        self.assertIn("by_prompt_sha256:", self.policy_stats_script)
+        self.assertIn('record.result?.failure?.category === "provider_policy_prominent_people"', self.policy_stats_script)
+        self.assertIn("refusal_rate:", self.policy_stats_script)
+
+
+    def test_media_baseline_uses_only_first_six_tiles_and_result_checks_first_tile(self):
+        self.assertIn("Always begin at the true top", self.script)
+        self.assertIn("topLimit: 3, selectors", self.script)
+        self.assertIn("Pre-Create first-row baseline requires at least three visible tiles", self.script)
+        self.assertIn("First-row baseline requires unique, stable media UUIDs/keys", self.script)
+        self.assertIn("topLimit: 3, selectors, skipUuidResolution: true", self.script)
+        self.assertIn("baseline_strategy", self.script)
+        self.assertIn("baseline_media_key_count: initialItems.length", self.script)
+        self.assertIn("Pre-Create baseline UUID count:", self.script)
+        self.assertNotIn("full virtualized-grid sweep", self.script)
+
+    def test_result_must_be_new_top_tile_and_newer_than_create_when_timestamp_exists(self):
+        wait_fn = self.script.split("async function waitForGenerationAndDownload", 1)[1].split(
+            "function createConfirmationReader()", 1
+        )[0]
+        self.assertIn("const topItemsNow = (scan.items || scan.topItems || []).map(item => ({", wait_fn)
+        self.assertIn("findNewCompletedMediaItems(topItemsNow, beforeKeys)", wait_fn)
+        self.assertIn("mediaUuid: mediaUuid ? mediaUuid.toLowerCase() : null", self.script)
+        self.assertIn("!item.key || !item.mediaUuid", self.script)
+        self.assertIn("!item?.mediaUuid || !item.key", self.script)
+        self.assertIn("baseline.has(item.key)", self.script)
+        self.assertIn("const createdAt = element.querySelector(\"time[datetime]\")", self.script)
+        self.assertIn("createdMs <= createMs", wait_fn)
+        self.assertIn("result remains unknown and will not be downloaded", wait_fn)
+        self.assertIn("createClickedAt: args._waitCreateClickedAt", self.script)
+
+
+    def test_flow_video_uuid_is_read_directly_from_edit_url_after_tile_click(self):
+        resolver = self.script.split("const resolveUuidByOpeningTile = async (index, identity = null, rowIdentities = [], expectedTileCount = null) =>", 1)[1].split(
+            "let stableBottomRounds = 0;", 1
+        )[0]
+        self.assertIn('await page.goto(gridUrl, { waitUntil: "domcontentloaded", timeout: 12000 }).catch(() => {});', resolver)
+        self.assertIn('const expectedToken = alreadyOnGrid && currentTokens[index]\n          ? currentTokens[index]\n          : (identity?.thumbnailSrc ? thumbnailIdentityToken(identity.thumbnailSrc) : null);', resolver)
+        self.assertIn('return token === expected;', resolver)
+        self.assertIn('await activateVideosTab(page, selectors)', resolver)
+        self.assertIn('visible_first_six_thumbnail_tokens: currentTokens.slice(0, 6)', resolver)
+        self.assertIn('expected_thumbnail_token: expectedToken', resolver)
+        self.assertIn("const firstThreeTokens = currentTokens.slice(0, 3)", resolver)
+        self.assertIn("firstThreeTokens.every(Boolean)", resolver)
+        self.assertIn("previousFirstThreeTokens.every(Boolean)", resolver)
+        self.assertIn("await page.waitForTimeout(1000);", resolver)
+        self.assertIn("await tile.click({ timeout: 4000, force: true });", resolver)
+        self.assertIn("await page.waitForURL(url => editRoute.test(new URL(url).pathname)", resolver)
+        self.assertIn("const currentUrl = page.url();", resolver)
+        self.assertIn("const match = currentUrl.match(editRoute);", resolver)
+        self.assertIn("await page.goBack({ waitUntil: \"domcontentloaded\", timeout: 10000 }).catch(() => {});", resolver)
+        self.assertIn("uuidCache.set(item.hint, resolvedUuid)", self.script)
+        self.assertIn("Could not resolve media UUID by opening tile index", self.script)
+        self.assertNotIn("page.waitForFunction(() =>", resolver)
+
+    def test_dry_run_runs_top_six_read_only_media_baseline(self):
+        self.assertIn("if (args.waitForResult || args.dryRun)", self.script)
+        self.assertIn('mode: args.waitForResult ? "wait-preflight" : "dry-run-baseline"', self.script)
+        self.assertIn("DRY-RUN MEDIA BASELINE (read-only; no Create click", self.script)
+        self.assertIn("visible first row only; no full-grid sweep", self.script)
+        self.assertIn("Dry-run baseline scan requires a configured generated_video_items selector", self.script)
+
+    def test_add_to_prompt_readiness_uses_exactly_one_visible_button_not_aria_selected(self):
+        upload_fn = self.script.split("async function uploadSceneReferencesUnsafe", 1)[1].split(
+            "async function uploadSceneReferences(", 1
+        )[0]
+        self.assertIn('const addToPromptSelector = selectors.ingredient_add_to_prompt;', upload_fn)
+        self.assertIn('const selectionWaitTimeoutMs = 8000;', upload_fn)
+        self.assertIn('const selectionDeadline = selectionWaitStartedAt + selectionWaitTimeoutMs;', upload_fn)
+        self.assertIn('while (Date.now() < selectionDeadline)', upload_fn)
+        self.assertIn('const freshTile = async () =>', upload_fn)
+        self.assertIn('event: "ingredients_picker_step_diagnostics"', upload_fn)
+        self.assertIn('document.elementFromPoint(x, y)', upload_fn)
+        self.assertIn('hit_test_inside_tile: hitTest', upload_fn)
+        self.assertIn('event: "ingredients_picker_click_target"', upload_fn)
+        self.assertIn('closest(\'[role="option"],[role="button"],button,[tabindex]\')', upload_fn)
+        self.assertIn('clicked_interactive_ancestor: ancestorCount === 1', upload_fn)
+        self.assertIn('const previewNodes = paneNodes.filter', upload_fn)
+        self.assertIn('const detailPanes = Array.from(document.querySelectorAll("flow-add-menu-detail-pane"))', upload_fn)
+        self.assertIn('detail_pane: detailPanes.map(node =>', upload_fn)
+        self.assertIn('add_button_contexts:', upload_fn)
+        self.assertIn('await activeAsset.scrollIntoViewIfNeeded({ timeout: 400 })', upload_fn)
+        self.assertIn('resolveVisibleIngredientsPicker(page, selectors, filename, filenameStem)', upload_fn)
+        self.assertIn('const addToPromptCandidates = pickerContainer.locator(addToPromptSelector);', upload_fn)
+        self.assertIn('event: "ingredients_picker_target_tile"', upload_fn)
+        self.assertIn('target_tile_box: initialAssetBox', upload_fn)
+        self.assertIn('event: "ingredients_picker_search_fallback"', upload_fn)
+        self.assertIn('selection_retried: selectionRetried', upload_fn)
+        self.assertIn('configured wait budget=${selectionWaitTimeoutMs}ms, actual elapsed=${Date.now() - selectionWaitStartedAt}ms', upload_fn)
+        self.assertIn('if (addToPromptVisibleCount === 1 && (selectedAssetAriaSelected === "true" || labelMatches)', upload_fn)
+        self.assertIn('selected_asset_aria_selected: selectedAssetAriaSelected', upload_fn)
+        self.assertIn('readiness_signal: "unique_visible_add_button_plus_exact_preview_filename_or_uuid"', upload_fn)
+        self.assertIn('event: "reference_asset_selection_ready"', upload_fn)
+        self.assertIn('visible Add to prompt buttons=', upload_fn)
+        self.assertIn('const addToPromptCandidates = pickerContainer.locator(addToPromptSelector);', upload_fn)
+        self.assertIn("Refusing to click Add to prompt", upload_fn)
+        self.assertNotIn('selectedAssetAriaSelected === "true" && addToPromptVisibleCount', upload_fn)
+        self.assertLess(
+            upload_fn.index('if (addToPromptVisibleCount === 1 && (selectedAssetAriaSelected === "true" || labelMatches)'),
+            upload_fn.index('await addToPrompt.click({ timeout: 6000 });'),
+        )
+
+    def test_first_row_thumbnail_tokens_wait_and_recapture_when_missing(self):
+        preflight = self.script.split('if (args.waitForResult || args.dryRun)', 1)[1].split(
+            '// Only now modify the prompt.', 1
+        )[0]
+        self.assertIn('const waitForFirstRowThumbnailTokens = async (reason, maxWaitMs = 15000)', preflight)
+        self.assertIn('await waitForFirstRowThumbnailTokens("before_initial_capture_after_scroll")', preflight)
+        self.assertIn('event: "baseline_thumbnail_tokens_ready"', preflight)
+        self.assertIn('event: "baseline_thumbnail_token_missing_at_capture"', preflight)
+        self.assertIn('thumbnailRetry <= 2', preflight)
+        self.assertIn('initialScan.items.some(item => !item.thumbnailSrc || !thumbnailIdentityToken(item.thumbnailSrc) || /\\/image\\//i.test(item.thumbnailSrc))', preflight)
+        self.assertIn('missing_thumbnail_token_indexes: missingIndexes', preflight)
+        self.assertIn("await waitForFirstRowThumbnailTokens(`recapture_retry_${thumbnailRetry}`)", preflight)
+        self.assertIn('baselineUuidCache.clear()', preflight)
+
+    def test_baseline_retries_when_tiles_exist_but_all_media_uuids_are_missing(self):
+        preflight = self.script.split('if (args.waitForResult || args.dryRun)', 1)[1].split(
+            '// Only now modify the prompt.', 1
+        )[0]
+        self.assertIn('event: "baseline_uuid_retry"', preflight)
+        self.assertIn('baselineRetry <= 2', preflight)
+        self.assertIn('initialScan.items.length > 0', preflight)
+        self.assertIn('initialScan.items.every(item => !item.mediaUuid)', preflight)
+        self.assertIn('baselineUuidCache.clear()', preflight)
+        self.assertIn('await chosen.page.waitForTimeout(600)', preflight)
+
+    def test_asset_reuse_checks_all_dom_attributes_and_never_duplicates_unreadable_match(self):
+        self.assertIn("async function assetUuidFromLocator(locator, timeoutMs = 1200)", self.script)
+        self.assertIn('"data-asset-id"', self.script)
+        self.assertIn('"data-media-id"', self.script)
+        self.assertIn("Refusing to upload a duplicate; if this is the intended asset", self.script)
+        self.assertIn("let assetUuid = reusedExistingUuid || await assetUuidFromLocator(asset, 1200)", self.script)
+
+    def test_clear_prompt_removes_ingredient_chips_and_verifies_each_removal(self):
+        self.assertIn('button[aria-label*="remove" i]', self.script)
+        self.assertIn("chip count did not decrease", self.script)
+        self.assertIn("Remove chips manually before continuing", self.script)
+
+
+    def test_media_inventory_prefers_flow_json_uuid_records_before_tile_click(self):
+        self.assertIn("const networkMediaRecords = [];", self.script)
+        self.assertIn('page.on("response", networkResponseListener)', self.script)
+        self.assertIn("const resolveUuidFromNetwork = item =>", self.script)
+        self.assertLess(
+            self.script.index("const networkUuid = resolveUuidFromNetwork(item);"),
+            self.script.index("const resolvedUuid = await resolveUuidByOpeningTile(item.index, item, visible, domTileCount);"),
+        )
+
+    def test_edit_route_fallback_waits_then_force_clicks_animated_tile(self):
+        self.assertIn("await tile.scrollIntoViewIfNeeded({ timeout: 3500 })", self.script)
+        self.assertIn("const maxIdentityAttempts = 2;", self.script)
+        self.assertIn("for (let attempt = 1; attempt <= maxIdentityAttempts; attempt += 1)", self.script)
+        self.assertIn("await tile.click({ timeout: 4000, force: true });", self.script)
+        self.assertIn("timeout: 8000", self.script)
+        self.assertIn("after ${maxIdentityAttempts} bounded attempts", self.script)
+        self.assertIn('event: "media_tile_identity_recapture_skipped"', self.script)
+        self.assertIn('reason: "thumbnail_token_still_missing_and_no_stable_uuid"', self.script)
+        self.assertIn('next_step: "return_unresolved_for_bounded_inventory_recapture"', self.script)
+        resolver = self.script.split("const resolveUuidByOpeningTile", 1)[1].split("let stableBottomRounds = 0;", 1)[0]
+        self.assertIn("if (attempt < maxIdentityAttempts)", resolver)
+        self.assertIn("(attempt ${attempt}/${maxIdentityAttempts})", resolver)
+        self.assertNotIn("(attempt ${attempt}/5)", resolver)
+        self.assertIn("const alreadyOnGrid = currentPageUrl === gridUrl", resolver)
+        self.assertIn("const expectedToken = alreadyOnGrid && currentTokens[index]", resolver)
+        self.assertIn('element.querySelector("video")?.getAttribute("src")', resolver)
+        self.assertIn('element.querySelector("video source")?.getAttribute("src")', resolver)
+
+    def test_first_row_wait_rejects_image_placeholder_until_thumbnail_is_ready(self):
+        preflight = self.script.split('const waitForFirstRowThumbnailTokens = async (reason, maxWaitMs = 15000)', 1)[1].split(
+            '// Save the grid scroll before forcing lazy thumbnails into view;', 1
+        )[0]
+        self.assertIn('if (!source || /\\/image\\//i.test(source)) return null;', preflight)
+        self.assertIn('Wait for /asb/ or another non-placeholder URL.', preflight)
+
+    def test_asset_uuid_lookup_waits_for_lazy_loaded_thumbnail_and_rejects_ambiguity(self):
+        self.assertIn("const thumbnailDeadline = (networkUuidShortcut || pinnedUniqueCardShortcut) ? Date.now() : Date.now() + 7000;", self.script)
+        self.assertIn("flow-content/image/<uuid>", self.script)
+        self.assertIn("if (existingCount === 1 && existingUuids.size === 1)", self.script)
+        self.assertIn("else if (existingUuids.size > 1 || existingCount > 1)", self.script)
+
+    def test_job_can_pin_existing_flow_asset_uuids_by_path(self):
+        self.assertIn("reference_asset_uuids", self.script)
+        self.assertIn("flow_asset_uuid", self.script)
+        self.assertIn("asset_library_reused_explicit_uuid", self.script)
+        self.assertIn("Job explicitly requested Flow asset UUID", self.script)
+        self.assertIn("Conflicting Flow asset UUID declarations", self.script)
+
+    def test_asset_uuid_can_come_from_flow_json_or_attached_chip_when_thumbnail_is_tokenized(self):
+        self.assertIn("const networkAssetRecords = [];", self.script)
+        self.assertIn('page.on("response", assetResponseListener)', self.script)
+        self.assertIn("walkAssetPayload(await response.json())", self.script)
+        self.assertIn("const allowUniqueUnresolvedAsset = existingCount === 1 && !assetUuid;", self.script)
+        self.assertIn("unique-name-plus-attached-chip-verification", self.script)
+        self.assertIn("beforeAttachChipUuids", self.script)
+        self.assertIn("const newChipUuids = afterAttachChipUuids.filter(uuid => uuid && !beforeAttachChipUuids.includes(uuid));", self.script)
+        self.assertIn("document.querySelectorAll(selector).length > beforeCount", self.script)
+        self.assertIn("Pinned Flow asset UUID mismatch after attach", self.script)
+        self.assertIn("newly attached chip UUID", self.script)
+        self.assertIn("Flow asset UUID mismatch after attach", self.script)
+
+    def test_upload_uuid_detection_checks_all_same_name_cards(self):
+        self.assertIn("Inspect every same-name card, not only the first one", self.script)
+        self.assertIn("const cards = Array.from(document.querySelectorAll(selector)).filter(asset =>", self.script)
+        self.assertIn("uuids.some(uuid => !oldUuids.includes(uuid))", self.script)
+
+    def test_baseline_reports_uuid_count_sample_and_retries_tile_open(self):
+        self.assertIn("baseline_media_inventory_summary", self.script)
+        self.assertIn("uuid_count: baselineUuids.length", self.script)
+        self.assertIn("uuid_sample_first_5: baselineUuids.slice(0, 5)", self.script)
+        self.assertIn("visible_first_row_min_3", self.script)
+        self.assertIn("reached_bottom: initialScan.reachedBottom", self.script)
+        self.assertIn("Retrying media UUID lookup for tile index", self.script)
+
+    def test_account_button_visibility_is_retried_without_changing_page_fields(self):
+        self.assertIn("Google account button remained unavailable after 3 read-only visibility checks", self.script)
+        self.assertIn("await page.keyboard.press(\"Escape\")", self.script)
+
+    def test_preflight_cleanup_has_one_authoritative_outer_owner(self):
+        preflight = self.script.split("if (args.waitForResult || args.dryRun)", 1)[1].split("// Only now modify the prompt.", 1)[0]
+        self.assertNotIn("Prompt/Ingredients cleanup was not verified.", preflight)
+        self.assertIn("Failure cleanup: prompt and Ingredients chips cleared and verified.", self.script)
+        self.assertIn("CRITICAL: failure cleanup could not verify prompt/chips empty", self.script)
+
+    def test_cleanup_uses_observed_empty_state_when_click_times_out(self):
+        self.assertIn("afterClickChips !== 0", self.script)
+        self.assertIn("afterClickValue", self.script)
+        self.assertIn("let removeClickError = null;", self.script)
+        self.assertIn("const deadline = Date.now() + Math.max(timeout, 3000)", self.script)
+        self.assertIn("if (!(nextCount >= 0 && nextCount < chipCount))", self.script)
+
+
+
+
+    def test_videos_tab_activation_uses_first_visible_exact_button_match(self):
+        activate = self.script.split("async function activateVideosTab", 1)[1].split(
+            "function appendGenerationLedger", 1
+        )[0]
+        self.assertIn('page.getByRole("button", { name: /^Videos$/i })', activate)
+        self.assertIn("buttonCount = await button.count()", activate)
+        self.assertIn("for (let i = 0; i < buttonCount; i += 1)", activate)
+        self.assertIn("const isSelected = async locator => locator.evaluate(element =>", activate)
+        self.assertIn("not_found_no_tab_switch (tabs=", activate)
+
+    def test_baseline_uses_visible_first_row_with_minimum_three_tiles(self):
+        self.assertIn("topLimit: 3, selectors", self.script)
+        self.assertIn("initialScan.items.length < 3", self.script)
+        self.assertIn('baseline_strategy: "visible_first_row_min_3"', self.script)
+        self.assertIn("args._waitInitialThumbnailTokens = baselineTokensWithUuidFallback;", self.script)
+        self.assertIn("args._waitInitialThumbnailTokens.slice(0, 3).some(token => !token)", self.script)
+
+    def test_pre_create_recheck_is_read_only_and_uses_bounded_neighbor_fallback(self):
+        self.assertIn('event: "pre_create_first_tile_identity_recheck"', self.script)
+        self.assertIn("const expectedFirstToken = args._waitInitialThumbnailTokens?.[0];", self.script)
+        self.assertIn("if (!sameFirstThreeThumbnailTokens && !sameFirstTileAfterThumbnailRotation && !sameFirstRowMediaIdentity)", self.script)
+        self.assertIn("read_only_dom_check: true", self.script)
+        self.assertIn("const currentMediaKeys = Array.isArray(preCreateSnapshot.mediaKeys)", self.script)
+        self.assertIn("firstThreeMediaKeysMatch(baselineMediaKeys, currentMediaKeys)", self.script)
+        self.assertIn('element.querySelector("video")?.getAttribute("src")', self.script)
+        self.assertIn('element.querySelector("video source")?.getAttribute("src")', self.script)
+        self.assertIn("firstThreeThumbnailTokensMatch(", self.script)
+        self.assertIn("preCreateSnapshot.stableFirstToken && preCreateSnapshot.tileCount >= 3 && sameFirstRowMediaIdentity", self.script)
+        self.assertNotIn("elements.length === baseline?.tileCount && uuid && currentText", self.script)
+        self.assertIn("waitForPreCreateThumbnailSnapshot", self.script)
+        self.assertIn('a[href*="/edit/"], a[href*="/video/"]', self.script)
+        self.assertIn('thumbnailIdentityToken(item.thumbnailSrc) : null', self.script)
+        self.assertIn("accepted_by_neighbor_rule: preCreateSnapshot.acceptedByNeighborRule", self.script)
+        self.assertIn("acceptedByNeighborRule: stableFirstToken && (Number(lastSnapshot.tileCount) || 0) >= 3", self.script)
+        self.assertIn("lastTokens.slice(0, 3).every(token => typeof token === \"string\" && token.length > 0)", self.script)
+        self.assertIn("currentTokens.slice(0, 3).every(validToken)", self.script)
+        self.assertIn("secondNeighborMatches && thirdNeighborMatches", self.script)
+        self.assertNotIn("thirdNeighborStillLoading", self.script)
+        self.assertIn("}, ms => chosen.page.waitForTimeout(ms), 10000);", self.script)
+        self.assertNotIn("const currentScan = await collectAllGeneratedItems(chosen.page, selectors.generated_video_items", self.script)
+
+    def test_pre_create_snapshot_reads_img_video_source_poster_and_srcset(self):
+        snapshot_start = self.script.index("const preCreateSnapshot = await waitForPreCreateThumbnailSnapshot")
+        snapshot_end = self.script.index("const currentTokens = preCreateSnapshot.tokens", snapshot_start)
+        snapshot = self.script[snapshot_start:snapshot_end]
+        self.assertIn('element.querySelector("img")?.getAttribute("src")', snapshot)
+        self.assertIn('element.querySelector("video")?.getAttribute("src")', snapshot)
+        self.assertIn('element.querySelector("video source")?.getAttribute("src")', snapshot)
+        self.assertIn('element.querySelector("video")?.getAttribute("poster")', snapshot)
+        self.assertIn('element.querySelector("img")?.getAttribute("srcset")', snapshot)
+        self.assertIn("firstThreeThumbnailTokensMatch(", self.script)
+
+    def test_pre_create_img_img_video_thumbnail_tokens_match_despite_virtualized_count(self):
+        helper_path = Path(__file__).parents[1] / "scripts" / "asb-identity.mjs"
+        node_test = f"""
+import assert from "node:assert/strict";
+import {{ firstThreeThumbnailTokensMatch }} from {helper_path.as_uri()!r};
+const baseline = ['asb:ANqvLOamTU8', 'asb:ANqvLOalS5Vz', 'asb:ANqvLOa10OIBbsk_ndWcBa6F'];
+const current = ['asb:ANqvLOamTU8', 'asb:ANqvLOalS5Vz', 'asb:ANqvLOa10OIBbsk_ndWcBa6F'];
+const baselineDomCount = 42;
+const currentDomCount = 28;
+const identicalTileTexts = ['play_circle 360p', 'play_circle 360p', 'play_circle 360p'];
+assert.equal(new Set(identicalTileTexts).size, 1);
+assert.notEqual(baselineDomCount, currentDomCount);
+assert.equal(firstThreeThumbnailTokensMatch(baseline, current), true,
+  'img/img/video asb tokens at the same positions should confirm the row independent of DOM count');
+assert.equal(firstThreeThumbnailTokensMatch(baseline, [current[0], current[1], null]), false,
+  'missing video src/poster token must reject');
+assert.equal(firstThreeThumbnailTokensMatch(baseline, [current[0], current[1], 'asb:wrong']), false,
+  'mismatched video token must reject');
+"""
+        result = subprocess.run(["node", "--input-type=module", "-e", node_test],
+                                capture_output=True, text=True, check=False, timeout=5)
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+
+    def test_pre_create_uuid_identity_accepts_lazy_thumbnail_but_rejects_mismatch(self):
+        helper = "function firstThreeMediaKeysMatch" + self.script.split(
+            "function firstThreeMediaKeysMatch", 1
+        )[1].split("\n\nfunction firstTileMatchesByStableNeighbors", 1)[0]
+        node_test = helper + r"""
+const assert = await import('node:assert/strict');
+const baseline = [
+  'media:21770a37-08bc-493a-9b9c-5fdd8736f30e',
+  'media:3926cb48-0000-4000-8000-000000000002',
+  'media:f5c80cba-0000-4000-8000-000000000003',
+];
+const current = [
+  'media:21770a37-08bc-493a-9b9c-5fdd8736f30e',
+  'media:3926cb48-0000-4000-8000-000000000002',
+  'media:f5c80cba-0000-4000-8000-000000000003',
+];
+// Thumbnail tokens may be [asb, asb, null]; accept only with matching UUIDs.
+const visibleThumbnailTokens = ['asb:first', 'asb:second', null];
+assert.equal(visibleThumbnailTokens[0], 'asb:first');
+assert.equal(visibleThumbnailTokens[2], null);
+assert.equal(firstThreeMediaKeysMatch(baseline, current), true);
+assert.equal(firstThreeMediaKeysMatch(baseline, [
+  baseline[0], baseline[1], 'media:aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa'
+]), false, 'mismatched third UUID must reject');
+assert.equal(firstThreeMediaKeysMatch(baseline, [baseline[0], baseline[1], null]), false,
+  'missing third UUID must reject');
+assert.equal(firstThreeMediaKeysMatch(baseline, [baseline[0], baseline[0], baseline[2]]), false,
+  'duplicate UUID must reject');
+"""
+        result = subprocess.run(["node", "--input-type=module", "-e", node_test],
+                                capture_output=True, text=True, check=False)
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+
+    def test_neighbor_fallback_rejects_null_third_thumbnail_token(self):
+        helper = "function firstTileMatchesByStableNeighbors" + self.script.split(
+            "function firstTileMatchesByStableNeighbors", 1
+        )[1].split("\n\nasync function waitForPreCreateThumbnailSnapshot", 1)[0]
+        node_test = helper + r"""
+const assert = await import('node:assert/strict');
+const base = {
+  expectedToken: 'asb:old-first',
+  currentToken: 'asb:new-first',
+  baselineTokens: ['asb:old-first', 'asb:middle', 'asb:third'],
+  baselineTileCount: 3,
+  currentTileCount: 3,
+};
+assert.equal(firstTileMatchesByStableNeighbors({
+  ...base, currentTokens: ['asb:new-first', 'asb:middle', null],
+}), false, 'missing third token must not establish neighbor identity');
+assert.equal(firstTileMatchesByStableNeighbors({
+  ...base, currentTokens: ['asb:new-first', 'asb:middle', 'asb:third'],
+}), true, 'both stable neighbors and unchanged tile count may confirm rotation');
+"""
+        result = subprocess.run(["node", "--input-type=module", "-e", node_test],
+                                capture_output=True, text=True, check=False, timeout=5)
+        self.assertEqual(result.returncode, 0, msg=result.stdout + result.stderr)
+
+    def test_pre_create_recheck_passes_when_third_thumbnail_loads_after_initial_nulls(self):
+        helper = "async function waitForPreCreateThumbnailSnapshot" + self.script.split(
+            "async function waitForPreCreateThumbnailSnapshot", 1
+        )[1].split("\n\nasync function prepare", 1)[0]
+        node_test = helper + r"""
+const assert = await import('node:assert/strict');
+let reads = 0;
+const readSnapshot = async () => {
+  reads += 1;
+  return { tileCount: 3, tokens: ['asb:first', 'asb:middle', reads < 5 ? null : 'asb:third'] };
+};
+const result = await waitForPreCreateThumbnailSnapshot(
+  readSnapshot, ms => new Promise(resolve => setTimeout(resolve, ms)), 10000
+);
+assert.equal(result.fullyStable, true);
+assert.equal(result.acceptedByNeighborRule, false);
+assert.deepEqual(result.tokens, ['asb:first', 'asb:middle', 'asb:third']);
+assert.ok(reads >= 6, 'must poll after initial null thumbnail before accepting the row');
+"""
+        result = subprocess.run(["node", "--input-type=module", "-e", node_test],
+                                capture_output=True, text=True, check=False, timeout=5)
+        self.assertEqual(result.returncode, 0, msg=result.stdout + result.stderr)
+
+    def test_abort_before_create_is_not_logged_as_unknown_submission(self):
+        self.assertIn('event: "submission_aborted_before_create"', self.script)
+        self.assertIn('status: "not_submitted"', self.script)
+        self.assertIn('console.error("No generation was submitted.', self.script)
+        self.assertIn('if (!createMayHaveBeenClicked)', self.script)
+        self.assertIn('status: "click_returned_unconfirmed"', self.script)
+        self.assertIn('event: "submission_confirmed_by_new_media_uuid"', self.script)
+        self.assertIn('event: "submission_confirmed_by_credit_decrease"', self.script)
+        self.assertIn('event: "create_not_confirmed"', self.script)
+        self.assertIn('if (!submissionEvidence && !["failed", "rejected_unusual_activity"].includes(resultStatus))', self.script)
+        self.assertIn('CREATE_NOT_CONFIRMED:', self.script)
+        self.assertIn('resultStatus = "create_not_confirmed"', self.script)
+    def test_post_create_uuid_set_difference_ignores_rotating_thumbnail_and_waits_for_completion(self):
+        helper = "function findNewCompletedMediaItems" + self.script.split(
+            "function findNewCompletedMediaItems", 1
+        )[1].split("\n\nasync function waitForGenerationAndDownload", 1)[0]
+        node_test = helper + r"""
+const assert = await import('node:assert/strict');
+const baseline = ['media:old-a', 'media:old-b', 'media:old-c'];
+const rotatingNewTile = {
+  key: 'media:new-uuid', mediaUuid: 'new-uuid', thumbnailSrc: 'asb:rotated-token',
+  state: 'Generating', text: 'Generating', progress: true,
+};
+assert.deepEqual(findNewCompletedMediaItems([rotatingNewTile], baseline), []);
+const completed = { ...rotatingNewTile, state: 'Complete', text: 'Mai seated breathing', progress: false };
+assert.deepEqual(findNewCompletedMediaItems([completed], baseline), [completed]);
+assert.deepEqual(findNewCompletedMediaItems([
+  { key: 'media:old-a', mediaUuid: 'old-a', state: 'Complete', progress: false },
+  completed,
+], baseline), [completed]);
+"""
+        result = subprocess.run(["node", "--input-type=module", "-e", node_test],
+                                capture_output=True, text=True, check=False, timeout=5)
+        self.assertEqual(result.returncode, 0, msg=result.stdout + result.stderr)
+        self.assertIn("skipUuidResolution: thumbnailRetry === 1", self.script)
+        self.assertIn("if (thumbnailRetry === 2) await waitForFirstRowThumbnailTokens", self.script)
+        self.assertIn("verifiedUuidThumbnailIndexes.add(index)", self.script)
+        self.assertIn("const verifiedRowIndexes = verifiedFirstRowIdentityIndexes(initialScan.items, refreshedScan.items);", self.script)
+        self.assertIn("verifiedUuidThumbnailIndexes.has(index)", self.script)
+        self.assertIn("uuidCache: thumbnailRetry === 1 ? baselineUuidCache : new Map()", self.script)
+        self.assertIn('phase: thumbnailRetry === 1 && completeUniqueUuidBaseline ? "thumbnail_only_recapture" : "full_row_dom_inventory"', self.script)
+        self.assertIn("topLimit: 3", self.script)
+        self.assertIn("FLOW_SUBMITTED_UNIDENTIFIED:", self.script)
+        self.assertIn('resultStatus === "submitted_unidentified" ? "submitted_unidentified"', self.script)
+        self.assertIn('resultStatus === "submitted_unidentified" ? "submitted_unidentified_do_not_retry"', self.script)
+
+    def test_resolution_verification_polls_aria_checked_before_failing(self):
+        self.assertIn("const deadline = Date.now() + 3000;", self.script)
+        self.assertIn("while (Date.now() < deadline)", self.script)
+        self.assertIn("after 3000ms polling", self.script)
+
+    def test_media_tile_reidentification_reselects_videos_waits_for_stable_grid_and_logs_tokens(self):
+        resolver = self.script.split("const resolveUuidByOpeningTile = async (index, identity = null, rowIdentities = [], expectedTileCount = null) =>", 1)[1].split(
+            "let stableBottomRounds = 0;", 1
+        )[0]
+        self.assertIn('await page.goto(gridUrl, { waitUntil: "domcontentloaded", timeout: 12000 })', resolver)
+        self.assertIn("const tabResult = await activateVideosTab(page, selectors)", resolver)
+        self.assertIn("for (let gridPoll = 0; gridPoll < 30; gridPoll += 1)", resolver)
+        self.assertIn("})).catch(() => [])", resolver)
+        self.assertNotIn("}).filter(Boolean)).catch(() => [])", resolver)
+        self.assertIn("currentTokens.length === previousTokens.length", resolver)
+        self.assertIn('event: "media_tile_reidentification"', resolver)
+        self.assertIn("expected_thumbnail_token: expectedToken", resolver)
+        self.assertIn("visible_first_six_thumbnail_tokens: currentTokens.slice(0, 6)", resolver)
+        self.assertIn("function thumbnailIdentityToken(value)", self.script)
+        self.assertIn("const mediaUuid = assetUuidFromUrl(source);", self.script)
+        self.assertIn('element.getAttribute("data-media-id")', self.script)
+        self.assertIn('return `media:${uuid[0].toLowerCase()}`', self.script)
+        self.assertIn(r"source.match(/\/asb\/([^/?#]+)/i)", self.script)
+
+    def test_middle_tile_rotated_thumbnail_token_uses_neighbor_and_count_validation(self):
+        resolver = self.script.split("const resolveUuidByOpeningTile", 1)[1].split(
+            "let stableBottomRounds = 0;", 1
+        )[0]
+        self.assertIn("resolveUuidByOpeningTile(item.index, item, visible, domTileCount)", self.script)
+        self.assertIn("const expectedRowTokens = rowIdentities.slice(0, 3).map", resolver)
+        self.assertIn("const currentRowTokens = currentTokens.slice(0, 3)", resolver)
+        self.assertIn("const neighborsMatch = Boolean(expectedRowTokens[0] && expectedRowTokens[2]", resolver)
+        self.assertIn("currentRowTokens[0] === expectedRowTokens[0]", resolver)
+        self.assertIn("currentRowTokens[2] === expectedRowTokens[2]", resolver)
+        self.assertIn("const tileCountMatches = expectedTileCount === null || currentTileCount === expectedTileCount", resolver)
+        self.assertIn("currentIndex = index;", resolver)
+        self.assertIn('event: "token_changed_at_index"', resolver)
+        self.assertIn("old_thumbnail_token: expectedRowTokens[index]", resolver)
+        self.assertIn("new_thumbnail_token: currentRowTokens[index]", resolver)
+        self.assertIn("accepted_by_position_with_neighbor_validation: true", resolver)
+        self.assertIn("const resolvedUuid = await resolveUuidByOpeningTile(item.index, item, visible, domTileCount)", self.script)
+        self.assertIn("First-row baseline requires unique, stable media UUIDs/keys", self.script)
+
+    def test_unique_network_asset_uuid_skips_lazy_thumbnail_wait(self):
+        upload_fn = self.script.split("async function uploadSceneReferencesUnsafe", 1)[1].split(
+            "async function uploadSceneReferences(", 1
+        )[0]
+        self.assertIn("const pinnedUuidConfirmedByNetwork = Boolean(requestedAssetUuid && networkNameUuids.includes(requestedAssetUuid));", upload_fn)
+        self.assertIn("const networkUuidShortcut = existingCount === 1", upload_fn)
+        self.assertIn("(networkNameUuids.length === 1 || pinnedUuidConfirmedByNetwork)", upload_fn)
+        self.assertIn("if (networkUuidShortcut) existingUuids.add(pinnedUuidConfirmedByNetwork ? requestedAssetUuid : networkNameUuids[0]);", upload_fn)
+        self.assertIn("const thumbnailDeadline = (networkUuidShortcut || pinnedUniqueCardShortcut) ? Date.now() : Date.now() + 7000;", upload_fn)
+        self.assertIn("Skipped Flow asset thumbnail UUID wait:", upload_fn)
+
+
+    def test_picker_resets_between_assets_and_requires_preview_uuid_before_add(self):
+        self.assertIn("async function resetIngredientsPicker(page, selectors)", self.script)
+        self.assertIn('await page.keyboard.press("Escape")', self.script)
+        self.assertIn("Ingredients picker/detail pane did not fully close after Escape/backdrop close", self.script)
+        self.assertIn("await resetIngredientsPicker(page, selectors);", self.script)
+        self.assertIn("async function inspectAddToPromptContext(button)", self.script)
+        self.assertIn('event: "ingredients_picker_add_action_identity"', self.script)
+        self.assertIn("expected_asset_uuid: expectedPreviewUuid || null", self.script)
+        self.assertIn("previewContext?.preview_labels || []", self.script)
+        self.assertIn("readiness_signal: \"unique_visible_add_button_plus_exact_preview_filename_or_uuid\"", self.script)
+        self.assertIn("identity_signal: immediateUuidMatches ? \"uuid\" : immediateLabelMatches ? \"exact_preview_filename\" : \"unverified\"", self.script)
+        self.assertIn("image_sources: imageSources.slice(0, 12)", self.script)
+        self.assertIn('match(/Preview of\\s+(.+?\\.(?:png|jpe?g|webp|gif|avif))/i)', self.script)
+        self.assertIn('const freshTile = async () =>', self.script)
+        self.assertIn('const selectionDeadline = selectionWaitStartedAt + selectionWaitTimeoutMs;', self.script)
+        self.assertIn('let targetPickerReopenAttempted = false;', self.script)
+        self.assertIn('reason: visiblePickerCount === 0 ? "picker_closed_before_target_selection" : "target_tile_missing_or_ambiguous"', self.script)
+        self.assertIn('await resetIngredientsPicker(page, selectors);', self.script)
+        self.assertIn('if (reopenedPickerVisible && reopenedCount === 1 && requestedAssetUuid)', self.script)
+        self.assertIn('targetPickerReopenAttempted = true;', self.script)
+        self.assertIn('click_hit_inside_matching_tile', self.script)
+        self.assertIn('if (hitTest && ancestorCount === 1', self.script)
+        self.assertIn('const fallbackMethods = ["thumbnail_hover_click", "thumbnail_pointer_sequence", "option_double_click", "focus_space"]', self.script)
+        self.assertNotIn('method === "focus_enter"', self.script)
+        self.assertIn('new PointerEvent("pointerdown"', self.script)
+        self.assertIn('picker_still_open: Boolean(after)', self.script)
+        self.assertIn('event: "ingredients_picker_activation_attempt"', self.script)
+        self.assertIn('event: "ingredients_picker_preview_context"', self.script)
+        self.assertIn('outer_html: tile.outerHTML.slice(0, 700)', self.script)
+        self.assertIn('grandparent_html: tile.parentElement?.parentElement?.outerHTML.slice(0, 1100)', self.script)
+        self.assertIn('add_button_contexts:', self.script)
+        self.assertIn('await ancestor.click({ position: { x: Math.floor(ancestorBox.width / 2), y: Math.floor(ancestorBox.height / 2) }, timeout: 500 })', self.script)
+        self.assertIn('if (previewLabels.length) return contexts[contexts.length - 1];', self.script)
+        self.assertIn("Refusing to click Add to prompt", self.script)
+        self.assertIn("action_clicked: false", self.script)
+        upload_fn = self.script.split("async function uploadSceneReferencesUnsafe", 1)[1].split(
+            "async function uploadSceneReferences(", 1
+        )[0]
+        self.assertLess(
+            upload_fn.index("if (!immediateUuidMatches && !immediateLabelMatches)"),
+            upload_fn.index("await addToPrompt.click({ timeout: 6000 });"),
+        )
+
+
+    def test_new_failed_flow_tile_without_uuid_stops_polling_and_classifies_policy(self):
+        waiter = self.script.split("async function waitForGenerationAndDownload", 1)[1].split(
+            "function ", 1
+        )[0]
+        self.assertIn("const baselineKeyCounts = new Map();", waiter)
+        self.assertIn("const newFailedTile = topItemsNow.find(item =>", waiter)
+        self.assertIn("const occurrence = topItemsNow.slice(0, item.index + 1).filter(candidate => candidate?.key === item.key).length;", waiter)
+        self.assertIn('failureReason = /prominent people|might violate our policies|you will be refunded/i.test(failureText)', waiter)
+        self.assertIn("new Flow tile at position ${newFailedTile.index}", waiter)
+        self.assertIn('textNode.querySelectorAll("a,button,[role=button],[aria-label]")', self.script)
+        self.assertIn("Track status here", self.script)
+        self.assertIn('"policy_prominent_people" : "provider_generation_failed"', waiter)
+        self.assertIn('failure_reason: resultStatus === "rejected_unusual_activity" ? "unusual_activity"', self.script)
+        self.assertIn('if (resultStatus === "failed") {', self.script)
+        self.assertIn("another 30-second submission-evidence poll", self.script)
+
+    def test_neutral_reference_mode_uses_short_non_identity_lock_language(self):
+        self.assertIn('["identity_preserving", "neutral_reference"].includes(referenceLanguageMode)', self.script)
+        self.assertIn('"Use the character shown in the reference image as a visual guide."', self.script)
+        self.assertIn("Keep the overall visual design and clothing consistent with the reference images.", self.script)
+        self.assertIn('reference_language_mode: scene.reference_language_mode || "identity_preserving"', self.script)
+
+    def test_thumbnail_identity_keeps_image_uuid_separate_from_media_uuid(self):
+        helper_path = Path(__file__).parents[1] / "scripts" / "asb-identity.mjs"
+        helper = self.script.split("function assetUuidFromUrl", 1)[1].split(
+            "async function assetUuidFromLocator", 1
+        )[0]
+        node_test = f"""
+import assert from "node:assert/strict";
+import {{ normalizeAsbIdentityToken }} from {helper_path.as_uri()!r};
+""" + "function assetUuidFromUrl" + helper + r"""
+const uuid = '4d8c7d18-d76a-479a-8164-8414f9ddaff7';
+assert.equal(assetUuidFromUrl('/image/' + uuid), uuid);
+assert.equal(thumbnailIdentityToken('/image/' + uuid), '/image/' + uuid);
+assert.equal(thumbnailIdentityToken('https://flow.google.com/asb/opaque-signed-token'), 'asb:opaque-signed-token');
+assert.equal(thumbnailIdentityToken('https://flow.google.com/asb/' + uuid), 'media:' + uuid);
+// A known media UUID hint remains authoritative when thumbnail URLs rotate.
+assert.equal(thumbnailIdentityToken('https://flow.google.com/asb/ANqvLObmDmk_6XQl', uuid), 'media:' + uuid);
+"""
+        result = subprocess.run(["node", "--input-type=module", "-e", node_test],
+                                capture_output=True, text=True, check=False, timeout=5)
+        self.assertEqual(result.returncode, 0, msg=result.stdout + result.stderr)
+
+    def test_neutral_reference_open_eyes_does_not_override_neutral_expression_with_smile(self):
+        self.assertIn("const openEyesRequested =", self.script)
+        self.assertIn('EXPRESSION AND EYE STATE (follow throughout the entire shot): ${expressionContent}', self.script)
+
+    def test_execute_usage_example_includes_required_wait_flag(self):
+        usage = self.script.split("Actual one-scene submission", 1)[1].split(
+            "Selector-only preflight", 1
+        )[0]
+        self.assertIn("--execute --wait --wait-timeout-ms 600000", usage)
+
+
+    def test_missing_third_thumbnail_uses_uuid_only_after_same_position_row_verification(self):
+        self.assertIn("const verifiedRowIndexes = verifiedFirstRowIdentityIndexes(initialScan.items, refreshedScan.items)", self.script)
+        self.assertIn("return new Set(initialMedia.map(item => item.index))", self.script)
+        self.assertIn("Prefer explicit media IDs and the editor's /edit/<media UUID> route", self.script)
+        self.assertIn("verifiedUuidThumbnailIndexes.add(index)", self.script)
+        self.assertIn("item.thumbnailSrc = `media:${item.mediaUuid.toLowerCase()}`", self.script)
+        self.assertIn("UUID membership, not row position or thumbnail URL shape, proves identity.", self.script)
+        self.assertIn("primarySources.filter(value => !/\\/image\\//i.test(value)).map(uuidFrom).find(Boolean)", self.script)
+        self.assertIn("const mediaUuid = primarySources.filter(value => !/\\/image\\//i.test(value)).map(uuidFrom).find(Boolean)", self.script)
+        self.assertIn("turning this \"8 x 250ms\" probe into a multi-minute stall", self.script)
+        self.assertIn("if (!sameVisibleRow && thumbnailRetry === 2)", self.script)
+
+    def test_two_item_recapture_retries_full_row_before_fail_closed(self):
+        self.assertIn("thumbnailRetry <= 2", self.script)
+        self.assertIn('action: thumbnailRetry < 2 ? "retry_full_row_inventory" : "fail_closed_after_retries"', self.script)
+        self.assertIn("skipUuidResolution: true", self.script)
+        self.assertIn("retry_strategy: thumbnailRetry === 1 && completeUniqueUuidBaseline ? \"thumbnail_only_snapshot\" : \"full_row_dom_inventory\"", self.script)
+        self.assertIn("const topLimited = Number.isInteger(topLimit) && topLimit > 0", self.script)
+        self.assertIn("items: topLimited ? (topItems || []).slice(0, topLimit) : Array.from(all.values())", self.script)
+        self.assertIn("const retryTileCount = await retryTiles.count()", self.script)
+        self.assertIn("continue;", self.script)
+
+    def test_image_thumbnail_uses_uuid_from_verified_same_position_row(self):
+        apply_helper = "function applyVerifiedRowUuidFallback" + self.script.split(
+            "function applyVerifiedRowUuidFallback", 1
+        )[1].split("\n\nfunction buildVerifiedThumbnailBaselineTokens", 1)[0]
+        baseline_helper = "function buildVerifiedThumbnailBaselineTokens" + self.script.split(
+            "function buildVerifiedThumbnailBaselineTokens", 1
+        )[1].split("\n\nfunction thumbnailIdentityToken", 1)[0]
+        asset_uuid_helper = "function assetUuidFromUrl" + self.script.split(
+            "function assetUuidFromUrl", 1
+        )[1].split("\n\nfunction applyVerifiedRowUuidFallback", 1)[0]
+        media_uuid_helper = "function mediaUuidFromLocatorValues" + self.script.split(
+            "function mediaUuidFromLocatorValues", 1
+        )[1].split("\n\nasync function assetUuidFromLocator", 1)[0]
+        thumbnail_helper = "function thumbnailIdentityToken" + self.script.split(
+            "function thumbnailIdentityToken", 1
+        )[1].split("\n\nfunction mediaUuidFromLocatorValues", 1)[0]
+        node_test = asset_uuid_helper + "\n\n" + media_uuid_helper + "\n\n" + apply_helper + "\n\n" + baseline_helper + "\n\n" + thumbnail_helper + r"""
+const assert = await import('node:assert/strict');
+const uuid = '07e82f95-f37f-412a-83bd-018fe25b1278';
+const initial = [
+  { text: 'Mai standing variant one' },
+  { mediaUuid: 'ae294080-b7e0-41d6-a825-30824b910dfc', text: 'Mai standing older' },
+  { mediaUuid: 'e4ebbe7d-2c9f-484b-b165-31480077cea5', text: 'Mai kneeling' },
+];
+const refreshed = [
+  { mediaUuid: uuid, text: 'Mai standing variant one' },
+  { mediaUuid: 'ae294080-b7e0-41d6-a825-30824b910dfc', text: 'Mai standing older' },
+  { mediaUuid: 'e4ebbe7d-2c9f-484b-b165-31480077cea5', text: 'Mai kneeling' },
+];
+const verified = applyVerifiedRowUuidFallback(
+  initial, refreshed,
+  initial.map(item => item.text), refreshed.map(item => item.text),
+);
+assert.equal(verified.has(0), true);
+assert.equal(initial[0].mediaUuid, uuid);
+assert.deepEqual(buildVerifiedThumbnailBaselineTokens(
+  [null, 'asb:older', 'asb:kneeling'], initial,
+  ['Mai standing variant one', 'Mai standing older', 'Mai kneeling'], verified,
+), ['media:' + uuid, 'media:ae294080-b7e0-41d6-a825-30824b910dfc', 'media:e4ebbe7d-2c9f-484b-b165-31480077cea5']);
+
+// A text mismatch cannot inherit a UUID even when the refreshed UUID is unique.
+const mismatch = [{ text: 'different title' }, ...initial.slice(1).map(item => ({ ...item }))];
+const mismatchVerified = applyVerifiedRowUuidFallback(
+  mismatch, refreshed,
+  mismatch.map(item => item.text), refreshed.map(item => item.text),
+);
+assert.equal(mismatchVerified.has(0), false);
+assert.equal(mismatch[0].mediaUuid, undefined);
+
+// Fresh tile: same unique UUID in both row scans is sufficient even with empty text.
+const emptyTextInitial = [
+  { mediaUuid: uuid, text: '' },
+  { mediaUuid: 'ae294080-b7e0-41d6-a825-30824b910dfc', text: 'Older standing' },
+  { mediaUuid: 'e4ebbe7d-2c9f-484b-b165-31480077cea5', text: 'Kneeling' },
+];
+const emptyTextRefreshed = emptyTextInitial.map(item => ({ ...item }));
+const emptyTextVerified = applyVerifiedRowUuidFallback(
+  emptyTextInitial, emptyTextRefreshed,
+  ['', 'Older standing', 'Kneeling'], ['', 'Older standing', 'Kneeling'],
+);
+assert.equal(emptyTextVerified.has(0), true);
+assert.deepEqual(buildVerifiedThumbnailBaselineTokens(
+  [null, 'asb:older', 'asb:kneeling'], emptyTextInitial,
+  ['', 'Older standing', 'Kneeling'], emptyTextVerified,
+), ['media:' + uuid, 'media:ae294080-b7e0-41d6-a825-30824b910dfc', 'media:e4ebbe7d-2c9f-484b-b165-31480077cea5']);
+assert.equal(thumbnailIdentityToken('https://flow.google.com/project/2c77da50-fb9e-4cc2-bf50-8ce67649c32e/video/' + uuid), 'media:' + uuid);
+assert.equal(thumbnailIdentityToken('https://flow.google.com/image/' + uuid), '/image/' + uuid);
+
+// A thumbnail image UUID must never be accepted as the generated media UUID.
+const imageUuid = '2d815367-c579-4e48-845c-568acbe443e4';
+const videoUuid = '4bcc1ce2-4018-43fc-9a8a-059fdc315750';
+assert.equal(mediaUuidFromLocatorValues([
+  'https://flow.google.com/image/' + imageUuid,
+  'https://flow.google.com/project/2c77da50-fb9e-4cc2-bf50-8ce67649c32e/edit/' + videoUuid,
+]), videoUuid);
+assert.equal(mediaUuidFromLocatorValues([
+  'https://flow.google.com/image/' + imageUuid,
+]), null);
+assert.equal(mediaUuidFromLocatorValues([
+  'https://flow.google.com/video/' + uuid,
+  'https://flow.google.com/image/' + imageUuid,
+]), uuid);
+"""
+        result = subprocess.run(["node", "--input-type=module", "-e", node_test],
+                                capture_output=True, text=True, check=False, timeout=5)
+        self.assertEqual(result.returncode, 0, msg=result.stdout + result.stderr)
+        self.assertIn("applyVerifiedRowUuidFallback", self.script)
+        self.assertIn("original.mediaUuid = uuid", self.script)
+
+    def test_explicit_variant_index_can_run_only_remaining_variant(self):
+        self.assertIn('else if (arg === "--variant-index") args.variantIndex = Number(argv[++i]);', self.script)
+        self.assertIn('args.variantIndex !== null && args.variantIndex > variantCount', self.script)
+        self.assertIn('if (args.variantIndex !== null) {', self.script)
+        self.assertIn('args._variantIndex = args.variantIndex;', self.script)
+        self.assertIn('Preparing selected variant ${args.variantIndex}/${variantCount} only.', self.script)
+        self.assertIn('args._variantIndex = args.variantIndex || 1;', self.script)
+
+    def test_null_asb_null_thumbnail_pattern_uses_verified_video_uuids_and_not_image_uuid(self):
+        helper = "function buildVerifiedThumbnailBaselineTokens" + self.script.split(
+            "function buildVerifiedThumbnailBaselineTokens", 1
+        )[1].split("\n\nfunction thumbnailIdentityToken", 1)[0]
+        node_test = helper + r"""
+const assert = await import('node:assert/strict');
+const items = [
+  { mediaUuid: '21770a37-08bc-493a-9b9c-5fdd8736f30e', text: 'Mai seated breathing' },
+  { mediaUuid: '3926cb48-421c-48de-b8e5-5ec30aa5c8f8', text: 'Mai standing' },
+  { mediaUuid: 'f5c80cba-1342-46bb-aaa4-eeb7fbd466b0', text: 'Mai kneeling' },
+];
+const tokens = buildVerifiedThumbnailBaselineTokens(
+  [null, 'asb:ANqvLOa3xUpF', null],
+  items,
+  ['Mai seated breathing', 'Mai standing', 'Mai kneeling'],
+  new Set([0, 1, 2]), // independently resolved unique video UUIDs outrank the ASB thumbnail token
+);
+assert.deepEqual(tokens, [
+  'media:' + items[0].mediaUuid,
+  'media:' + items[1].mediaUuid,
+  'media:' + items[2].mediaUuid,
+]);
+const ambiguous = buildVerifiedThumbnailBaselineTokens(
+  [null, 'asb:ANqvLOa3xUpF', null],
+  items,
+  ['Mai seated breathing', 'Mai standing', 'different row'],
+);
+assert.equal(ambiguous[2], null, 'must not reuse UUID when same-position row fingerprint differs');
+// Retry 2 independently resolved the same three unique video UUIDs at the same
+// positions as the initial inventory (row_identity_verified=true).
+const verified = buildVerifiedThumbnailBaselineTokens(
+  [null, 'asb:ANqvLOa3xUpF', 'asb:ANqvLOaNiC06'],
+  items,
+  ['text may differ while the thumbnail is lazy', 'Mai standing', 'Mai kneeling'],
+  new Set([0, 1, 2]),
+);
+assert.deepEqual(verified, [
+  'media:' + items[0].mediaUuid,
+  'media:' + items[1].mediaUuid,
+  'media:' + items[2].mediaUuid,
+]);
+"""
+        result = subprocess.run(["node", "--input-type=module", "-e", node_test],
+                                capture_output=True, text=True, check=False, timeout=5)
+        self.assertEqual(result.returncode, 0, msg=result.stdout + result.stderr)
+        self.assertIn('if (segments[assetIndex] === "image") return null;', self.script)
+        self.assertIn("skipUuidResolution: thumbnailRetry === 1", self.script)
+        self.assertIn('phase: thumbnailRetry === 1 && completeUniqueUuidBaseline ? "thumbnail_only_recapture" : "full_row_dom_inventory"', self.script)
+
+    def test_live_baseline_adopts_resolved_media_uuids_when_refusal_has_no_thumbnail_token(self):
+        helper = "function verifiedResolvedMediaWithRefusalFallback" + self.script.split(
+            "function verifiedResolvedMediaWithRefusalFallback", 1
+        )[1].split("\n\nfunction buildVerifiedThumbnailBaselineTokens", 1)[0]
+        refusal_helper = "function isKnownPolicyRefusalTile" + self.script.split(
+            "function isKnownPolicyRefusalTile", 1
+        )[1].split("\n\nfunction failedPolicyBaselineKey", 1)[0]
+        node_test = helper + "\n\n" + refusal_helper + r"""
+const assert = await import('node:assert/strict');
+const refusal = {
+  text: 'Failed: This generation might violate our policies for prominent people. You will be refunded.',
+  mediaUuid: null,
+  key: 'failed-policy:failed: this generation might violate our policies for prominent people. you will be refunded.',
+};
+const stale = { mediaUuid: '2d815367-1111-4111-8111-111111111111', key: 'media:2d815367-1111-4111-8111-111111111111', text: 'Mai standing' };
+const a = { mediaUuid: '07e82f95-f37f-412a-83bd-018fe25b1278', key: 'media:07e82f95-f37f-412a-83bd-018fe25b1278', text: 'Mai standing' };
+const b = { mediaUuid: '4bcc1ce2-4018-43fc-9a8a-059fdc315750', key: 'media:4bcc1ce2-4018-43fc-9a8a-059fdc315750', text: 'Mai kneeling' };
+const tokens = ['failed-policy:' + refusal.text.toLowerCase(), null, null];
+const initial = [refusal, stale, a];
+const refreshed = [refusal, a, b];
+assert.deepEqual([...verifiedResolvedMediaWithRefusalFallback(initial, refreshed)], [1, 2]);
+assert.deepEqual(refreshed.filter(item => item.mediaUuid).map(item => item.mediaUuid), [
+  '07e82f95-f37f-412a-83bd-018fe25b1278',
+  '4bcc1ce2-4018-43fc-9a8a-059fdc315750',
+]);
+// Unknown non-media tiles, changed refusal text, missing UUIDs, and duplicate UUIDs fail closed.
+assert.equal(verifiedResolvedMediaWithRefusalFallback(
+  [refusal, stale, a], [refusal, { text: 'unknown tile' }, b],
+), null);
+assert.equal(verifiedResolvedMediaWithRefusalFallback(
+  [refusal, stale, a], [{ ...refusal, text: 'different refusal' }, a, b],
+), null);
+assert.equal(verifiedResolvedMediaWithRefusalFallback(
+  [refusal, stale, a], [refusal, a, { ...b, mediaUuid: null, key: 'asb:opaque' }],
+), null);
+assert.equal(verifiedResolvedMediaWithRefusalFallback(
+  [refusal, stale, a], [refusal, a, { ...b, mediaUuid: a.mediaUuid, key: a.key }],
+), null);
+assert.deepEqual(tokens, [
+  'failed-policy:' + refusal.text.toLowerCase(), null, null,
+]);
+"""
+        result = subprocess.run(["node", "--input-type=module", "-e", node_test],
+                                capture_output=True, text=True, check=False, timeout=5)
+        self.assertEqual(result.returncode, 0, msg=result.stdout + result.stderr)
+        self.assertIn("verifiedResolvedMediaWithRefusalFallback(initialScan.items, refreshedScan.items)", self.script)
+        self.assertIn('event: "baseline_refusal_resolved_uuid_fallback"', self.script)
+
+    def test_first_row_identity_accepts_refusal_and_reordered_verified_media_but_fails_closed(self):
+        identity_helper = "function verifiedFirstRowIdentityIndexes" + self.script.split(
+            "function verifiedFirstRowIdentityIndexes", 1
+        )[1].split("\n\nfunction buildVerifiedThumbnailBaselineTokens", 1)[0]
+        refusal_helper = "function isKnownPolicyRefusalTile" + self.script.split(
+            "function isKnownPolicyRefusalTile", 1
+        )[1].split("\n\nfunction failedPolicyBaselineKey", 1)[0]
+        node_test = identity_helper + "\n\n" + refusal_helper + r"""
+const assert = await import('node:assert/strict');
+const refusal = {
+  text: 'Failed: This generation might violate our policies for prominent people. You will be refunded.',
+  mediaUuid: null,
+};
+const a = { mediaUuid: '07e82f95-f37f-412a-83bd-018fe25b1278', text: 'Mai variant A' };
+const b = { mediaUuid: '4bcc1ce2-4018-43fc-9a8a-059fdc315750', text: 'Mai variant B' };
+const baseline = [refusal, a, b];
+const reordered = [b, { ...refusal }, a];
+assert.deepEqual(
+  [...verifiedFirstRowIdentityIndexes(baseline, reordered)],
+  [1, 2],
+  'a unique known refusal plus the same two unique media UUIDs should verify despite order changes',
+);
+assert.equal(
+  verifiedFirstRowIdentityIndexes(baseline, [b, { ...refusal }, { ...a, mediaUuid: '11111111-1111-4111-8111-111111111111' }]),
+  null,
+  'a changed media UUID set must fail closed',
+);
+assert.equal(
+  verifiedFirstRowIdentityIndexes(baseline, [b, { text: 'unknown empty tile', mediaUuid: null }, a]),
+  null,
+  'an unknown non-media tile must fail closed',
+);
+assert.equal(
+  verifiedFirstRowIdentityIndexes(baseline, [b, { ...refusal, text: refusal.text + ' changed' }, a]),
+  null,
+  'a changed refusal text must fail closed',
+);
+assert.equal(
+  verifiedFirstRowIdentityIndexes(baseline, [b, { ...refusal }, { ...a, mediaUuid: b.mediaUuid }]),
+  null,
+  'duplicate media UUIDs must fail closed',
+);
+"""
+        result = subprocess.run(["node", "--input-type=module", "-e", node_test],
+                                capture_output=True, text=True, check=False, timeout=5)
+        self.assertEqual(result.returncode, 0, msg=result.stdout + result.stderr)
+
+    def test_persistent_incomplete_recapture_fails_before_create(self):
+        self.assertIn("First-row baseline requires loaded DOM thumbnail identities for all three tiles", self.script)
+        self.assertIn("Refusing to Create with an incomplete baseline", self.script)
+        self.assertLess(
+            self.script.index("First-row baseline requires loaded DOM thumbnail identities for all three tiles"),
+            self.script.index("await finalButton.click({ timeout: 2500 })"),
+        )
+
+    def test_tile_reorder_or_ambiguous_text_match_stops_before_create(self):
+        self.assertIn("function verifiedFirstRowIdentityIndexes(initialItems, refreshedItems)", self.script)
+        self.assertIn("const sameVisibleRow = verifiedRowIndexes !== null", self.script)
+        self.assertIn("if (!sameVisibleRow && thumbnailRetry === 2)", self.script)
+        self.assertIn("Pre-Create recheck could not confirm a stable first tile and three-tile row", self.script)
+
+
+    def test_asb_size_suffix_normalization_accepts_same_asset_and_fails_closed(self):
+        helper_path = Path(__file__).parents[1] / "scripts" / "asb-identity.mjs"
+        node_test = f"""
+import assert from "node:assert/strict";
+import {{ normalizeAsbIdentityToken, firstThreeThumbnailTokensMatch }} from {helper_path.as_uri()!r};
+const baseline = ["asb:A", "asb:B", "asb:C"];
+assert.equal(normalizeAsbIdentityToken("asb:C=mm,18,15"), "asb:C");
+assert.equal(
+  firstThreeThumbnailTokensMatch(baseline, ["asb:A", "asb:B", "asb:C=mm,18,15"]),
+  true,
+  "same asb asset with image transform suffix must match",
+);
+assert.equal(
+  firstThreeThumbnailTokensMatch(baseline, ["asb:A", "asb:B", "asb:D=mm,18,15"]),
+  false,
+  "a different asb asset ID must fail closed",
+);
+assert.equal(
+  firstThreeThumbnailTokensMatch(baseline, ["asb:A", "asb:B", null]),
+  false,
+  "a missing token must fail closed",
+);
+"""
+        result = subprocess.run(
+            ["node", "--input-type=module", "-e", node_test],
+            capture_output=True, text=True, check=False, timeout=5,
+        )
+        self.assertEqual(result.returncode, 0, msg=result.stdout + result.stderr)
+
+
+    def test_precreate_accepts_captured_poster_alias_but_rejects_different_media_uuid(self):
+        helper_path = Path(__file__).parents[1] / "scripts" / "asb-identity.mjs"
+        node_test = f"""
+import assert from "node:assert/strict";
+import {{ firstThreeThumbnailTokensMatch }} from {helper_path.as_uri()!r};
+const video = "e4ebbe7d-2c9f-484b-b165-31480077cea5";
+const poster = "5752effd-6ead-4b18-ae1d-388ac421285b";
+const different = "a6f7c0aa-1f61-4d45-a92a-8a21f1f3d6c1";
+const baseline = ["media:" + video, "asb:neighbor-B", "asb:neighbor-C"];
+const posterAliases = ["image:" + poster, null, null];
+assert.equal(
+  firstThreeThumbnailTokensMatch(
+    baseline,
+    ["media:" + poster, "asb:neighbor-B", "asb:neighbor-C"],
+    posterAliases,
+  ),
+  true,
+  "accept the known poster UUID alias for the same baseline tile when both neighbors match",
+);
+assert.equal(
+  firstThreeThumbnailTokensMatch(
+    baseline,
+    ["media:" + different, "asb:neighbor-B", "asb:neighbor-C"],
+    posterAliases,
+  ),
+  false,
+  "a different first-tile UUID must fail closed",
+);
+assert.equal(
+  firstThreeThumbnailTokensMatch(
+    baseline,
+    ["media:" + poster, "asb:neighbor-X", "asb:neighbor-C"],
+    posterAliases,
+  ),
+  false,
+  "poster alias must not override a changed neighbor",
+);
+assert.equal(
+  firstThreeThumbnailTokensMatch(
+    baseline,
+    [null, "asb:neighbor-B", "asb:neighbor-C"],
+    posterAliases,
+  ),
+  false,
+  "missing current identity must fail closed",
+);
+"""
+        result = subprocess.run(
+            ["node", "--input-type=module", "-e", node_test],
+            capture_output=True, text=True, check=False, timeout=5,
+        )
+        self.assertEqual(result.returncode, 0, msg=result.stdout + result.stderr)
+        self.assertIn("baseline_first_three_thumbnail_image_tokens", self.script)
+        self.assertIn("args._waitInitialThumbnailImageTokens = domThumbnailBaseline.imageTokens || [];", self.script)
+
+
+    def test_dom_thumbnail_baseline_handles_refusal_verified_uuid_and_video_route(self):
+        # The first row may contain a refused card without a thumbnail, a verified
+        # video whose DOM thumbnail is empty, and a /video/<uuid> preview.
+        self.assertIn('return "failed-policy:" + tileText.toLowerCase();', self.script)
+        self.assertIn('if (!uuid && isKnownPolicyRefusalTile(item) && text', self.script)
+        self.assertIn('tokens[index] = failedPolicyBaselineKey(item);', self.script)
+        self.assertIn('verifiedUuidThumbnailIndexes.add(index);', self.script)
+        self.assertIn("if (initialScan.items.length >= 3 && refreshedScan.items.length >= 3) {", self.script)
+        self.assertIn('candidateSegments.findIndex(part => part === "image" || part === "asb" || part === "video")', self.script)
+        self.assertIn('segments.findIndex(part => part === "image" || part === "asb" || part === "video")', self.script)
+        self.assertIn('if (segments[assetIndex] === "image") return null;', self.script)
+        self.assertIn("function verifiedFirstRowIdentityIndexes(initialItems, refreshedItems)", self.script)
+        self.assertIn("baselineUuids", self.script)
+
+    def test_explicit_prominent_people_refusal_is_stable_non_media_baseline(self):
+        # A known provider refusal has no video UUID, but its exact unique text can
+        # identify the existing non-media tile. Other unresolved cards still fail closed.
+        self.assertIn("function isKnownPolicyRefusalTile(item)", self.script)
+        self.assertIn("if (!knownPolicyRefusal && (!item.key || !item.mediaUuid)) unkeyedItemsDetected = true;", self.script)
+        self.assertIn("if (!item || item.mediaUuid) return false;", self.script)
+        self.assertIn("&& /prominent people/i.test(text)", self.script)
+        self.assertIn("&& /might violate our policies/i.test(text)", self.script)
+        self.assertIn("&& /you will be refunded/i.test(text)", self.script)
+        self.assertIn('classification: item.mediaUuid && initialItems[index] ? "stable_existing_baseline_tile"', self.script)
+        self.assertIn('"known_policy_refusal_non_media_baseline"', self.script)
+        self.assertIn('baselineKey.startsWith("failed-policy:") && isPolicyRefusal && sameUniqueText', self.script)
+        self.assertEqual(self.script.count('baselineKey.startsWith("failed-policy:")'), 3)
+        self.assertIn("unresolvedBaselineIndexes.length > 0", self.script)
+        self.assertIn('"unknown_identity_fail_closed"', self.script)
+
+
+    def test_precreate_matches_exact_preverified_asb_alias_when_media_uuid_missing_from_dom(self):
+        helper_path = Path(__file__).parents[1] / "scripts" / "asb-identity.mjs"
+        node_test = f"""
+import assert from "node:assert/strict";
+import {{ firstThreeThumbnailTokensMatch }} from {helper_path.as_uri()!r};
+const refusal = "failed-policy:failed: this generation might violate our policies for prominent people. you will be refunded.";
+const videoA = "4bcc1ce2-4018-43fc-9a8a-059fdc315750";
+const videoB = "07e82f95-f37f-412a-83bd-018fe25b1278";
+const asbA = "asb:ANqvLOa2QfGYyxGsXyVwvZ3X";
+const asbB = "asb:ANqvLOYk_pqHH4wW49MeXwk2";
+const baseline = [refusal, "media:" + videoA, "media:" + videoB];
+const current = [refusal, asbA, asbB];
+const verifiedAliases = [null, asbA, asbB];
+assert.equal(
+  firstThreeThumbnailTokensMatch(baseline, current, [null, null, null], verifiedAliases),
+  true,
+  "exact ASB tokens captured for UUID-verified tiles must bridge media UUID baseline keys",
+);
+assert.equal(
+  firstThreeThumbnailTokensMatch(baseline, [refusal, "asb:ANqvDIFFERENT", asbB], [null, null, null], verifiedAliases),
+  false,
+  "a changed ASB token must fail closed",
+);
+assert.equal(
+  firstThreeThumbnailTokensMatch(baseline, [refusal, null, asbB], [null, null, null], verifiedAliases),
+  false,
+  "a missing current token must fail closed",
+);
+assert.equal(
+  firstThreeThumbnailTokensMatch(baseline, current, [null, null, null], [null, null, null]),
+  false,
+  "an ASB token without a captured UUID-verified alias must fail closed",
+);
+assert.equal(
+  firstThreeThumbnailTokensMatch(baseline, [refusal, asbA, "asb:ANqvDIFFERENT"], [null, null, null], [null, asbA, asbB]),
+  false,
+  "the alias cannot override a mismatch in another row tile",
+);
+"""
+        result = subprocess.run(
+            ["node", "--input-type=module", "-e", node_test],
+            capture_output=True, text=True, check=False, timeout=5,
+        )
+        self.assertEqual(result.returncode, 0, msg=result.stdout + result.stderr)
+        self.assertIn("args._waitInitialVerifiedThumbnailAliases", self.script)
+        self.assertIn("args._waitInitialVerifiedThumbnailAliases || []", self.script)
+        self.assertIn("domThumbnailBaseline.tokens?.[index]", self.script)
+        self.assertIn("const verifiedAsbAliasesByIndex = new Map()", self.script)
+        self.assertIn("const refreshedDomAsbTokenCandidates = await chosen.page.locator", self.script)
+        self.assertIn("event: \"refreshed_dom_asb_thumbnail_tokens\"", self.script)
+        self.assertIn('for (const attr of ["src", "srcset", "poster", "data-src", "href"])', self.script)
+        self.assertIn("const refreshedDomAsbTokenCandidates = await chosen.page.locator", self.script)
+        self.assertIn("event: \"refreshed_dom_asb_thumbnail_tokens\"", self.script)
+        self.assertIn('for (const attr of ["src", "srcset", "poster", "data-src", "href"])', self.script)
+        self.assertIn("verifiedAsbAliasesByIndex.set(index, observedAsb)", self.script)
+        self.assertIn("verifiedAsbAliasesByIndex.get(index)", self.script)
+        self.assertIn("A UUID may only become verified on retry 2", self.script)
+
+    def test_preverified_asb_alias_accepts_normalized_token_with_media_uuid_placeholder(self):
+        helper = "function thumbnailIdentityToken(value)" + self.script.split(
+            "function thumbnailIdentityToken(value)", 1
+        )[1].split("\n\nfunction mediaUuidFromLocatorValues", 1)[0]
+        node_test = helper + r"""
+const assert = await import('node:assert/strict');
+const { normalizeAsbIdentityToken } = await import('./scripts/asb-identity.mjs');
+const assetUuidFromUrl = () => null;
+const expected = 'asb:ANqvLOYk_pqHH4wW49MeXwk2';
+const candidates = [expected, "media:07e82f95-f37f-412a-83bd-018fe25b1278", null];
+const aliases = candidates.map(candidate => {
+  if (!candidate) return null;
+  const token = thumbnailIdentityToken(candidate);
+  return token?.startsWith('asb:') ? token : null;
+});
+assert.deepEqual(aliases, [expected, null, null]);
+assert.equal(thumbnailIdentityToken('asb:ANqvLOYk_pqHH4wW49MeXwk2=mm,18,15'), expected);
+assert.equal(thumbnailIdentityToken('media:07E82F95-F37F-412A-83BD-018FE25B1278'),
+  'media:07e82f95-f37f-412a-83bd-018fe25b1278');
+"""
+        result = subprocess.run(
+            ["node", "--input-type=module", "-e", node_test],
+            capture_output=True, text=True, check=False, timeout=5,
+            cwd=Path(__file__).parents[1],
+        )
+        self.assertEqual(result.returncode, 0, msg=result.stdout + result.stderr)
+        self.assertIn('if (/^asb:/i.test(source)) return normalizeAsbIdentityToken(source);', self.script)
 
 if __name__ == "__main__":
     unittest.main()
