@@ -497,6 +497,7 @@ try {
     ...events.map(event => JSON.stringify(event)),
     // Match the real exec log's pretty-printed JSON and bare JSON-value lines.
     JSON.stringify([null, 42, "not-an-event"], null, 2),
+    JSON.stringify({ scene_id: "mai-daily4-136-a-front-opt1", nested: { project_id: "2c77da50-fb9e-4cc2-bf50-8ce67649c32e" } }, null, 2),
     JSON.stringify({ baseline_first_three_media_keys: [
       "failed-policy:" + policyText.toLowerCase(),
       "media:4bcc1ce2-4018-43fc-9a8a-059fdc315750",
