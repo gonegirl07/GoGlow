@@ -4509,27 +4509,75 @@ async function prepare(args, browser, rl) {
 }
 
 
-function readRecoveryEvidence(logPath, attemptId) {
+function readRecoveryEvidence(logPath, attemptId, ledgerRecord = null) {
   const absolute = path.resolve(logPath);
-  if (!fs.existsSync(absolute)) throw new Error(`Recovery log not found: ${absolute}`);
+  if (!fs.existsSync(absolute)) throw new Error(\`Recovery log not found: \${absolute}\`);
   const logText = fs.readFileSync(absolute, "utf8");
   const lines = logText.split(/\r?\n/);
   let ledgerEventIndex = -1;
   let structuredCreate = null;
+  const parsedEvents = [];
   for (let i = 0; i < lines.length; i += 1) {
     try {
       const event = JSON.parse(lines[i]);
+      parsedEvents.push(event);
       if (event.event === "generation_ledger_recorded" && event.attempt_id === attemptId) ledgerEventIndex = i;
       if (event.event === "create_click_returned" && event.attempt_id === attemptId) structuredCreate = event;
     } catch {}
   }
-  if (ledgerEventIndex < 0) throw new Error(`Recovery log does not contain generation_ledger_recorded for ${attemptId}; refusing to infer which Create belongs to this ledger attempt.`);
+  const legacyMode = ledgerEventIndex < 0;
+  if (legacyMode) {
+    if (!ledgerRecord || ledgerRecord.attempt_id !== attemptId || !ledgerRecord.scene_id
+      || !ledgerRecord.project_id || !ledgerRecord.started_on || !ledgerRecord.finished_on
+      || ledgerRecord.result?.status !== "submitted_unidentified"
+      || ledgerRecord.media?.verification_state !== "unverified"
+      || ledgerRecord.media?.verified_media_uuid
+      || !(Number(ledgerRecord.credits?.actual_amount) > 0)) {
+      throw new Error(\`Legacy recovery requires the exact charged submitted_unidentified ledger record with scene, project, and start/finish timestamps for \${attemptId}.\`);
+    }
+    const timestamps = [];
+    for (let i = 0; i < lines.length; i += 1) {
+      const matches = [...lines[i].matchAll(/Create timestamp:\s*(\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?Z)/g)];
+      for (const match of matches) timestamps.push({ value: match[1], lineIndex: i });
+    }
+    if (timestamps.length !== 1) {
+      throw new Error(\`Legacy recovery requires exactly one Create timestamp line; found \${timestamps.length}. Refusing recovery.\`);
+    }
+    const timestamp = Date.parse(timestamps[0].value);
+    const started = Date.parse(ledgerRecord.started_on);
+    const finished = Date.parse(ledgerRecord.finished_on);
+    if (![timestamp, started, finished].every(Number.isFinite) || timestamp < started || timestamp > finished) {
+      throw new Error("Legacy Create timestamp must fall within the matching ledger attempt's started_on/finished_on interval.");
+    }
+    const sceneEvents = parsedEvents.filter(event => event.scene_id);
+    if (!sceneEvents.some(event => event.scene_id === ledgerRecord.scene_id)
+      || sceneEvents.some(event => event.scene_id !== ledgerRecord.scene_id)) {
+      throw new Error("Legacy log scene_id does not uniquely match the ledger attempt; refusing recovery.");
+    }
+    const projectEvents = parsedEvents.filter(event => event.project_id);
+    if (projectEvents.some(event => event.project_id !== ledgerRecord.project_id)) {
+      throw new Error("Legacy log project_id conflicts with the ledger attempt; refusing recovery.");
+    }
+    if (!/--expected-project|project_id/.test(logText) && !projectEvents.length) {
+      throw new Error("Legacy log contains no project identity evidence to bind to the ledger attempt.");
+    }
+  }
   let createClickedAt = structuredCreate?.create_clicked_at || null;
-  let createLineIndex = ledgerEventIndex;
+  let createLineIndex = ledgerEventIndex >= 0 ? ledgerEventIndex : -1;
   if (!createClickedAt) {
-    for (let i = 0; i < ledgerEventIndex; i += 1) {
-      const match = lines[i].match(/Create timestamp:\s*(\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?Z)/);
-      if (match) { createClickedAt = match[1]; createLineIndex = i; }
+    const timestampMatches = [];
+    for (let i = 0; i < lines.length; i += 1) {
+      const matches = [...lines[i].matchAll(/Create timestamp:\s*(\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?Z)/g)];
+      for (const match of matches) timestampMatches.push({ value: match[1], lineIndex: i });
+    }
+    if (legacyMode && timestampMatches.length !== 1) {
+      throw new Error(\`Legacy recovery requires exactly one Create timestamp line; found \${timestampMatches.length}. Refusing recovery.\`);
+    }
+    const eligible = legacyMode ? timestampMatches : timestampMatches.filter(item => item.lineIndex < ledgerEventIndex);
+    if (eligible.length) {
+      const chosen = eligible[eligible.length - 1];
+      createClickedAt = chosen.value;
+      createLineIndex = chosen.lineIndex;
     }
   }
   if (!createClickedAt) throw new Error("Recovery log is missing the recorded Create timestamp; refusing recovery.");
@@ -4594,7 +4642,7 @@ async function recoverAttempt(args, browser) {
   }
   const { scene, selectors } = await loadInputs(args);
   if (scene.scene_id !== record.scene_id) throw new Error(`Scene mismatch: supplied ${scene.scene_id}, ledger ${record.scene_id}. Refusing recovery.`);
-  const evidence = readRecoveryEvidence(args.log, args.recoverAttempt);
+  const evidence = readRecoveryEvidence(args.log, args.recoverAttempt, record);
   waitForSelectors(selectors, { ...args, waitForResult: true });
   const chosen = await chooseFlowTab(browser, args);
   if (chosen.projectId !== args.expectedProject || (record.project_id && record.project_id !== args.expectedProject)) {
