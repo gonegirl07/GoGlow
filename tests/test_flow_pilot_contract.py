@@ -555,6 +555,28 @@ try {
         self.assertIn('status: "unknown_do_not_retry"', self.script)
         self.assertIn('Do NOT retry automatically', self.script)
 
+    def test_identify_only_recovery_stops_before_download_menu_and_records_unchecked_integrity(self):
+        self.assertIn('else if (arg === "--no-download") args.noDownload = true;', self.script)
+        self.assertIn('if (args.noDownload && !args.recoverAttempt)', self.script)
+        self.assertIn('identifyOnly: args.noDownload', self.script)
+        self.assertIn('const status = args.noDownload ? "identified_not_downloaded"', self.script)
+        self.assertIn('integrity_status: args.noDownload ? "not_checked"', self.script)
+        wait_body = self.script.split("async function waitForGenerationAndDownload", 1)[1].split(
+            "\n\nfunction createConfirmationReader", 1
+        )[0]
+        identify_branch = wait_body.index('if (identifyOnly) {')
+        early_return = wait_body.index('return { downloadedFile: null, mediaUri: page.url()', identify_branch)
+        candidate_wait = wait_body.index('const shortWait =', identify_branch)
+        download_menu = wait_body.index('getByRole("menuitem", { name: /Original size/i })')
+        self.assertLess(identify_branch, early_return)
+        self.assertLess(early_return, candidate_wait)
+        self.assertLess(early_return, download_menu)
+        recovery_body = self.script.split("async function recoverAttempt(args, browser)", 1)[1].split(
+            "\n\nasync function main", 1
+        )[0]
+        self.assertIn('download_attempted: !args.noDownload', recovery_body)
+        self.assertIn('create_clicks_by_recovery: 0', recovery_body)
+
     def test_wait_downloads_original_360p_and_hashes_saved_file(self):
         self.assertIn('page.waitForEvent("download", { timeout: 30000 })', self.script)
         self.assertIn('getByRole("menuitem", { name: /Original size/i })', self.script)
