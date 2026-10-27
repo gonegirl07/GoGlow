@@ -1204,7 +1204,7 @@ async function waitForGenerationAndDownload(page, selectors, { beforeKeys, befor
             verification: "candidate_uuid_matches_opened_detail_route" }));
         }
         if (identifyOnly) {
-          const routeMatch = page.url().match(/\\/edit\\/([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})(?:[/?#]|$)/i);
+          const routeMatch = page.url().match(/\/edit\/([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})(?:[/?#]|$)/i);
           const keyMatch = String(newKey).match(/^media:([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})$/i);
           const baselineKeys = new Set((beforeKeys || []).map(key => String(key).toLowerCase()));
           if (!routeMatch || !keyMatch || routeMatch[1].toLowerCase() !== keyMatch[1].toLowerCase()
@@ -1277,7 +1277,7 @@ async function waitForGenerationAndDownload(page, selectors, { beforeKeys, befor
     throw new Error(`FLOW_SUBMITTED_UNIDENTIFIED: No verified new video UUID/detail/download became available within ${timeoutMs}ms. Completion remains unverified; do not retry automatically.`);
   }
   if (identifyOnly) {
-    const routeMatch = page.url().match(/\\/edit\\/([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})(?:[/?#]|$)/i);
+    const routeMatch = page.url().match(/\/edit\/([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})(?:[/?#]|$)/i);
     const keyMatch = String(newKey).match(/^media:([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})$/i);
     const baselineKeys = new Set((beforeKeys || []).map(key => String(key).toLowerCase()));
     if (!routeMatch || !keyMatch || routeMatch[1].toLowerCase() !== keyMatch[1].toLowerCase()
