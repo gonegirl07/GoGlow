@@ -1203,6 +1203,27 @@ async function waitForGenerationAndDownload(page, selectors, { beforeKeys, befor
             candidate_media_uuid: candidateUuid.toLowerCase(), url: openedUrl,
             verification: "candidate_uuid_matches_opened_detail_route" }));
         }
+        if (identifyOnly) {
+          const routeMatch = page.url().match(/\\/edit\\/([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})(?:[/?#]|$)/i);
+          const keyMatch = String(newKey).match(/^media:([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})$/i);
+          const baselineKeys = new Set((beforeKeys || []).map(key => String(key).toLowerCase()));
+          if (!routeMatch || !keyMatch || routeMatch[1].toLowerCase() !== keyMatch[1].toLowerCase()
+            || baselineKeys.has(`media:${routeMatch[1].toLowerCase()}`)) {
+            throw new Error("FLOW_SUBMITTED_UNIDENTIFIED: identify-only requires one new UUID matching a non-baseline /edit/<uuid> route; refusing to record ambiguous evidence.");
+          }
+          const verifiedMediaUuid = routeMatch[1].toLowerCase();
+          const verificationEvidence = {
+            method: "new_uuid_set_difference_and_matching_edit_route",
+            media_uuid: verifiedMediaUuid,
+            detail_route: page.url(),
+            baseline_keys: [...baselineKeys],
+          };
+          console.log(JSON.stringify({ event: "recovery_identified_not_downloaded", attempt_id: attemptId,
+            verified_media_uuid: verifiedMediaUuid, detail_route: page.url(), download_attempted: false }));
+          return { downloadedFile: null, mediaUri: page.url(), downloadError: null, actualResolution: null,
+            downloadQualityLabel: null, verifiedMediaUuid, verificationState: "verified_new_media_uuid",
+            verificationEvidence };
+        }
         const shortWait = Math.min(3500, Math.max(500, deadline - Date.now()));
         const downloadButtonLocator = page.locator(selectors.download_media_button);
         try {
