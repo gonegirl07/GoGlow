@@ -526,7 +526,7 @@ try {
   const records = fs.readFileSync(ledgerPath, "utf8").trim().split("\n").map(JSON.parse);
   assert.deepEqual(records[0], other, "unrelated ledger attempts must remain unchanged");
   assert.equal(records[1].result.status, "succeeded");
-  assert.throws(() => readRecoveryEvidence(logPath, "attempt-22222222-2222-4222-8222-222222222222"), /does not contain generation_ledger_recorded/);
+  assert.throws(() => readRecoveryEvidence(logPath, "attempt-22222222-2222-4222-8222-222222222222"), /Legacy recovery requires the exact charged submitted_unidentified ledger record/);
 } finally {
   fs.rmSync(dir, { recursive: true, force: true });
 }
