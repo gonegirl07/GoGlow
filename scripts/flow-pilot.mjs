@@ -23,7 +23,7 @@ if (!Number.isInteger(ASSET_READY_TIMEOUT_MS) || ASSET_READY_TIMEOUT_MS < 15000 
 function argsOf(argv) {
   const args = { inspect: false, execute: false, dryRun: false, clearAfterDryRun: true, tab: null, scene: null, selectors: null,
     accountLabel: null, expectedEmail: null, expectedProject: null, log: "flow-pilot.jsonl", screenshot: null,
-    waitForResult: false, recoverAttempt: null, waitTimeoutMs: 600000, downloadDir: "local/flow-downloads", ledgerOutput: "local/flow-generation-ledger.jsonl", ledgerProjectId: null, variantIndex: null };
+    waitForResult: false, recoverAttempt: null, noDownload: false, waitTimeoutMs: 600000, downloadDir: "local/flow-downloads", ledgerOutput: "local/flow-generation-ledger.jsonl", ledgerProjectId: null, variantIndex: null };
   for (let i = 0; i < argv.length; i += 1) {
     const arg = argv[i];
     if (arg === "--inspect") args.inspect = true;
@@ -41,6 +41,7 @@ function argsOf(argv) {
     else if (arg === "--screenshot") args.screenshot = argv[++i];
     else if (arg === "--wait") args.waitForResult = true;
     else if (arg === "--recover-attempt") args.recoverAttempt = argv[++i];
+    else if (arg === "--no-download") args.noDownload = true;
     else if (arg === "--wait-timeout-ms") args.waitTimeoutMs = Number(argv[++i]);
     else if (arg === "--download-dir") args.downloadDir = argv[++i];
     else if (arg === "--ledger-output") args.ledgerOutput = argv[++i];
@@ -50,6 +51,7 @@ function argsOf(argv) {
   }
   if (args.inspect && args.execute) throw new Error("Use --inspect or --execute, not both.");
   if (args.execute && args.dryRun) throw new Error("Use --dry-run or --execute, not both.");
+  if (args.noDownload && !args.recoverAttempt) throw new Error("--no-download is only valid with --recover-attempt.");
   if (args.recoverAttempt && (args.inspect || args.execute || args.dryRun || args.waitForResult || args.variantIndex !== null)) {
     throw new Error("--recover-attempt is a separate no-Create recovery mode; do not combine it with inspect, execute, dry-run, wait, or variant-index.");
   }
@@ -986,7 +988,7 @@ function readMp4VideoResolution(filename) {
   return null;
 }
 
-async function waitForGenerationAndDownload(page, selectors, { beforeKeys, beforeBalance, createClickedAt, uuidCache = new Map(), timeoutMs, downloadDir, sceneId, attemptId, timeoutScreenshot, onSubmissionEvidence = () => {}, variantIndex = 1, variantCount = 1, initialFailedTileTexts = [] }) {
+async function waitForGenerationAndDownload(page, selectors, { beforeKeys, beforeBalance, createClickedAt, uuidCache = new Map(), timeoutMs, downloadDir, sceneId, attemptId, timeoutScreenshot, onSubmissionEvidence = () => {}, variantIndex = 1, variantCount = 1, initialFailedTileTexts = [], identifyOnly = false }) {
   const itemLocator = page.locator(selectors.generated_video_items);
   let deadline = Date.now() + timeoutMs;
   let chargedExtensionUsed = false;
@@ -1252,6 +1254,27 @@ async function waitForGenerationAndDownload(page, selectors, { beforeKeys, befor
     await failIfVisible();
     await captureTimeout();
     throw new Error(`FLOW_SUBMITTED_UNIDENTIFIED: No verified new video UUID/detail/download became available within ${timeoutMs}ms. Completion remains unverified; do not retry automatically.`);
+  }
+  if (identifyOnly) {
+    const routeMatch = page.url().match(/\\/edit\\/([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})(?:[/?#]|$)/i);
+    const keyMatch = String(newKey).match(/^media:([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})$/i);
+    const baselineKeys = new Set((beforeKeys || []).map(key => String(key).toLowerCase()));
+    if (!routeMatch || !keyMatch || routeMatch[1].toLowerCase() !== keyMatch[1].toLowerCase()
+      || baselineKeys.has(`media:${routeMatch[1].toLowerCase()}`)) {
+      throw new Error("FLOW_SUBMITTED_UNIDENTIFIED: identify-only requires one new UUID matching a non-baseline /edit/<uuid> route; refusing to record ambiguous evidence.");
+    }
+    const verifiedMediaUuid = routeMatch[1].toLowerCase();
+    const verificationEvidence = {
+      method: "new_uuid_set_difference_and_matching_edit_route",
+      media_uuid: verifiedMediaUuid,
+      detail_route: page.url(),
+      baseline_keys: [...baselineKeys],
+    };
+    console.log(JSON.stringify({ event: "recovery_identified_not_downloaded", attempt_id: attemptId,
+      verified_media_uuid: verifiedMediaUuid, detail_route: page.url(), download_attempted: false }));
+    return { downloadedFile: null, mediaUri: page.url(), downloadError: null, actualResolution: null,
+      downloadQualityLabel: null, verifiedMediaUuid, verificationState: "verified_new_media_uuid",
+      verificationEvidence };
   }
   const remainingMs = Math.max(1000, deadline - Date.now());
   const downloadButtonLocator = page.locator(selectors.download_media_button);
@@ -4666,13 +4689,13 @@ async function recoverAttempt(args, browser) {
   const result = await waitForGenerationAndDownload(chosen.page, selectors, {
     beforeKeys: evidence.beforeKeys, beforeBalance: record.credits.before_balance,
     createClickedAt: evidence.createClickedAt, uuidCache: new Map(), timeoutMs: args.waitTimeoutMs,
-    downloadDir: args.downloadDir, sceneId: record.scene_id, attemptId: args.recoverAttempt,
+    downloadDir: args.downloadDir, sceneId: record.scene_id, attemptId: args.recoverAttempt, identifyOnly: args.noDownload,
     timeoutScreenshot: args.screenshot || `${args.log}.recover-timeout.png`,
     initialFailedTileTexts: evidence.initialFailedTileTexts,
     onSubmissionEvidence: item => appendEvent(args.log, { event: "recovery_submission_evidence", attempt_id: args.recoverAttempt, evidence: item }),
     variantIndex: record.variant_index || 1, variantCount: record.variant_count || 1,
   });
-  const status = result.downloadError ? "download_failed" : "succeeded";
+  const status = args.noDownload ? "identified_not_downloaded" : (result.downloadError ? "download_failed" : "succeeded");
   const updatedPath = updateGenerationLedgerAttempt(args.ledgerOutput, args.recoverAttempt, current => {
     current.finished_on = new Date().toISOString();
     current.result = { ...(current.result || {}), status };
@@ -4690,10 +4713,12 @@ async function recoverAttempt(args, browser) {
         if (!requested || !actual) return "unknown";
         return Number(actual[1]) === Number(requested[1]) || Number(actual[2]) === Number(requested[1]) ? "match" : "mismatch";
       })(),
-      sha256: result.downloadedFile && fs.existsSync(result.downloadedFile) ? createHash("sha256").update(fs.readFileSync(result.downloadedFile)).digest("hex") : null,
-      integrity_status: result.downloadedFile ? "verified" : "not_checked",
+      sha256: !args.noDownload && result.downloadedFile && fs.existsSync(result.downloadedFile) ? createHash("sha256").update(fs.readFileSync(result.downloadedFile)).digest("hex") : null,
+      integrity_status: args.noDownload ? "not_checked" : (result.downloadedFile ? "verified" : "not_checked"),
     };
-    const note = result.downloadError ? `Recovery verified UUID but download failed: ${result.downloadError}` : `Recovered media UUID ${result.verifiedMediaUuid} without a new Create click.`;
+    const note = args.noDownload
+      ? `Identified media UUID ${result.verifiedMediaUuid} by UUID set-difference and matching /edit route; not downloaded and integrity not checked.`
+      : (result.downloadError ? `Recovery verified UUID but download failed: ${result.downloadError}` : `Recovered media UUID ${result.verifiedMediaUuid} without a new Create click.`);
     current.notes = [current.notes, note].filter(Boolean).join(" ");
     return current;
   });
@@ -4701,8 +4726,9 @@ async function recoverAttempt(args, browser) {
     verified_media_uuid: result.verifiedMediaUuid, downloaded_file: result.downloadedFile || null, ledger_path: updatedPath });
   console.log(JSON.stringify({ event: "recovery_complete", attempt_id: args.recoverAttempt, status,
     verified_media_uuid: result.verifiedMediaUuid, downloaded_file: result.downloadedFile || null,
-    download_error: result.downloadError || null, credits_spent_by_recovery: 0, create_clicks_by_recovery: 0 }));
-  if (status !== "succeeded") process.exitCode = 2;
+    download_error: result.downloadError || null, download_attempted: !args.noDownload,
+    credits_spent_by_recovery: 0, create_clicks_by_recovery: 0 }));
+  if (status !== "succeeded" && status !== "identified_not_downloaded") process.exitCode = 2;
 }
 
 async function main() {
