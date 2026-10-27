@@ -4511,7 +4511,7 @@ async function prepare(args, browser, rl) {
 
 function readRecoveryEvidence(logPath, attemptId, ledgerRecord = null) {
   const absolute = path.resolve(logPath);
-  if (!fs.existsSync(absolute)) throw new Error(\`Recovery log not found: \${absolute}\`);
+  if (!fs.existsSync(absolute)) throw new Error(`Recovery log not found: ${absolute}`);
   const logText = fs.readFileSync(absolute, "utf8");
   const lines = logText.split(/\r?\n/);
   let ledgerEventIndex = -1;
@@ -4533,7 +4533,7 @@ function readRecoveryEvidence(logPath, attemptId, ledgerRecord = null) {
       || ledgerRecord.media?.verification_state !== "unverified"
       || ledgerRecord.media?.verified_media_uuid
       || !(Number(ledgerRecord.credits?.actual_amount) > 0)) {
-      throw new Error(\`Legacy recovery requires the exact charged submitted_unidentified ledger record with scene, project, and start/finish timestamps for \${attemptId}.\`);
+      throw new Error(`Legacy recovery requires the exact charged submitted_unidentified ledger record with scene, project, and start/finish timestamps for ${attemptId}.`);
     }
     const timestamps = [];
     for (let i = 0; i < lines.length; i += 1) {
@@ -4541,7 +4541,7 @@ function readRecoveryEvidence(logPath, attemptId, ledgerRecord = null) {
       for (const match of matches) timestamps.push({ value: match[1], lineIndex: i });
     }
     if (timestamps.length !== 1) {
-      throw new Error(\`Legacy recovery requires exactly one Create timestamp line; found \${timestamps.length}. Refusing recovery.\`);
+      throw new Error(`Legacy recovery requires exactly one Create timestamp line; found ${timestamps.length}. Refusing recovery.`);
     }
     const timestamp = Date.parse(timestamps[0].value);
     const started = Date.parse(ledgerRecord.started_on);
@@ -4571,7 +4571,7 @@ function readRecoveryEvidence(logPath, attemptId, ledgerRecord = null) {
       for (const match of matches) timestampMatches.push({ value: match[1], lineIndex: i });
     }
     if (legacyMode && timestampMatches.length !== 1) {
-      throw new Error(\`Legacy recovery requires exactly one Create timestamp line; found \${timestampMatches.length}. Refusing recovery.\`);
+      throw new Error(`Legacy recovery requires exactly one Create timestamp line; found ${timestampMatches.length}. Refusing recovery.`);
     }
     const eligible = legacyMode ? timestampMatches : timestampMatches.filter(item => item.lineIndex < ledgerEventIndex);
     if (eligible.length) {
