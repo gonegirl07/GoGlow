@@ -495,6 +495,8 @@ try {
   const timestampLine = "Pre-Create baseline UUID count: 3. Create timestamp: 2026-10-26T23:27:22.857Z";
   fs.writeFileSync(logPath, [
     ...events.map(event => JSON.stringify(event)),
+    // Match the real exec log's pretty-printed JSON and bare JSON-value lines.
+    JSON.stringify([null, 42, "not-an-event"], null, 2),
     JSON.stringify({ baseline_first_three_media_keys: [
       "failed-policy:" + policyText.toLowerCase(),
       "media:4bcc1ce2-4018-43fc-9a8a-059fdc315750",
