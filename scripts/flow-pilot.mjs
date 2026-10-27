@@ -4559,7 +4559,7 @@ function readRecoveryEvidence(logPath, attemptId, ledgerRecord = null) {
     // quoted scene_id fields from the complete log and still reject any conflict.
     const sceneIds = sceneEvents.length
       ? sceneEvents.map(event => String(event.scene_id))
-      : [...logText.matchAll(/"scene_id"\\s*:\\s*"([^"]+)"/g)].map(match => match[1]);
+      : [...logText.matchAll(/"scene_id"\s*:\s*"([^"]+)"/g)].map(match => match[1]);
     if (!sceneIds.includes(String(ledgerRecord.scene_id))
       || sceneIds.some(sceneId => sceneId !== String(ledgerRecord.scene_id))) {
       throw new Error("Legacy log scene_id does not uniquely match the ledger attempt; refusing recovery.");
