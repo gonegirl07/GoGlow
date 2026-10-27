@@ -490,7 +490,9 @@ try {
       { index: 1, classification: "stable_existing_baseline_tile", text: "old video" },
       { index: 2, classification: "stable_existing_baseline_tile", text: "older video" },
     ] },
+    { event: "project_verified", scene_id: "mai-daily4-136-a-front-opt1", project_id: "2c77da50-fb9e-4cc2-bf50-8ce67649c32e" },
   ];
+  const timestampLine = "Pre-Create baseline UUID count: 3. Create timestamp: 2026-10-26T23:27:22.857Z";
   fs.writeFileSync(logPath, [
     ...events.map(event => JSON.stringify(event)),
     JSON.stringify({ baseline_first_three_media_keys: [
@@ -498,18 +500,24 @@ try {
       "media:4bcc1ce2-4018-43fc-9a8a-059fdc315750",
       "media:07e82f95-f37f-412a-83bd-018fe25b1278",
     ] }, null, 2),
-    "Pre-Create baseline UUID count: 3. Create timestamp: 2026-10-26T23:27:22Z",
-    JSON.stringify({ event: "generation_ledger_recorded", attempt_id: attemptId, status: "submitted_unidentified" }),
+    timestampLine,
   ].join("\n") + "\n");
-  const evidence = readRecoveryEvidence(logPath, attemptId);
-  assert.equal(evidence.createClickedAt, "2026-10-26T23:27:22Z");
+  const target = {
+    attempt_id: attemptId, scene_id: "mai-daily4-136-a-front-opt1",
+    project_id: "2c77da50-fb9e-4cc2-bf50-8ce67649c32e",
+    started_on: "2026-10-26T23:20:00.000Z", finished_on: "2026-10-26T23:40:00.000Z",
+    result: { status: "submitted_unidentified" }, media: { verification_state: "unverified" },
+    credits: { actual_amount: 6, before_balance: 841 },
+  };
+  const evidence = readRecoveryEvidence(logPath, attemptId, target);
+  assert.equal(evidence.createClickedAt, "2026-10-26T23:27:22.857Z");
+  assert.throws(() => readRecoveryEvidence(logPath, attemptId, target), /exactly one Create timestamp/);
   assert.deepEqual(evidence.beforeKeys, [
     "failed-policy:" + policyText.toLowerCase(),
     "media:4bcc1ce2-4018-43fc-9a8a-059fdc315750",
     "media:07e82f95-f37f-412a-83bd-018fe25b1278",
   ]);
   const other = { attempt_id: "attempt-11111111-1111-4111-8111-111111111111", result: { status: "succeeded" } };
-  const target = { attempt_id: attemptId, result: { status: "submitted_unidentified" }, media: { verification_state: "unverified" } };
   fs.writeFileSync(ledgerPath, [JSON.stringify(other), JSON.stringify(target)].join("\n") + "\n");
   updateGenerationLedgerAttempt(ledgerPath, attemptId, record => ({ ...record, result: { status: "succeeded" } }));
   const records = fs.readFileSync(ledgerPath, "utf8").trim().split("\n").map(JSON.parse);
