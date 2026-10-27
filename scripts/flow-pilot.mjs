@@ -4520,6 +4520,10 @@ function readRecoveryEvidence(logPath, attemptId, ledgerRecord = null) {
   for (let i = 0; i < lines.length; i += 1) {
     try {
       const event = JSON.parse(lines[i]);
+      // Legacy logs can contain pretty-printed JSON arrays/objects, so individual
+      // lines may parse as null, numbers, strings, or array fragments. Only actual
+      // plain-object event records are eligible for event-field inspection.
+      if (!event || typeof event !== "object" || Array.isArray(event)) continue;
       parsedEvents.push(event);
       if (event.event === "generation_ledger_recorded" && event.attempt_id === attemptId) ledgerEventIndex = i;
       if (event.event === "create_click_returned" && event.attempt_id === attemptId) structuredCreate = event;
